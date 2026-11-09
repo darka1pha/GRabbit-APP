@@ -4,7 +4,7 @@ copyright: Copyright © 2026 DarkAlpha
 publish:
   provider: github
   owner: DarkAlpha
-  repo: gRabbit
+  repo: GRabbit-APP
 directories:
   output: release
   buildResources: build

@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "echo desktop lint ok",
     "test": "vitest run",
-    "dist": "node scripts/make-icon.mjs && node scripts/fetch-binaries.mjs && electron-vite build && electron-builder --win --x64",
+    "dist": "node scripts/make-icon.mjs && node scripts/fetch-binaries.mjs && electron-vite build && electron-builder --win --x64 --publish never",
     "dist:dir": "node scripts/make-icon.mjs && node scripts/fetch-binaries.mjs && electron-vite build && electron-builder --win --x64 --dir"
   },
   "devDependencies": {
