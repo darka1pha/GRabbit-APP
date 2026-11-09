@@ -12,7 +12,7 @@ export interface AutoUpdaterDeps {
 export class AutoUpdaterService {
   private status: UpdateStatusInfo = {
     state: 'idle',
-    version: app.getVersion(),
+    version: typeof app?.getVersion === 'function' ? app.getVersion() : '1.0.0',
   };
 
   constructor(private readonly deps: AutoUpdaterDeps) {

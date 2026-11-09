@@ -1,10 +1,58 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { defaultSettings, deepMerge, SettingsService } from '../src/main/settings';
-import { AutoUpdaterService } from '../src/main/updater';
-import { GrabPillManager } from '../src/main/grab-pill';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+vi.mock('electron', () => ({
+  app: {
+    getLocale: () => 'en-US',
+    getPath: (name: string) => (name === 'downloads' ? '/mock/downloads' : '/mock/userData'),
+    getVersion: () => '1.0.0',
+    isPackaged: false,
+    setLoginItemSettings: vi.fn(),
+  },
+  globalShortcut: {
+    register: vi.fn(() => true),
+    unregister: vi.fn(),
+  },
+  screen: {
+    getCursorScreenPoint: () => ({ x: 100, y: 100 }),
+    getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),
+  },
+  clipboard: {
+    readText: vi.fn(async () => 'https://example.com/test'),
+  },
+  BrowserWindow: vi.fn().mockImplementation(() => ({
+    on: vi.fn(),
+    show: vi.fn(),
+    hide: vi.fn(),
+    isVisible: vi.fn(() => false),
+    isDestroyed: vi.fn(() => false),
+    setPosition: vi.fn(),
+    center: vi.fn(),
+    focus: vi.fn(),
+    webContents: { send: vi.fn() },
+    destroy: vi.fn(),
+  })),
+}));
+
+vi.mock('electron-updater', () => {
+  return {
+    autoUpdater: {
+      autoDownload: false,
+      autoInstallOnAppQuit: true,
+      logger: null,
+      on: vi.fn(),
+      checkForUpdates: vi.fn(),
+      downloadUpdate: vi.fn(),
+      quitAndInstall: vi.fn(),
+    },
+  };
+});
+
+import { defaultSettings, deepMerge, SettingsService } from '../src/main/settings';
+import { AutoUpdaterService } from '../src/main/updater';
+import { GrabPillManager } from '../src/main/grab-pill';
 
 describe('Phase 5: Desktop Polish & Windows 11 Native Integration', () => {
   describe('Settings Integration', () => {
@@ -133,4 +181,3 @@ describe('Phase 5: Desktop Polish & Windows 11 Native Integration', () => {
     });
   });
 });
-

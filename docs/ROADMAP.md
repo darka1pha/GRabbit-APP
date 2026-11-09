@@ -114,13 +114,18 @@
 
 ---
 
-### Phase 5: Desktop Polish & Windows 11 Native Integration 📋
-- [ ] **Windows 11 Native Custom Title Bar**:
-  - Frameless window with native snap layout button integration.
-- [ ] **Global Shortcut Hotkey**:
-  - Register `Ctrl+Alt+G` to summon a compact floating grab pill from any screen in Windows.
-- [ ] **Automatic App Updates**:
-  - Integrate `electron-updater` with GitHub Releases for silent background updates.
-- [ ] **Launch on Startup (`openAtLogin`)**:
-  - Settings toggle to start minimized to tray on boot.
+### Phase 5: Desktop Polish & Windows 11 Native Integration (Completed ✅)
+- [x] **Windows 11 Native Custom Title Bar**:
+  - Frameless window (`titleBarStyle: 'hidden'`) with native Windows 11 snap layout button integration via `titleBarOverlay` (`color: '#00000000'`, dynamic `symbolColor`, and theme synchronization).
+  - Drag regions, branding slogan, active queue speed pill, and quick grab shortcut pill (`Ctrl+Alt+G`).
+- [x] **Global Shortcut Hotkey & Floating Grab Pill**:
+  - Registered `Ctrl+Alt+G` (configurable accelerator) to summon a sleek, compact floating grab pill window on the active display containing the cursor.
+  - Automatic clipboard URL detection, direct file vs media destination inference, quick actions (Grab/Download), and dismiss on Escape or blur.
+  - System tray menu item *"Quick Grab Pill (Ctrl+Alt+G)"* and title bar pill button.
+- [x] **Automatic App Updates**:
+  - Integrated `electron-updater` configured with GitHub Releases provider.
+  - Dedicated Desktop Settings UI for updates: check for updates, version status badge, live download progress, restart & install trigger, and auto-download background toggles.
+- [x] **Launch on Startup (`openAtLogin`)**:
+  - Native Windows startup integration via `app.setLoginItemSettings`.
+  - Settings switches to start on Windows boot and launch minimized to system tray (`--hidden`).
 

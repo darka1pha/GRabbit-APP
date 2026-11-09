@@ -8,10 +8,12 @@ export const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 export function defaultSettings(): AppSettings {
+  const locale = typeof app?.getLocale === 'function' ? app.getLocale() : 'en';
+  const downloadsPath = typeof app?.getPath === 'function' ? app.getPath('downloads') : '';
   return {
-    language: app.getLocale().toLowerCase().startsWith('fa') ? 'fa' : 'en',
+    language: locale.toLowerCase().startsWith('fa') ? 'fa' : 'en',
     theme: 'system',
-    downloadDir: join(app.getPath('downloads'), 'gRabbit'),
+    downloadDir: downloadsPath ? join(downloadsPath, 'gRabbit') : 'gRabbit',
     categorySubfolders: true,
     maxConcurrent: 3,
     defaultConnections: 8,

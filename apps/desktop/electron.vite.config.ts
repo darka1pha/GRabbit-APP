@@ -1,14 +1,21 @@
-import { defineConfig } from 'electron-vite';
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    build: {
-      // shazamio-core loads its .wasm from its own folder at runtime, so keep it external
-      externalizeDeps: true,
-    },
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/types', '@grabbit/utils'],
+      }),
+    ],
   },
-  preload: {},
+  preload: {
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/types', '@grabbit/utils'],
+      }),
+    ],
+  },
   renderer: {
     plugins: [react()],
   },

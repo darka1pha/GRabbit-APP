@@ -176,21 +176,23 @@ function Shell() {
         </nav>
 
         <main className="main">
-          {view === 'grab' && (
-            <GrabView
-              pendingInput={grabInput}
-              clipboardLink={clipboardLink}
-              onConsumePending={() => setGrabInput(null)}
-              onOpenAddDialog={(url) => setAddDialog({ url })}
-              onAdded={() => {
-                setCategory('all');
-                setView('downloads');
-              }}
-            />
-          )}
-          {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
-          {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
-          {view === 'settings' && <SettingsView />}
+          <div key={view === 'downloads' ? `${view}-${category}` : view} className="view-stage">
+            {view === 'grab' && (
+              <GrabView
+                pendingInput={grabInput}
+                clipboardLink={clipboardLink}
+                onConsumePending={() => setGrabInput(null)}
+                onOpenAddDialog={(url) => setAddDialog({ url })}
+                onAdded={() => {
+                  setCategory('all');
+                  setView('downloads');
+                }}
+              />
+            )}
+            {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
+            {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
+            {view === 'settings' && <SettingsView />}
+          </div>
         </main>
       </div>
 

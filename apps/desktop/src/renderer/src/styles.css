@@ -234,16 +234,27 @@ a {
   text-align: start;
   font-weight: 500;
   position: relative;
+  transition: background-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.15s ease,
+              transform 0.12s ease;
 }
 .nav-item:hover {
   background: var(--surface-2);
   color: var(--text);
+  transform: translateX(2px);
+}
+[dir='rtl'] .nav-item:hover {
+  transform: translateX(-2px);
+}
+.nav-item:active {
+  transform: scale(0.98);
 }
 .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent);
+  transform: none;
 }
-.nav-item.active::before {
+.nav-item::before {
   content: '';
   position: absolute;
   inset-inline-start: -10px;
@@ -252,6 +263,13 @@ a {
   width: 3px;
   border-radius: 3px;
   background: var(--accent);
+  opacity: 0;
+  transform: scaleY(0.3);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav-item.active::before {
+  opacity: 1;
+  transform: scaleY(1);
 }
 .nav-item .count {
   margin-inline-start: auto;
@@ -265,6 +283,7 @@ a {
   text-align: center;
   background: var(--surface-3);
   color: var(--text-2);
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 .nav-item.active .count {
   background: var(--accent);
@@ -301,6 +320,37 @@ a {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  height: 100%;
+}
+
+.view-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  animation: viewEnter 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes viewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-stage {
+    animation: none;
+  }
+  .nav-item {
+    transition: none;
+  }
 }
 
 .page {
