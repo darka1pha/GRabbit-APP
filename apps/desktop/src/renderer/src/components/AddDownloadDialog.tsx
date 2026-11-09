@@ -44,7 +44,7 @@ export function AddDownloadDialog({
   onOpenInGrab(url: string): void;
 }) {
   const { t, language } = useI18n();
-  const { settings, toast } = useApp();
+  const { settings, queues, toast } = useApp();
   const [text, setText] = useState(initialUrl ?? '');
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
@@ -52,6 +52,7 @@ export function AddDownloadDialog({
   const [fileName, setFileName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [category, setCategory] = useState<Category | 'auto'>('auto');
+  const [queueId, setQueueId] = useState('main');
   const [folder, setFolder] = useState<string | null>(null);
   const [connections, setConnections] = useState(settings?.defaultConnections ?? 8);
   const [advanced, setAdvanced] = useState(false);
@@ -139,6 +140,7 @@ export function AddDownloadDialog({
           speedLimitKBps: speedLimit || undefined,
           checksum: single && algorithm ? { algorithm, expected: checksum.trim() } : undefined,
           startPaused,
+          queueId,
         }))
       );
       toast(t('grab.added', { count: added.length }), 'success');
@@ -311,17 +313,14 @@ export function AddDownloadDialog({
           </select>
         </div>
         <div className="field">
-          <label>
-            {t('add.connections')}: <b>{connections}</b>
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={32}
-            value={connections}
-            onChange={(e) => setConnections(Number(e.target.value))}
-            style={{ accentColor: 'var(--accent)', height: 34 }}
-          />
+          <label>{t('queue.title')}</label>
+          <select className="select" value={queueId} onChange={(e) => setQueueId(e.target.value)}>
+            {queues.map((q) => (
+              <option key={q.id} value={q.id}>
+                {q.id === 'main' ? t('queue.main') : q.id === 'scheduled' ? t('queue.scheduled') : q.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -347,10 +346,21 @@ export function AddDownloadDialog({
 
       {advanced && (
         <>
-          <div className="grid-2">
+          <div className="grid-3">
             <div className="field">
               <label>{t('add.referrer')}</label>
               <input className="input mono" value={referrer} onChange={(e) => setReferrer(e.target.value)} placeholder="https://" />
+            </div>
+            <div className="field">
+              <label>{t('add.connections')}</label>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={32}
+                value={connections}
+                onChange={(e) => setConnections(Math.max(1, Math.min(32, Number(e.target.value) || 1)))}
+              />
             </div>
             <div className="field">
               <label>{t('add.speedLimit')}</label>

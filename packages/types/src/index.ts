@@ -170,6 +170,28 @@ export interface DownloadItem {
   completedAt?: number;
   /** Full path of the finished file. */
   filePath?: string;
+  /** ID of the download queue this item belongs to (defaults to 'main'). */
+  queueId?: string;
+}
+
+export interface DownloadQueueScheduler {
+  enabled: boolean;
+  /** 'HH:MM', local time */
+  startTime: string;
+  /** 'HH:MM', or '' for no stop time */
+  stopTime: string;
+}
+
+export type QueueAfterAction = 'none' | 'stopQueue' | 'quit' | 'sleep' | 'shutdown';
+
+export interface DownloadQueue {
+  id: string;
+  name: string;
+  enabled: boolean;
+  maxConcurrent: number;
+  scheduler?: DownloadQueueScheduler;
+  afterQueue?: QueueAfterAction;
+  order: string[];
 }
 
 export interface AddHttpDownloadRequest {
@@ -183,6 +205,7 @@ export interface AddHttpDownloadRequest {
   speedLimitKBps?: number;
   checksum?: { algorithm: ChecksumAlgorithm; expected?: string };
   startPaused?: boolean;
+  queueId?: string;
 }
 
 export interface AddMediaDownloadRequest {
@@ -198,6 +221,7 @@ export interface AddMediaDownloadRequest {
   estimatedSizeBytes?: number;
   directory?: string;
   startPaused?: boolean;
+  queueId?: string;
 }
 
 export interface ProbeResult {
@@ -406,6 +430,17 @@ export interface GrabbitApi {
     /** New queue order after a move. */
     onOrderChanged(listener: (ids: string[]) => void): () => void;
   };
+  queues: {
+    list(): Promise<DownloadQueue[]>;
+    create(name: string, options?: Partial<DownloadQueue>): Promise<DownloadQueue>;
+    update(id: string, patch: Partial<DownloadQueue>): Promise<DownloadQueue>;
+    delete(id: string): Promise<void>;
+    start(id: string): Promise<void>;
+    stop(id: string): Promise<void>;
+    moveItem(itemId: string, targetQueueId: string): Promise<void>;
+    reorder(queueId: string, order: string[]): Promise<void>;
+    onChanged(listener: (queues: DownloadQueue[]) => void): () => void;
+  };
   media: {
     resolve(url: string): Promise<PlatformMetadata>;
     search(query: string, limit?: number): Promise<MediaItem[]>;
@@ -466,6 +501,15 @@ export const IPC = {
   downloadsChanged: 'downloads:changed',
   downloadsRemoved: 'downloads:removed',
   downloadsOrder: 'downloads:order',
+  queuesList: 'queues:list',
+  queuesCreate: 'queues:create',
+  queuesUpdate: 'queues:update',
+  queuesDelete: 'queues:delete',
+  queuesStart: 'queues:start',
+  queuesStop: 'queues:stop',
+  queuesMoveItem: 'queues:move-item',
+  queuesReorder: 'queues:reorder',
+  queuesChanged: 'queues:changed',
   mediaResolve: 'media:resolve',
   mediaSearch: 'media:search',
   recognizeFile: 'recognize:file',

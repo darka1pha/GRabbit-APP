@@ -11,20 +11,23 @@ import {
   FolderOpen,
   Gauge,
   Inbox,
+  Layers,
   Link,
   Pause,
   Play,
   Plus,
   RotateCw,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
-import type { Category, ChecksumAlgorithm, DownloadItem, DownloadStatus } from '../../../shared/types';
+import type { Category, ChecksumAlgorithm, DownloadItem, DownloadQueue, DownloadStatus } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '../format';
 import { ContextMenu, FileIcon, MenuEntry, Modal, ProgressBar } from '../components/ui';
+import { QueueConfigModal } from '../components/QueueConfigModal';
 
 export type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
 
@@ -75,7 +78,9 @@ export function DownloadsView({
   onAdd(url?: string): void;
 }) {
   const { t, language } = useI18n();
-  const { downloads, toast } = useApp();
+  const { downloads, queues, refreshQueues, toast } = useApp();
+  const [selectedQueueId, setSelectedQueueId] = useState<string | 'all'>('all');
+  const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -88,22 +93,36 @@ export function DownloadsView({
     () => downloads.filter((d) => category === 'all' || d.category === category),
     [downloads, category]
   );
+  const inQueue = useMemo(
+    () => inCategory.filter((d) => selectedQueueId === 'all' || (d.queueId || 'main') === selectedQueueId),
+    [inCategory, selectedQueueId]
+  );
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return inCategory.filter(
+    return inQueue.filter(
       (d) =>
         matchesStatus(d, filter) &&
         (!q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q) || d.media?.title.toLowerCase().includes(q))
     );
-  }, [inCategory, filter, query]);
+  }, [inQueue, filter, query]);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilter, number> = { all: 0, active: 0, queued: 0, completed: 0, failed: 0 };
-    for (const d of inCategory) {
+    for (const d of inQueue) {
       for (const f of Object.keys(c) as StatusFilter[]) if (matchesStatus(d, f)) c[f]++;
     }
     return c;
-  }, [inCategory]);
+  }, [inQueue]);
+
+  const queueCounts = useMemo(() => {
+    const c: Record<string, number> = { all: inCategory.length };
+    for (const q of queues) c[q.id] = 0;
+    for (const d of inCategory) {
+      const qId = d.queueId || 'main';
+      c[qId] = (c[qId] ?? 0) + 1;
+    }
+    return c;
+  }, [inCategory, queues]);
 
   // Drop selections that disappeared
   useEffect(() => {
@@ -206,6 +225,20 @@ export function DownloadsView({
       },
       { label: t('dl.verify'), icon: <ShieldCheck size={15} />, disabled: !done, onClick: () => setDialog({ kind: 'verify', item }) },
       { separator: true },
+      ...queues
+        .filter((q) => q.id !== (item.queueId || 'main'))
+        .map((q) => ({
+          label: `${t('queue.moveTo')}: ${q.name}`,
+          icon: <Layers size={15} />,
+          onClick: () =>
+            void run(async () => {
+              for (const target of targets) {
+                await api.queues.moveItem(target.id, q.id);
+              }
+              toast(t('queue.items', { count: targets.length }), 'info');
+            }),
+        })),
+      { separator: true },
       { label: t('dl.moveTop'), icon: <ArrowUpToLine size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'top')) },
       { label: t('dl.moveUp'), icon: <ArrowUp size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'up')) },
       { label: t('dl.moveDown'), icon: <ArrowDown size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'down')) },
@@ -238,6 +271,65 @@ export function DownloadsView({
           <div className="input-with-icon" style={{ width: 260 }}>
             <Search size={15} />
             <input className="input" value={query} placeholder={t('dl.searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} />
+          </div>
+        </div>
+        <div className="queue-bar">
+          <div className="queue-tabs">
+            <button
+              className={`queue-pill ${selectedQueueId === 'all' ? 'active' : ''}`}
+              onClick={() => setSelectedQueueId('all')}
+            >
+              <Layers size={14} />
+              <span>{t('queue.all')}</span>
+              <span className="queue-badge">{queueCounts['all'] ?? 0}</span>
+            </button>
+            {queues.map((q) => {
+              const isSelected = selectedQueueId === q.id;
+              return (
+                <div key={q.id} className={`queue-tab-group ${isSelected ? 'active' : ''}`}>
+                  <button
+                    className="queue-pill-main"
+                    onClick={() => setSelectedQueueId(q.id)}
+                    title={q.name}
+                  >
+                    <span
+                      className={`queue-dot ${q.enabled ? 'running' : 'stopped'}`}
+                      title={q.enabled ? t('queue.start') : t('queue.stop')}
+                    />
+                    <span className="queue-title">{q.name}</span>
+                    <span className="queue-badge">{queueCounts[q.id] ?? 0}</span>
+                  </button>
+                  <button
+                    className={`queue-btn-action ${q.enabled ? 'running' : ''}`}
+                    title={q.enabled ? t('queue.stop') : t('queue.start')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void run(() => (q.enabled ? api.queues.stop(q.id) : api.queues.start(q.id)));
+                    }}
+                  >
+                    {q.enabled ? <Pause size={12} /> : <Play size={12} />}
+                  </button>
+                  <button
+                    className="queue-btn-action"
+                    title={t('queue.edit')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setQueueModal({ queue: q });
+                    }}
+                  >
+                    <Settings size={12} />
+                  </button>
+                </div>
+              );
+            })}
+            <button
+              className="queue-add-btn"
+              title={t('queue.new')}
+              onClick={() => setQueueModal({ queue: null })}
+            >
+              <Plus size={14} />
+              <span>{t('queue.new')}</span>
+            </button>
           </div>
         </div>
         <div className="toolbar">
@@ -319,6 +411,7 @@ export function DownloadsView({
                   key={item.id}
                   item={item}
                   selected={selected.has(item.id)}
+                  queueName={selectedQueueId === 'all' ? queues.find((q) => q.id === (item.queueId || 'main'))?.name : undefined}
                   onClick={(e) => onRowClick(e, item)}
                   onDoubleClick={() => onDoubleClick(item)}
                   onContextMenu={(e) => {
@@ -357,6 +450,21 @@ export function DownloadsView({
       {dialog?.kind === 'limit' && <SpeedLimitDialog item={dialog.item} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'verify' && <VerifyDialog item={dialog.item} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'segments' && <SegmentInspectorModal item={dialog.item} onClose={() => setDialog(null)} />}
+      {queueModal && (
+        <QueueConfigModal
+          queue={queueModal.queue}
+          onClose={() => setQueueModal(null)}
+          onSaved={() => {
+            setQueueModal(null);
+            void refreshQueues();
+          }}
+          onDeleted={(id: string) => {
+            if (selectedQueueId === id) setSelectedQueueId('all');
+            setQueueModal(null);
+            void refreshQueues();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -364,6 +472,7 @@ export function DownloadsView({
 function DownloadRow({
   item,
   selected,
+  queueName,
   onClick,
   onDoubleClick,
   onContextMenu,
@@ -372,6 +481,7 @@ function DownloadRow({
 }: {
   item: DownloadItem;
   selected: boolean;
+  queueName?: string;
   onClick(e: React.MouseEvent): void;
   onDoubleClick(): void;
   onContextMenu(e: React.MouseEvent): void;
@@ -427,6 +537,7 @@ function DownloadRow({
             </span>
             <span className="s">
               <span className={`status-dot ${item.status}`} />
+              {queueName && <span className="queue-tag">{queueName}</span>}
               {sub}
             </span>
           </div>

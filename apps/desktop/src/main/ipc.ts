@@ -147,6 +147,16 @@ export function registerIpc(deps: IpcDeps): void {
     clipboard.writeText(item.url);
   });
 
+  // ------------------------------------------------------------ queues
+  handle(IPC.queuesList, () => manager.listQueues());
+  handle(IPC.queuesCreate, (name: string, options?: any) => manager.createQueue(name, options));
+  handle(IPC.queuesUpdate, (id: string, patch: any) => manager.updateQueue(id, patch));
+  handle(IPC.queuesDelete, (id: string) => manager.deleteQueue(id));
+  handle(IPC.queuesStart, (id: string) => manager.startQueue(id));
+  handle(IPC.queuesStop, (id: string) => manager.stopQueue(id));
+  handle(IPC.queuesMoveItem, (itemId: string, targetQueueId: string) => manager.moveItemToQueue(itemId, targetQueueId));
+  handle(IPC.queuesReorder, (queueId: string, order: string[]) => manager.reorderQueue(queueId, order));
+
   // ------------------------------------------------------------ media
   handle(IPC.mediaResolve, (url: string) => router.resolve(url));
   handle(IPC.mediaSearch, (query: string, limit?: number) => router.search(query, limit ?? 15));

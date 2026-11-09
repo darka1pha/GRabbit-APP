@@ -98,6 +98,7 @@ const manager = new DownloadManager({
   onItemsChanged: (items) => send(IPC.downloadsChanged, items),
   onItemsRemoved: (ids) => send(IPC.downloadsRemoved, ids),
   onOrderChanged: (ids) => send(IPC.downloadsOrder, ids),
+  onQueuesChanged: (queues) => send(IPC.queuesChanged, queues),
   onCompleted: (item) => {
     const mismatch = item.checksum?.verified === false;
     notify(mismatch ? 'Checksum mismatch' : 'Download complete', fileLabel(item), () => {

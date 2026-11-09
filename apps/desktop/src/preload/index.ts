@@ -51,6 +51,17 @@ const api: GrabbitApi = {
     onRemoved: (listener) => subscribe(IPC.downloadsRemoved, listener),
     onOrderChanged: (listener) => subscribe(IPC.downloadsOrder, listener),
   },
+  queues: {
+    list: () => invoke(IPC.queuesList),
+    create: (name, options) => invoke(IPC.queuesCreate, name, options),
+    update: (id, patch) => invoke(IPC.queuesUpdate, id, patch),
+    delete: (id) => invoke(IPC.queuesDelete, id),
+    start: (id) => invoke(IPC.queuesStart, id),
+    stop: (id) => invoke(IPC.queuesStop, id),
+    moveItem: (itemId, targetQueueId) => invoke(IPC.queuesMoveItem, itemId, targetQueueId),
+    reorder: (queueId, order) => invoke(IPC.queuesReorder, queueId, order),
+    onChanged: (listener) => subscribe(IPC.queuesChanged, listener),
+  },
   media: {
     resolve: (url) => invoke(IPC.mediaResolve, url),
     search: (query, limit) => invoke(IPC.mediaSearch, query, limit),

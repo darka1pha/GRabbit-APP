@@ -10,6 +10,7 @@ import type {
   Category,
   ChecksumAlgorithm,
   DownloadItem,
+  DownloadQueue,
   DownloadStatus,
 } from '../../shared/types';
 import { codeOf, JobCancelledError } from '../media/errors';
@@ -38,6 +39,7 @@ export interface ManagerDeps {
   onItemsChanged(items: DownloadItem[]): void;
   onItemsRemoved(ids: string[]): void;
   onOrderChanged(ids: string[]): void;
+  onQueuesChanged?(queues: DownloadQueue[]): void;
   onCompleted(item: DownloadItem): void;
   onFailed(item: DownloadItem): void;
   /** Every queued download has finished (at least one did during this run). */
@@ -62,32 +64,74 @@ interface RunningEntry {
 export class DownloadManager {
   private items = new Map<string, DownloadItem>();
   private order: string[] = [];
+  private queues = new Map<string, DownloadQueue>();
   private running = new Map<string, RunningEntry>();
   private limiters = new Map<string, RateLimiter>();
   private restarts = new Map<string, number>();
   private dirty = new Set<string>();
   private store: JsonStore<DownloadItem[]>;
+  private queueStore: JsonStore<DownloadQueue[]>;
   private globalLimiter = new RateLimiter();
   private flushTimer: NodeJS.Timeout | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
   private finishedSinceIdle = 0;
   private ticksSinceSave = 0;
   private schedulerFired = { start: '', stop: '' };
+  private queueSchedulerFired = new Map<string, { start: string; stop: string }>();
 
   constructor(private readonly deps: ManagerDeps) {
     this.store = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'downloads.json'), 1500);
+    this.queueStore = new JsonStore<DownloadQueue[]>(join(deps.dataDir, 'queues.json'), 1500);
   }
 
   // ---------------------------------------------------------------- lifecycle
 
   public init(): void {
     const settings = this.deps.getSettings();
+
+    const defaultQueues: DownloadQueue[] = [
+      {
+        id: 'main',
+        name: 'Main Queue',
+        enabled: true,
+        maxConcurrent: 2,
+        order: [],
+      },
+      {
+        id: 'scheduled',
+        name: 'Scheduled Queue',
+        enabled: false,
+        maxConcurrent: 1,
+        scheduler: { enabled: true, startTime: '02:00', stopTime: '08:00' },
+        afterQueue: 'stopQueue',
+        order: [],
+      },
+    ];
+
+    const loadedQueues = this.queueStore.load(defaultQueues);
+    for (const q of (loadedQueues.length > 0 ? loadedQueues : defaultQueues)) {
+      this.queues.set(q.id, { ...q, order: q.order || [] });
+    }
+    if (!this.queues.has('main')) {
+      this.queues.set('main', defaultQueues[0]);
+    }
+
     for (const item of this.store.load([])) {
       if (!item?.id) continue;
       if (ACTIVE_STATUSES.includes(item.status)) item.status = settings.resumeOnStartup ? 'queued' : 'paused';
       item.speed = 0;
       item.eta = null;
       item.activeConnections = 0;
+
+      // Assign to main queue if queueId is missing or unknown
+      if (!item.queueId || !this.queues.has(item.queueId)) {
+        item.queueId = 'main';
+      }
+      const q = this.queues.get(item.queueId)!;
+      if (!q.order.includes(item.id)) {
+        q.order.push(item.id);
+      }
+
       this.items.set(item.id, item);
       this.order.push(item.id);
     }
@@ -112,6 +156,7 @@ export class DownloadManager {
       entry.controller.abort(new JobCancelledError());
     }
     this.store.saveSync(this.snapshot());
+    this.queueStore.saveSync(Array.from(this.queues.values()));
   }
 
   // ---------------------------------------------------------------- queries
@@ -159,6 +204,7 @@ export class DownloadManager {
       const guessed = lockedName ?? sanitizeFilename(filenameFromUrl(url) ?? '', 'download');
       const category = req.category ?? categoryForFileName(guessed);
       const directory = req.directory?.trim() || this.directoryFor(category);
+      const queueId = req.queueId && this.queues.has(req.queueId) ? req.queueId : 'main';
       const item: DownloadItem = {
         id: randomUUID(),
         kind: 'http',
@@ -169,6 +215,7 @@ export class DownloadManager {
         directory,
         autoPlace: !req.directory && !req.category,
         category,
+        queueId,
         status: req.startPaused ? 'paused' : 'queued',
         totalBytes: null,
         receivedBytes: 0,
@@ -199,6 +246,7 @@ export class DownloadManager {
       const ext = req.format === 'audio' ? (req.qualityId === 'm4a' ? 'm4a' : req.qualityId === 'flac' ? 'flac' : 'mp3') : 'mp4';
       const category: Category = req.format === 'audio' ? 'music' : 'video';
       const directory = req.directory?.trim() || this.directoryFor(category);
+      const queueId = req.queueId && this.queues.has(req.queueId) ? req.queueId : 'main';
       const name = sanitizeFilename(`${req.title}.${ext}`, `${req.platform}-${req.mediaId}.${ext}`);
       const item: DownloadItem = {
         id: randomUUID(),
@@ -207,6 +255,7 @@ export class DownloadManager {
         fileName: uniqueFileName(directory, name, this.reservedNames(directory)),
         directory,
         category,
+        queueId,
         status: req.startPaused ? 'paused' : 'queued',
         totalBytes: req.estimatedSizeBytes ?? null,
         receivedBytes: 0,
@@ -241,6 +290,11 @@ export class DownloadManager {
   private insert(item: DownloadItem): void {
     this.items.set(item.id, item);
     this.order.push(item.id);
+    const q = this.queues.get(item.queueId || 'main');
+    if (q && !q.order.includes(item.id)) {
+      q.order.push(item.id);
+      this.persistQueues();
+    }
     this.markDirty(item);
   }
 
@@ -326,6 +380,10 @@ export class DownloadManager {
       removed.push(id);
     }
     this.order = this.order.filter((id) => !removed.includes(id));
+    for (const q of this.queues.values()) {
+      q.order = q.order.filter((id) => !removed.includes(id));
+    }
+    this.persistQueues();
     if (removed.length > 0) this.deps.onItemsRemoved(removed);
     this.persist();
     this.pump();
@@ -346,6 +404,20 @@ export class DownloadManager {
       direction === 'top' ? 0 : direction === 'bottom' ? this.order.length : direction === 'up' ? Math.max(0, index - 1) : Math.min(this.order.length, index + 1);
     this.order.splice(target, 0, id);
     this.deps.onOrderChanged([...this.order]);
+
+    const item = this.items.get(id);
+    if (item?.queueId && this.queues.has(item.queueId)) {
+      const q = this.queues.get(item.queueId)!;
+      const qIndex = q.order.indexOf(id);
+      if (qIndex >= 0) {
+        q.order.splice(qIndex, 1);
+        const qTarget =
+          direction === 'top' ? 0 : direction === 'bottom' ? q.order.length : direction === 'up' ? Math.max(0, qIndex - 1) : Math.min(q.order.length, qIndex + 1);
+        q.order.splice(qTarget, 0, id);
+        this.persistQueues();
+      }
+    }
+
     this.persist();
   }
 
@@ -387,11 +459,164 @@ export class DownloadManager {
   // ---------------------------------------------------------------- scheduling
 
   private pump(): void {
-    const max = this.deps.getSettings().maxConcurrent;
-    for (const id of this.order) {
-      if (this.running.size >= max) break;
+    const globalMax = this.deps.getSettings().maxConcurrent;
+    if (this.running.size >= globalMax) return;
+
+    for (const queue of this.queues.values()) {
+      if (!queue.enabled) continue;
+      const activeInQueue = Array.from(this.running.keys()).filter((id) => this.items.get(id)?.queueId === queue.id).length;
+      let slots = Math.max(0, queue.maxConcurrent - activeInQueue);
+
+      for (const id of queue.order) {
+        if (slots <= 0 || this.running.size >= globalMax) break;
+        const item = this.items.get(id);
+        if (item?.status === 'queued' && !this.running.has(id)) {
+          this.start(item);
+          slots--;
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- queues
+
+  public listQueues(): DownloadQueue[] {
+    return Array.from(this.queues.values());
+  }
+
+  public createQueue(name: string, options?: Partial<DownloadQueue>): DownloadQueue {
+    const queue: DownloadQueue = {
+      id: randomUUID(),
+      name: name.trim() || 'New Queue',
+      enabled: false,
+      maxConcurrent: options?.maxConcurrent ?? 1,
+      scheduler: options?.scheduler,
+      afterQueue: options?.afterQueue ?? 'none',
+      order: [],
+    };
+    this.queues.set(queue.id, queue);
+    this.persistQueues();
+    return queue;
+  }
+
+  public updateQueue(id: string, patch: Partial<DownloadQueue>): DownloadQueue {
+    const queue = this.queues.get(id);
+    if (!queue) throw new Error(`Queue not found: ${id}`);
+    if (patch.name !== undefined) queue.name = patch.name.trim();
+    if (patch.maxConcurrent !== undefined) queue.maxConcurrent = Math.max(1, Math.min(16, patch.maxConcurrent));
+    if (patch.scheduler !== undefined) queue.scheduler = patch.scheduler;
+    if (patch.afterQueue !== undefined) queue.afterQueue = patch.afterQueue;
+    if (patch.enabled !== undefined) queue.enabled = patch.enabled;
+    this.persistQueues();
+    this.pump();
+    return queue;
+  }
+
+  public deleteQueue(id: string): void {
+    if (id === 'main') throw new Error('Cannot delete main queue');
+    const queue = this.queues.get(id);
+    if (!queue) return;
+    const mainQueue = this.queues.get('main');
+    for (const itemId of queue.order) {
+      const item = this.items.get(itemId);
+      if (item) {
+        item.queueId = 'main';
+        if (mainQueue && !mainQueue.order.includes(itemId)) {
+          mainQueue.order.push(itemId);
+        }
+        this.markDirty(item);
+      }
+    }
+    this.queues.delete(id);
+    this.persistQueues();
+    this.persist();
+    this.pump();
+  }
+
+  public startQueue(id: string): void {
+    const queue = this.queues.get(id);
+    if (!queue) return;
+    queue.enabled = true;
+    for (const itemId of queue.order) {
+      const item = this.items.get(itemId);
+      if (item && (item.status === 'paused' || item.status === 'error')) {
+        item.status = 'queued';
+        item.error = undefined;
+        this.markDirty(item);
+      }
+    }
+    this.persistQueues();
+    this.persist();
+    this.pump();
+  }
+
+  public stopQueue(id: string): void {
+    const queue = this.queues.get(id);
+    if (!queue) return;
+    queue.enabled = false;
+    for (const itemId of queue.order) {
+      const item = this.items.get(itemId);
+      if (!item) continue;
+      const entry = this.running.get(itemId);
+      if (entry) {
+        entry.stopAs = 'paused';
+        entry.controller.abort(new JobCancelledError());
+      } else if (item.status === 'queued') {
+        item.status = 'paused';
+        this.markDirty(item);
+      }
+    }
+    this.persistQueues();
+    this.persist();
+  }
+
+  public moveItemToQueue(itemId: string, targetQueueId: string): void {
+    const item = this.items.get(itemId);
+    if (!item) return;
+    const targetQueue = this.queues.get(targetQueueId);
+    if (!targetQueue) return;
+    const currentQueueId = item.queueId || 'main';
+    const currentQueue = this.queues.get(currentQueueId);
+    if (currentQueue) {
+      currentQueue.order = currentQueue.order.filter((id) => id !== itemId);
+    }
+    item.queueId = targetQueueId;
+    if (!targetQueue.order.includes(itemId)) {
+      targetQueue.order.push(itemId);
+    }
+    this.markDirty(item);
+    this.persistQueues();
+    this.persist();
+    this.pump();
+  }
+
+  public reorderQueue(queueId: string, order: string[]): void {
+    const queue = this.queues.get(queueId);
+    if (!queue) return;
+    queue.order = order;
+    this.persistQueues();
+  }
+
+  private persistQueues(): void {
+    this.queueStore.save(() => Array.from(this.queues.values()));
+    this.deps.onQueuesChanged?.(Array.from(this.queues.values()));
+  }
+
+  private checkQueueDrained(queueId: string): void {
+    const queue = this.queues.get(queueId);
+    if (!queue || !queue.enabled) return;
+    const hasPending = queue.order.some((id) => {
       const item = this.items.get(id);
-      if (item?.status === 'queued' && !this.running.has(id)) this.start(item);
+      return item && (item.status === 'queued' || ACTIVE_STATUSES.includes(item.status));
+    });
+    if (!hasPending && queue.order.length > 0) {
+      logger.info({ queueId, queueName: queue.name }, 'Queue finished all downloads');
+      if (queue.afterQueue === 'stopQueue') {
+        queue.enabled = false;
+        this.persistQueues();
+      } else if (queue.afterQueue && queue.afterQueue !== 'none') {
+        this.deps.onQueueDrained();
+      }
     }
   }
 
@@ -427,6 +652,7 @@ export class DownloadManager {
         this.markDirty(item);
         this.persist();
         this.pump();
+        this.checkQueueDrained(item.queueId || 'main');
         this.checkDrained();
       });
   }
@@ -615,19 +841,38 @@ export class DownloadManager {
 
   private checkScheduler(): void {
     const { scheduler } = this.deps.getSettings();
-    if (!scheduler.enabled) return;
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const stamp = `${now.toDateString()} ${hhmm}`;
-    if (scheduler.startTime === hhmm && this.schedulerFired.start !== stamp) {
-      this.schedulerFired.start = stamp;
-      logger.info('Scheduler: starting the queue');
-      this.resumeAll();
+
+    if (scheduler.enabled) {
+      if (scheduler.startTime === hhmm && this.schedulerFired.start !== stamp) {
+        this.schedulerFired.start = stamp;
+        logger.info('Scheduler: starting the queue');
+        this.resumeAll();
+      }
+      if (scheduler.stopTime && scheduler.stopTime === hhmm && this.schedulerFired.stop !== stamp) {
+        this.schedulerFired.stop = stamp;
+        logger.info('Scheduler: pausing the queue');
+        this.pauseAll();
+      }
     }
-    if (scheduler.stopTime && scheduler.stopTime === hhmm && this.schedulerFired.stop !== stamp) {
-      this.schedulerFired.stop = stamp;
-      logger.info('Scheduler: pausing the queue');
-      this.pauseAll();
+
+    for (const queue of this.queues.values()) {
+      if (!queue.scheduler?.enabled) continue;
+      const fired = this.queueSchedulerFired.get(queue.id) || { start: '', stop: '' };
+      if (queue.scheduler.startTime === hhmm && fired.start !== stamp) {
+        fired.start = stamp;
+        this.queueSchedulerFired.set(queue.id, fired);
+        logger.info({ queueId: queue.id, queueName: queue.name }, 'Queue scheduler: starting queue');
+        this.startQueue(queue.id);
+      }
+      if (queue.scheduler.stopTime && queue.scheduler.stopTime === hhmm && fired.stop !== stamp) {
+        fired.stop = stamp;
+        this.queueSchedulerFired.set(queue.id, fired);
+        logger.info({ queueId: queue.id, queueName: queue.name }, 'Queue scheduler: stopping queue');
+        this.stopQueue(queue.id);
+      }
     }
   }
 

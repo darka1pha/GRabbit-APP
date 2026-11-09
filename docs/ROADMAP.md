@@ -37,7 +37,8 @@
 | **Phase 2** | Desktop Power User Features | `apps/desktop` | **Completed** ✅ |
 | **Phase 3** | Mobile App Foundation & Native Grabbing | `apps/mobile` | **Completed** ✅ |
 | **Phase 4** | Browser Companion Extension (IDM-style) | `packages/extension`, `apps/desktop` | **Completed** ✅ |
-| **Phase 5** | Desktop Polish & Windows 11 Native Integration | `apps/desktop` | **Next Step** 🔄 |
+| **Phase 5** | Desktop Polish & Windows 11 Native Integration | `apps/desktop` | **Completed** ✅ |
+| **Phase 6** | IDM-Style Multiple Download Queues & Per-Queue Scheduling | `packages/types`, `apps/desktop` | **Completed** ✅ |
 
 ---
 
@@ -128,4 +129,21 @@
 - [x] **Launch on Startup (`openAtLogin`)**:
   - Native Windows startup integration via `app.setLoginItemSettings`.
   - Settings switches to start on Windows boot and launch minimized to system tray (`--hidden`).
+
+---
+
+### Phase 6: IDM-Style Multiple Download Queues & Scheduling (Completed ✅)
+- [x] **Core Queues Architecture (`packages/types`, `apps/desktop/src/main/downloads/manager.ts`)**:
+  - `DownloadQueue` data model with queue ID, name, enabled status, max concurrent downloads, scheduler, after-queue completion actions (`stopQueue`, `quit`, `sleep`, `shutdown`, `none`), and ordered item IDs (`order: string[]`).
+  - Out-of-the-box default queues: **Main Queue** (`main`, enabled by default) and **Scheduled Queue** (`scheduled`).
+  - Queue persistence via `queues.json` with CRUD operations, startup restoration, and automated migrations.
+  - Per-queue concurrency enforcement within global limits and separate queue scheduler ticking.
+- [x] **Desktop Renderer & Interactive Queue Bar (`DownloadsView.tsx`, `QueueConfigModal.tsx`)**:
+  - Horizontal queue pills bar with active status indicators (pulsing green dot when running, muted when stopped), live item counter badges, quick start/stop toggles, and settings modal triggers.
+  - "All Downloads" aggregated view alongside individual queue filtering.
+  - Queue creation and editing modal with custom concurrency limits, daily time windows (start/stop time), and post-completion actions.
+  - Context menu integration: *"Move to Queue: [Queue Name]"* for single or batch-selected download items.
+  - Add Download dialog queue selector with automatic target queue assignment.
+  - Visual queue tags displayed on download rows in the downloads table.
+
 
