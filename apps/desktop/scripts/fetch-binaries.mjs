@@ -1,5 +1,5 @@
 // Puts yt-dlp.exe, ffmpeg.exe and ffprobe.exe into resources/bin so they ship inside the app.
-//   ffmpeg / ffprobe: copied from the ffmpeg-static (FFmpeg 6.x) / @ffprobe-installer npm packages
+//   ffmpeg / ffprobe: copied from the ffmpeg-static / @ffprobe-installer npm packages
 //   yt-dlp:           downloaded from the official GitHub release (only when missing, or with --force)
 // Usage: node scripts/fetch-binaries.mjs [--force]
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -7,16 +7,18 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const binDir = join(root, 'resources', 'bin');
 const force = process.argv.includes('--force');
 const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+const req = createRequire(import.meta.url);
 
 mkdirSync(binDir, { recursive: true });
 
 function copyIfChanged(from, to) {
-  if (!existsSync(from)) {
+  if (!from || !existsSync(from)) {
     console.error(`missing ${from}: run npm install first`);
     process.exitCode = 1;
     return;
@@ -29,8 +31,22 @@ function copyIfChanged(from, to) {
   console.log(`copied  ${to}`);
 }
 
-copyIfChanged(join(root, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'), join(binDir, 'ffmpeg.exe'));
-copyIfChanged(join(root, 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe'), join(binDir, 'ffprobe.exe'));
+let ffmpegSrc;
+try {
+  ffmpegSrc = req('ffmpeg-static');
+} catch {
+  ffmpegSrc = join(root, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
+}
+
+let ffprobeSrc;
+try {
+  ffprobeSrc = req('@ffprobe-installer/ffprobe')?.path;
+} catch {
+  ffprobeSrc = join(root, 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe');
+}
+
+copyIfChanged(ffmpegSrc, join(binDir, 'ffmpeg.exe'));
+copyIfChanged(ffprobeSrc, join(binDir, 'ffprobe.exe'));
 
 const ytdlp = join(binDir, 'yt-dlp.exe');
 if (!force && existsSync(ytdlp)) {

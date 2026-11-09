@@ -5,7 +5,6 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "react": ["./node_modules/@types/react"],
       "@grabbit/api": ["../../packages/api/src"],
       "@grabbit/api/*": ["../../packages/api/src/*"],
       "@grabbit/config": ["../../packages/config/src"],

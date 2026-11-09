@@ -11,6 +11,8 @@ out/
 build/
 release/
 .expo/
+apps/mobile/android/
+apps/mobile/ios/
 *.tsbuildinfo
 
 # Logs & Environment
