@@ -98,6 +98,42 @@ pnpm build
 | [`@grabbit/config`](./packages/config) | Defaults, platforms list, user-agents, categories |
 | [`@grabbit/core`](./packages/core) | Domain logic (platform identification, segment computation) |
 | [`@grabbit/api`](./packages/api) | Unified API client for metadata extraction, recognition, and updates |
+| [`@grabbit/extension`](./packages/extension) | Chrome / Firefox extension for 1-click media grabbing & RPC bridge |
+
+---
+
+## 🛠️ Releases & Packaging
+
+### Desktop App (Windows)
+```bash
+# Package Windows NSIS installer and portable executable into apps/desktop/release/
+pnpm build:desktop
+
+# Test unpacked directory build
+pnpm build:desktop:dir
+```
+
+### Mobile App (Android)
+```bash
+# Export optimized production bundle with Hermes
+pnpm build:mobile:export
+
+# Generate native Android project and build APK locally
+pnpm --filter @grabbit/mobile prebuild:android
+cd apps/mobile/android && ./gradlew assembleRelease
+```
+
+### GitHub Releases Pipeline
+The repository includes an automated CI/CD release workflow in `.github/workflows/release.yml`.
+
+To publish a new version for both Desktop (`.exe` installer & portable) and Mobile (`.apk`):
+1. Tag a release commit:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+2. Or trigger the **Release** workflow manually from the **Actions** tab in GitHub.
+3. The workflow will build all artifacts, generate SHA256 checksums, and publish a GitHub Release with direct download links.
 
 ---
 
