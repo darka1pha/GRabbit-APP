@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "@grabbit/api": ["../../packages/api/src"],
+      "@grabbit/api/*": ["../../packages/api/src/*"],
+      "@grabbit/config": ["../../packages/config/src"],
+      "@grabbit/config/*": ["../../packages/config/src/*"],
+      "@grabbit/core": ["../../packages/core/src"],
+      "@grabbit/core/*": ["../../packages/core/src/*"],
+      "@grabbit/schemas": ["../../packages/schemas/src"],
+      "@grabbit/schemas/*": ["../../packages/schemas/src/*"],
+      "@grabbit/types": ["../../packages/types/src"],
+      "@grabbit/types/*": ["../../packages/types/src/*"],
+      "@grabbit/utils": ["../../packages/utils/src"],
+      "@grabbit/utils/*": ["../../packages/utils/src/*"]
+    }
+  },
+  "include": [
+    "app/**/*",
+    "components/**/*",
+    "services/**/*",
+    "hooks/**/*"
+  ]
+}

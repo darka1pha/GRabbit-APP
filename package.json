@@ -1,0 +1,20 @@
+{
+  "name": "grabbit-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "gRabbit - Media Grabber & Download Manager Monorepo",
+  "packageManager": "pnpm@12.5.1",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "typescript": "^5.8.2"
+  }
+}
+

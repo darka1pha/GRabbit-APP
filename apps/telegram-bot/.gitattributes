@@ -1,0 +1,12 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Enforce LF for shell scripts to prevent '/bin/bash^M: bad interpreter' on Linux
+*.sh text eol=lf
+
+# Enforce LF for workflow, docker, and localization files
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ftl text eol=lf
+Dockerfile text eol=lf
+

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gRabbit Extension Options</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="options-container">
+    <header class="header">
+      <div class="brand">
+        <span class="logo">🐰</span>
+        <div>
+          <h1>gRabbit Companion Settings</h1>
+          <p class="subtitle">Configure desktop integration, download interception rules, and media sniffing.</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- Section 1: Desktop RPC Bridge -->
+      <section class="card">
+        <h2>Desktop RPC Connection</h2>
+        <p class="card-desc">gRabbit extension connects locally to your running gRabbit desktop app via high-speed HTTP RPC.</p>
+
+        <div class="form-group grid-2">
+          <div>
+            <label for="bridgeHost">RPC Host</label>
+            <input type="text" id="bridgeHost" value="127.0.0.1" spellcheck="false" />
+          </div>
+          <div>
+            <label for="bridgePort">RPC Port</label>
+            <input type="number" id="bridgePort" value="31542" min="1024" max="65535" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="bridgeToken">Security Token</label>
+          <input type="text" id="bridgeToken" placeholder="Paste token from gRabbit Desktop -> Settings -> Browser Integration" spellcheck="false" />
+          <span class="hint">The security token protects your desktop queue from unauthorized local requests.</span>
+        </div>
+
+        <div class="test-connection-row">
+          <button id="testBtn" class="btn secondary">Test Connection</button>
+          <div id="testResult" class="test-result" style="display: none;"></div>
+        </div>
+      </section>
+
+      <!-- Section 2: Automatic Download Interception -->
+      <section class="card">
+        <h2>Download Interception Rules</h2>
+        <p class="card-desc">Automatically catch downloads started in Chrome/Edge/Firefox and transfer them directly to gRabbit multi-connection engine.</p>
+
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="interceptDownloads" checked />
+          <label for="interceptDownloads">Enable automatic download interception</label>
+        </div>
+
+        <div class="form-group">
+          <label for="interceptExtensions">Intercepted File Extensions (comma separated)</label>
+          <textarea id="interceptExtensions" rows="3" spellcheck="false"></textarea>
+          <span class="hint">Files with these extensions will be grabbed automatically by gRabbit.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="excludedDomains">Excluded Domains (one per line)</label>
+          <textarea id="excludedDomains" rows="3" spellcheck="false" placeholder="localhost&#10;bank.com"></textarea>
+          <span class="hint">Downloads initiated on these websites will NOT be intercepted.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="minFileSizeMB">Minimum File Size (MB, 0 = all files)</label>
+          <input type="number" id="minFileSizeMB" min="0" max="10000" value="0" style="max-width: 140px;" />
+        </div>
+      </section>
+
+      <!-- Section 3: Video Sniffer -->
+      <section class="card">
+        <h2>Video & Media Sniffer</h2>
+        <p class="card-desc">Detect streaming videos and audio files on web pages with an interactive floating pill.</p>
+
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="enableVideoSniffer" checked />
+          <label for="enableVideoSniffer">Show floating "Download this video" button on media players</label>
+        </div>
+      </section>
+
+      <div class="actions-row">
+        <button id="saveBtn" class="btn primary">Save Settings</button>
+        <button id="resetBtn" class="btn text">Reset to Defaults</button>
+        <span id="saveStatus" class="save-status" style="display: none;"></span>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="index.js"></script>
+</body>
+</html>
+

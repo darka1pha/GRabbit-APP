@@ -1,0 +1,3 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS default_format VARCHAR(32) NOT NULL DEFAULT 'ask';
+

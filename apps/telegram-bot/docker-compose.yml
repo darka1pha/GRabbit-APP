@@ -1,0 +1,111 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grab-bit-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      telegram-bot-api:
+        condition: service_started
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-grabbit}
+      REDIS_URL: redis://redis:6379
+      TEMP_DIR: /app/temp
+      TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-http://telegram-bot-api:8081}
+      YTDLP_PATH: yt-dlp
+      FFMPEG_PATH: ffmpeg
+      FFPROBE_PATH: ffprobe
+    volumes:
+      - temp-media:/app/temp
+      - telegram-bot-api-data:/var/lib/telegram-bot-api:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
+    networks:
+      - grab-bit-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: grab-bit-postgres
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-grabbit}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "54320:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-grabbit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - grab-bit-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: grab-bit-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "63790:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - grab-bit-net
+
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: grab-bit-bot-api
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - telegram-bot-api-data:/var/lib/telegram-bot-api
+      - temp-media:/app/temp
+    ports:
+      - "18081:8081"
+    networks:
+      - grab-bit-net
+
+volumes:
+  pgdata:
+  redisdata:
+  temp-media:
+  telegram-bot-api-data:
+
+networks:
+  grab-bit-net:
+    driver: bridge

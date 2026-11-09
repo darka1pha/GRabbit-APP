@@ -1,0 +1,42 @@
+appId: com.grabbit.desktop
+productName: gRabbit
+copyright: Copyright © 2026 DarkAlpha
+publish:
+  provider: github
+  owner: DarkAlpha
+  repo: gRabbit
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - '*.exe'
+  - from: resources/icon.png
+    to: icon.png
+asar: true
+win:
+  executableName: gRabbit
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: gRabbit
+  uninstallDisplayName: gRabbit
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@grabbit/core": ["./packages/core/src"],
+      "@grabbit/core/*": ["./packages/core/src/*"],
+      "@grabbit/api": ["./packages/api/src"],
+      "@grabbit/api/*": ["./packages/api/src/*"],
+      "@grabbit/types": ["./packages/types/src"],
+      "@grabbit/types/*": ["./packages/types/src/*"],
+      "@grabbit/schemas": ["./packages/schemas/src"],
+      "@grabbit/schemas/*": ["./packages/schemas/src/*"],
+      "@grabbit/utils": ["./packages/utils/src"],
+      "@grabbit/utils/*": ["./packages/utils/src/*"],
+      "@grabbit/config": ["./packages/config/src"],
+      "@grabbit/config/*": ["./packages/config/src/*"]
+    }
+  }
+}
+

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gRabbit</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <span class="logo">🐰</span>
+        <div class="brand-info">
+          <h1>gRabbit</h1>
+          <span class="subtitle">Download Companion</span>
+        </div>
+      </div>
+      <div id="connectionStatus" class="status-pill status-loading">
+        <span class="dot"></span>
+        <span class="status-text">Connecting…</span>
+      </div>
+    </header>
+
+    <div class="quick-add">
+      <div class="input-group">
+        <input type="text" id="urlInput" placeholder="Paste link to download…" spellcheck="false" />
+        <button id="addBtn" class="btn primary">Grab</button>
+      </div>
+      <div id="quickAddMessage" class="message-banner" style="display: none;"></div>
+    </div>
+
+    <div class="quick-settings">
+      <label class="toggle-row">
+        <span>Intercept browser downloads</span>
+        <input type="checkbox" id="interceptToggle" />
+      </label>
+      <label class="toggle-row">
+        <span>Video sniffer button</span>
+        <input type="checkbox" id="snifferToggle" />
+      </label>
+    </div>
+
+    <div class="media-section">
+      <div class="section-title">
+        <span>Media on this Page</span>
+        <span id="mediaCount" class="badge">0</span>
+      </div>
+      <div id="mediaList" class="media-list">
+        <div class="empty-state">No media streams detected on this tab.</div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <button id="optionsBtn" class="btn text">Options & Rules</button>
+      <span class="version">v1.0.0</span>
+    </footer>
+  </div>
+  <script type="module" src="index.js"></script>
+</body>
+</html>
+
