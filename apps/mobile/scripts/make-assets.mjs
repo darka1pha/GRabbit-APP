@@ -133,3 +133,4 @@ for (const [path, size, isFg] of outputs) {
   writeFileSync(path, render(size, isFg));
   console.log(`wrote ${path} (${size}x${size})`);
 }
+
