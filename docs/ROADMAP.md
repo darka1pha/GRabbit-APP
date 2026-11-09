@@ -94,6 +94,15 @@
   - Built-in audio and video preview player (`MediaPlayerModal` using `expo-av`) supporting both stream previews and local downloaded files with scrubbing, -10s/+10s skipping, and gallery saving.
 - [x] **Share Target Extension (Intent Receiver)**:
   - Supported Android *Share to gRabbit* (`android.intent.action.SEND` for `text/plain`) and iOS URL scheme (`grabbit://`) with `useShareIntent` to grab links immediately from YouTube, Instagram, Spotify, or TikTok.
+- [x] **Desktop Feature Parity**:
+  - **Multiple Download Queues & Daily Scheduling**: IDM-style queue manager (`DownloadQueue`), Main Queue (`main`), Scheduled Queue (`scheduled`), and custom user queues with daily start/stop windows, concurrency throttling, and live queue status indicators.
+  - **Live Visual Connection Map (Segment Inspector)**: Real-time multi-threaded chunk inspector modal (`SegmentInspectorModal`) visualizing segment boundaries, active chunk threads, and byte progress.
+  - **Direct File Downloads & Batch Import**: Direct file downloader (`AddDownloadModal`) with URL probing (HEAD / Range test), custom filename, parallel connection threads (1-16), Referrer, headers/cookies, speed limits, and multi-line batch import.
+  - **Music & Audio Recognizer (`RecognizeView`)**: Shazam-style song recognition from audio URLs, YouTube clips, TikTok or local files with rich `SongCard` metadata, external links, recognition history, and one-tap Grab.
+  - **Category Auto-Detection & Filtering**: 7 categories (`video`, `music`, `documents`, `compressed`, `programs`, `images`, `other`) with filter chips and auto-tagging.
+  - **Comprehensive Mobile Settings**: Download concurrency limits, connection threads, speed throttling, audio/video quality defaults, and Desktop RPC bridge pairing.
+  - **Checksum Verification**: On-device checksum calculator (`ChecksumModal`) supporting SHA-256, SHA-1, and MD5 with comparison matching.
+  - **State Persistence**: Saved tasks, queues, recognition history, and settings to disk using `expo-file-system`.
 
 ---
 

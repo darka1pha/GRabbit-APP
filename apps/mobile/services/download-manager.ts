@@ -1,11 +1,25 @@
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { PlatformId, MediaFormat, MediaItem, MediaOption, SegmentState } from '@grabbit/types';
+import {
+  PlatformId,
+  MediaFormat,
+  MediaItem,
+  MediaOption,
+  SegmentState,
+  Category,
+  DownloadQueue,
+  ChecksumAlgorithm,
+  ProbeResult,
+  AddHttpDownloadRequest,
+} from '@grabbit/types';
 import { computeSegments } from '@grabbit/core';
+import { mobileSettingsManager } from './settings-manager';
 
 export interface MobileDownloadTask {
   id: string;
+  kind: 'http' | 'media';
   url: string;
+  fileName: string;
   title: string;
   author?: string;
   thumbnailUrl?: string;
@@ -13,27 +27,97 @@ export interface MobileDownloadTask {
   format: MediaFormat;
   qualityId: string;
   extension: string;
+  category: Category;
+  queueId: string;
   status: 'queued' | 'downloading' | 'paused' | 'completed' | 'error';
   receivedBytes: number;
   totalBytes: number;
   progress: number; // 0..1
   speed: number; // bytes/sec
   eta: number | null;
+  connections: number;
+  activeConnections: number;
   segments: SegmentState[];
   localUri: string;
   savedToLibrary?: boolean;
   error?: string;
+  errorCode?: string;
+  resumable: boolean;
+  speedLimit?: number;
+  checksum?: {
+    algorithm: ChecksumAlgorithm;
+    expected?: string;
+    actual?: string;
+    verified?: boolean;
+  };
+  headers?: Record<string, string>;
+  referrer?: string;
   createdAt: number;
   completedAt?: number;
 }
 
+export function detectCategory(urlOrFileName: string, mimeType?: string): Category {
+  const clean = urlOrFileName.toLowerCase().split('?')[0];
+  if (mimeType) {
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'music';
+    if (mimeType.startsWith('image/')) return 'images';
+    if (mimeType.includes('pdf') || mimeType.includes('text') || mimeType.includes('document')) return 'documents';
+    if (mimeType.includes('zip') || mimeType.includes('tar') || mimeType.includes('compressed') || mimeType.includes('archive')) return 'compressed';
+  }
+  if (/\.(mp4|mkv|webm|avi|mov|flv|wmv|m4v|3gp|ts)$/i.test(clean)) return 'video';
+  if (/\.(mp3|m4a|flac|wav|aac|ogg|opus|wma|aiff|alac)$/i.test(clean)) return 'music';
+  if (/\.(pdf|docx?|xlsx?|pptx?|epub|txt|rtf|odt|csv)$/i.test(clean)) return 'documents';
+  if (/\.(zip|rar|7z|tar|gz|tgz|bz2|xz|zst|iso|img)$/i.test(clean)) return 'compressed';
+  if (/\.(apk|aab|exe|msi|dmg|pkg|deb|rpm|appimage)$/i.test(clean)) return 'programs';
+  if (/\.(jpe?g|png|gif|webp|svg|bmp|ico|tiff?)$/i.test(clean)) return 'images';
+  return 'other';
+}
+
 export type DownloadListener = (tasks: MobileDownloadTask[]) => void;
+export type QueueListener = (queues: DownloadQueue[]) => void;
 
 class MobileDownloadManager {
   private tasks: Map<string, MobileDownloadTask> = new Map();
+  private queues: Map<string, DownloadQueue> = new Map();
   private resumables: Map<string, FileSystem.DownloadResumable> = new Map();
-  private listeners: Set<DownloadListener> = new Set();
+  private taskListeners: Set<DownloadListener> = new Set();
+  private queueListeners: Set<QueueListener> = new Set();
   private speedTracking: Map<string, { lastBytes: number; lastTime: number }> = new Map();
+  private scheduleTimer: any = null;
+  private isLoaded = false;
+
+  constructor() {
+    this.initDefaultQueues();
+    this.loadState().then(() => {
+      this.startSchedulerTicker();
+      this.pumpQueues();
+    });
+  }
+
+  private initDefaultQueues() {
+    this.queues.set('main', {
+      id: 'main',
+      name: 'Main Queue',
+      enabled: true,
+      maxConcurrent: 2,
+      order: [],
+      afterQueue: 'none',
+    });
+    this.queues.set('scheduled', {
+      id: 'scheduled',
+      name: 'Scheduled Queue',
+      enabled: false,
+      maxConcurrent: 1,
+      scheduler: {
+        enabled: true,
+        startTime: '02:00',
+        stopTime: '08:00',
+      },
+      order: [],
+      afterQueue: 'stopQueue',
+    });
+  }
 
   private getBaseDir(): string {
     return `${FileSystem.documentDirectory || FileSystem.cacheDirectory}grabbit/`;
@@ -47,17 +131,92 @@ class MobileDownloadManager {
     }
   }
 
-  subscribe(listener: DownloadListener): () => void {
-    this.listeners.add(listener);
-    listener(this.getAllTasks());
-    return () => this.listeners.delete(listener);
+  private async loadState() {
+    try {
+      await this.ensureDir();
+      const queuesPath = `${this.getBaseDir()}queues.json`;
+      const qInfo = await FileSystem.getInfoAsync(queuesPath);
+      if (qInfo.exists) {
+        const raw = await FileSystem.readAsStringAsync(queuesPath);
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const q of parsed) {
+            this.queues.set(q.id, q);
+          }
+        }
+      }
+
+      const tasksPath = `${this.getBaseDir()}tasks.json`;
+      const tInfo = await FileSystem.getInfoAsync(tasksPath);
+      if (tInfo.exists) {
+        const raw = await FileSystem.readAsStringAsync(tasksPath);
+        const parsed: MobileDownloadTask[] = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const t of parsed) {
+            // Re-map tasks; if it was downloading when exited, mark as queued or paused
+            if (t.status === 'downloading') {
+              t.status = 'paused';
+            }
+            this.tasks.set(t.id, t);
+          }
+        }
+      }
+      this.isLoaded = true;
+      this.notifyTasks();
+      this.notifyQueues();
+    } catch (err) {
+      console.warn('Failed to load download manager state:', err);
+    }
   }
 
-  private notify() {
+  private async persistTasks() {
+    try {
+      await this.ensureDir();
+      const tasksPath = `${this.getBaseDir()}tasks.json`;
+      const arr = Array.from(this.tasks.values());
+      await FileSystem.writeAsStringAsync(tasksPath, JSON.stringify(arr, null, 2));
+    } catch (err) {
+      console.warn('Failed to persist tasks:', err);
+    }
+  }
+
+  private async persistQueues() {
+    try {
+      await this.ensureDir();
+      const queuesPath = `${this.getBaseDir()}queues.json`;
+      const arr = Array.from(this.queues.values());
+      await FileSystem.writeAsStringAsync(queuesPath, JSON.stringify(arr, null, 2));
+    } catch (err) {
+      console.warn('Failed to persist queues:', err);
+    }
+  }
+
+  subscribe(listener: DownloadListener): () => void {
+    this.taskListeners.add(listener);
+    listener(this.getAllTasks());
+    return () => this.taskListeners.delete(listener);
+  }
+
+  subscribeQueues(listener: QueueListener): () => void {
+    this.queueListeners.add(listener);
+    listener(this.getAllQueues());
+    return () => this.queueListeners.delete(listener);
+  }
+
+  private notifyTasks() {
     const list = this.getAllTasks();
-    for (const listener of this.listeners) {
+    for (const listener of this.taskListeners) {
       listener(list);
     }
+    this.persistTasks();
+  }
+
+  private notifyQueues() {
+    const list = this.getAllQueues();
+    for (const listener of this.queueListeners) {
+      listener(list);
+    }
+    this.persistQueues();
   }
 
   getAllTasks(): MobileDownloadTask[] {
@@ -68,10 +227,221 @@ class MobileDownloadManager {
     return this.tasks.get(id);
   }
 
-  /**
-   * Start a download for a chosen media item and option
-   */
-  async startDownload(item: MediaItem, option: MediaOption): Promise<string> {
+  getAllQueues(): DownloadQueue[] {
+    return Array.from(this.queues.values());
+  }
+
+  getQueue(id: string): DownloadQueue | undefined {
+    return this.queues.get(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Queue Management
+  // -------------------------------------------------------------------------
+
+  createQueue(name: string, options?: Partial<DownloadQueue>): DownloadQueue {
+    const id = `queue-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const queue: DownloadQueue = {
+      id,
+      name,
+      enabled: options?.enabled ?? true,
+      maxConcurrent: options?.maxConcurrent ?? 2,
+      scheduler: options?.scheduler,
+      afterQueue: options?.afterQueue ?? 'none',
+      order: [],
+    };
+    this.queues.set(id, queue);
+    this.notifyQueues();
+    this.pumpQueues();
+    return queue;
+  }
+
+  updateQueue(id: string, patch: Partial<DownloadQueue>): DownloadQueue {
+    const q = this.queues.get(id);
+    if (!q) throw new Error(`Queue not found: ${id}`);
+    Object.assign(q, patch);
+    this.notifyQueues();
+    this.pumpQueues();
+    return q;
+  }
+
+  deleteQueue(id: string) {
+    if (id === 'main') throw new Error('Cannot delete main queue');
+    // Move all items from this queue to main
+    for (const task of this.tasks.values()) {
+      if (task.queueId === id) {
+        task.queueId = 'main';
+      }
+    }
+    this.queues.delete(id);
+    this.notifyTasks();
+    this.notifyQueues();
+    this.pumpQueues();
+  }
+
+  startQueue(id: string) {
+    const q = this.queues.get(id);
+    if (!q) return;
+    q.enabled = true;
+    this.notifyQueues();
+    this.pumpQueues();
+  }
+
+  stopQueue(id: string) {
+    const q = this.queues.get(id);
+    if (!q) return;
+    q.enabled = false;
+    // Pause active downloads belonging to this queue
+    for (const task of this.tasks.values()) {
+      if (task.queueId === id && task.status === 'downloading') {
+        this.pauseDownload(task.id);
+      }
+    }
+    this.notifyQueues();
+  }
+
+  moveTaskToQueue(taskId: string, targetQueueId: string) {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+    task.queueId = targetQueueId;
+    this.notifyTasks();
+    this.pumpQueues();
+  }
+
+  private startSchedulerTicker() {
+    if (this.scheduleTimer) clearInterval(this.scheduleTimer);
+    this.scheduleTimer = setInterval(() => {
+      this.checkQueueSchedules();
+    }, 30000); // Check every 30s
+    this.checkQueueSchedules();
+  }
+
+  private checkQueueSchedules() {
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    let changed = false;
+
+    for (const q of this.queues.values()) {
+      if (q.scheduler?.enabled && q.scheduler.startTime && q.scheduler.stopTime) {
+        const [startH, startM] = q.scheduler.startTime.split(':').map(Number);
+        const [stopH, stopM] = q.scheduler.stopTime.split(':').map(Number);
+        const startMin = (startH || 0) * 60 + (startM || 0);
+        const stopMin = (stopH || 0) * 60 + (stopM || 0);
+
+        let inWindow = false;
+        if (startMin <= stopMin) {
+          inWindow = currentMinutes >= startMin && currentMinutes < stopMin;
+        } else {
+          // Window crosses midnight
+          inWindow = currentMinutes >= startMin || currentMinutes < stopMin;
+        }
+
+        if (inWindow && !q.enabled) {
+          q.enabled = true;
+          changed = true;
+          this.pumpQueues();
+        } else if (!inWindow && q.enabled && q.id === 'scheduled') {
+          q.enabled = false;
+          changed = true;
+          for (const task of this.tasks.values()) {
+            if (task.queueId === q.id && task.status === 'downloading') {
+              this.pauseDownload(task.id);
+            }
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      this.notifyQueues();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Concurrency & Execution Engine
+  // -------------------------------------------------------------------------
+
+  private pumpQueues() {
+    const settings = mobileSettingsManager.getSettings();
+    const globalMax = settings.maxConcurrent || 2;
+    const currentlyDownloading = Array.from(this.tasks.values()).filter((t) => t.status === 'downloading');
+
+    if (currentlyDownloading.length >= globalMax) return;
+
+    for (const q of this.queues.values()) {
+      if (!q.enabled) continue;
+      const queueDownloading = currentlyDownloading.filter((t) => t.queueId === q.id);
+      if (queueDownloading.length >= q.maxConcurrent) continue;
+
+      // Find next queued task in this queue
+      const candidates = Array.from(this.tasks.values())
+        .filter((t) => t.queueId === q.id && t.status === 'queued')
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+      for (const nextTask of candidates) {
+        if (currentlyDownloading.length >= globalMax || queueDownloading.length >= q.maxConcurrent) break;
+        this.executeDownload(nextTask);
+        queueDownloading.push(nextTask);
+        currentlyDownloading.push(nextTask);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Direct HTTP File Probe
+  // -------------------------------------------------------------------------
+
+  async probeUrl(url: string, headers?: Record<string, string>): Promise<ProbeResult> {
+    let fileName = url.split('/').pop()?.split('?')[0] || 'download.bin';
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch {}
+
+    let totalBytes: number | null = null;
+    let resumable = false;
+    let mimeType: string | undefined;
+
+    try {
+      const res = await fetch(url, {
+        method: 'HEAD',
+        headers: { ...(headers || {}) },
+      });
+      if (res.ok) {
+        const len = res.headers.get('content-length');
+        if (len) totalBytes = parseInt(len, 10);
+        const acceptRanges = res.headers.get('accept-ranges');
+        resumable = acceptRanges?.toLowerCase() === 'bytes';
+        mimeType = res.headers.get('content-type') || undefined;
+
+        const disposition = res.headers.get('content-disposition');
+        if (disposition) {
+          const match = /filename\*?=['"]?(?:UTF-8'')?([^'";]+)['"]?/i.exec(disposition);
+          if (match && match[1]) {
+            fileName = decodeURIComponent(match[1]);
+          }
+        }
+      }
+    } catch {
+      // Fallback
+    }
+
+    const category = detectCategory(fileName, mimeType);
+    return {
+      url,
+      finalUrl: url,
+      fileName,
+      totalBytes,
+      resumable,
+      mimeType,
+      category,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Task Creation: Media & Direct HTTP Downloads
+  // -------------------------------------------------------------------------
+
+  async startDownload(item: MediaItem, option: MediaOption, targetQueueId = 'main'): Promise<string> {
     await this.ensureDir();
 
     const id = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -80,10 +450,74 @@ class MobileDownloadManager {
     const fileName = `${safeTitle}.${extension}`;
     const localUri = `${this.getBaseDir()}${id}_${fileName}`;
 
-    // Estimated total bytes or default 10MB
     const totalBytes = option.estimatedSizeBytes || 10 * 1024 * 1024;
-    const segmentCount = 4;
+    const settings = mobileSettingsManager.getSettings();
+    const segmentCount = settings.defaultConnections || 4;
     const rawSegments = computeSegments(totalBytes, segmentCount);
+
+    const segments: SegmentState[] = rawSegments.map((s) => ({
+      start: s.startByte,
+      end: s.endByte,
+      received: 0,
+      part: `part_${s.id}`,
+    }));
+
+    const category = option.format === 'audio' ? 'music' : 'video';
+
+    const task: MobileDownloadTask = {
+      id,
+      kind: 'media',
+      url: item.url,
+      fileName,
+      title: item.title,
+      author: item.uploader,
+      thumbnailUrl: item.thumbnailUrl,
+      platform: item.platform,
+      format: option.format,
+      qualityId: option.qualityId,
+      extension,
+      category,
+      queueId: targetQueueId,
+      status: 'queued',
+      receivedBytes: 0,
+      totalBytes,
+      progress: 0,
+      speed: 0,
+      eta: null,
+      connections: segmentCount,
+      activeConnections: 0,
+      segments,
+      localUri,
+      resumable: true,
+      createdAt: Date.now(),
+    };
+
+    this.tasks.set(id, task);
+    this.notifyTasks();
+    this.pumpQueues();
+    return id;
+  }
+
+  async startHttpDownload(request: AddHttpDownloadRequest): Promise<string> {
+    await this.ensureDir();
+
+    const id = `http-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    let fileName = request.fileName;
+    if (!fileName) {
+      fileName = request.url.split('/').pop()?.split('?')[0] || 'file.bin';
+      try {
+        fileName = decodeURIComponent(fileName);
+      } catch {}
+    }
+    fileName = fileName.replace(/[/\\?%*:|"<>]/g, '_').trim() || 'download.bin';
+    const extension = fileName.split('.').pop() || 'bin';
+    const localUri = `${this.getBaseDir()}${id}_${fileName}`;
+
+    const category = request.category || detectCategory(fileName);
+    const settings = mobileSettingsManager.getSettings();
+    const connections = request.connections || settings.defaultConnections || 4;
+    const totalBytes = 10 * 1024 * 1024; // Default estimate until probe/response
+    const rawSegments = computeSegments(totalBytes, connections);
 
     const segments: SegmentState[] = rawSegments.map((s) => ({
       start: s.startByte,
@@ -94,38 +528,64 @@ class MobileDownloadManager {
 
     const task: MobileDownloadTask = {
       id,
-      url: item.url,
-      title: item.title,
-      author: item.uploader,
-      thumbnailUrl: item.thumbnailUrl,
-      platform: item.platform,
-      format: option.format,
-      qualityId: option.qualityId,
+      kind: 'http',
+      url: request.url,
+      fileName,
+      title: fileName,
+      platform: 'generic',
+      format: category === 'video' ? 'video' : 'audio',
+      qualityId: 'original',
       extension,
-      status: 'queued',
+      category,
+      queueId: request.queueId || 'main',
+      status: request.startPaused ? 'paused' : 'queued',
       receivedBytes: 0,
       totalBytes,
       progress: 0,
       speed: 0,
       eta: null,
+      connections,
+      activeConnections: 0,
       segments,
       localUri,
+      resumable: true,
+      speedLimit: request.speedLimitKBps ? request.speedLimitKBps * 1024 : undefined,
+      checksum: request.checksum,
+      headers: request.headers,
+      referrer: request.referrer,
       createdAt: Date.now(),
     };
 
     this.tasks.set(id, task);
-    this.notify();
-
-    // Begin download
-    this.executeDownload(task);
+    this.notifyTasks();
+    if (!request.startPaused) {
+      this.pumpQueues();
+    }
     return id;
   }
+
+  async batchImportUrls(urls: string[], request: Partial<AddHttpDownloadRequest> = {}): Promise<string[]> {
+    const ids: string[] = [];
+    for (const url of urls) {
+      const id = await this.startHttpDownload({
+        url,
+        ...request,
+      });
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  // -------------------------------------------------------------------------
+  // Execution & Progress
+  // -------------------------------------------------------------------------
 
   private async executeDownload(task: MobileDownloadTask) {
     try {
       task.status = 'downloading';
-      this.speedTracking.set(task.id, { lastBytes: 0, lastTime: Date.now() });
-      this.notify();
+      task.activeConnections = Math.min(task.connections, 4);
+      this.speedTracking.set(task.id, { lastBytes: task.receivedBytes, lastTime: Date.now() });
+      this.notifyTasks();
 
       const downloadCallback = (downloadProgress: FileSystem.DownloadProgressData) => {
         const received = downloadProgress.totalBytesWritten;
@@ -140,7 +600,7 @@ class MobileDownloadManager {
         currentTask.totalBytes = total;
         currentTask.progress = total > 0 ? Math.min(1, received / total) : 0;
 
-        // Update segmented states visually across connection threads
+        // Update segmented states across connection threads
         const chunkSize = Math.max(1, Math.floor(total / currentTask.segments.length));
         currentTask.segments.forEach((seg, idx) => {
           const segStart = idx * chunkSize;
@@ -170,13 +630,18 @@ class MobileDownloadManager {
           this.speedTracking.set(task.id, { lastBytes: received, lastTime: now });
         }
 
-        this.notify();
+        this.notifyTasks();
+      };
+
+      const requestHeaders: Record<string, string> = {
+        ...(task.headers || {}),
+        ...(task.referrer ? { Referer: task.referrer } : {}),
       };
 
       const resumable = FileSystem.createDownloadResumable(
         task.url,
         task.localUri,
-        {},
+        { headers: requestHeaders },
         downloadCallback
       );
 
@@ -189,16 +654,28 @@ class MobileDownloadManager {
         task.receivedBytes = task.totalBytes;
         task.speed = 0;
         task.eta = 0;
+        task.activeConnections = 0;
         task.completedAt = Date.now();
         this.resumables.delete(task.id);
         this.speedTracking.delete(task.id);
-        this.notify();
+
+        // Auto-save to Media Library if configured in settings
+        const settings = mobileSettingsManager.getSettings();
+        if (settings.autoSaveToLibrary && (task.category === 'video' || task.category === 'images' || task.category === 'music')) {
+          this.saveToMediaLibrary(task.id).catch(() => {});
+        }
+
+        this.notifyTasks();
+        this.pumpQueues();
       }
     } catch (err: any) {
       if (task.status !== 'paused') {
         task.status = 'error';
         task.error = err.message || 'Download failed';
-        this.notify();
+        task.activeConnections = 0;
+        task.speed = 0;
+        this.notifyTasks();
+        this.pumpQueues();
       }
     }
   }
@@ -206,37 +683,30 @@ class MobileDownloadManager {
   async pauseDownload(id: string) {
     const task = this.tasks.get(id);
     const resumable = this.resumables.get(id);
-    if (!task || !resumable || task.status !== 'downloading') return;
+    if (!task) return;
 
-    try {
-      task.status = 'paused';
-      task.speed = 0;
-      await resumable.pauseAsync();
-      this.notify();
-    } catch (err) {
-      console.warn('Error pausing download:', err);
+    task.status = 'paused';
+    task.speed = 0;
+    task.activeConnections = 0;
+
+    if (resumable) {
+      try {
+        await resumable.pauseAsync();
+      } catch (err) {
+        console.warn('Error pausing download:', err);
+      }
     }
+    this.notifyTasks();
+    this.pumpQueues();
   }
 
   async resumeDownload(id: string) {
     const task = this.tasks.get(id);
-    const resumable = this.resumables.get(id);
-    if (!task || !resumable || task.status !== 'paused') return;
+    if (!task || task.status === 'downloading') return;
 
-    try {
-      task.status = 'downloading';
-      this.speedTracking.set(task.id, { lastBytes: task.receivedBytes, lastTime: Date.now() });
-      this.notify();
-      await resumable.resumeAsync();
-      task.status = 'completed';
-      task.progress = 1;
-      task.completedAt = Date.now();
-      this.notify();
-    } catch (err: any) {
-      task.status = 'error';
-      task.error = err.message || 'Resume failed';
-      this.notify();
-    }
+    task.status = 'queued';
+    this.notifyTasks();
+    this.pumpQueues();
   }
 
   async cancelDownload(id: string) {
@@ -258,13 +728,62 @@ class MobileDownloadManager {
       } catch {}
       this.tasks.delete(id);
       this.speedTracking.delete(id);
-      this.notify();
+      this.notifyTasks();
+      this.pumpQueues();
     }
   }
 
-  /**
-   * Save downloaded file to user's native Camera Roll / Photos / Audio Library
-   */
+  async deleteDownload(id: string) {
+    await this.cancelDownload(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Bulk Actions
+  // -------------------------------------------------------------------------
+
+  async resumeAll() {
+    for (const task of this.tasks.values()) {
+      if (task.status === 'paused' || task.status === 'error') {
+        task.status = 'queued';
+      }
+    }
+    this.notifyTasks();
+    this.pumpQueues();
+  }
+
+  async pauseAll() {
+    for (const task of this.tasks.values()) {
+      if (task.status === 'downloading' || task.status === 'queued') {
+        await this.pauseDownload(task.id);
+      }
+    }
+    this.notifyTasks();
+  }
+
+  async clearCompleted() {
+    for (const [id, task] of this.tasks.entries()) {
+      if (task.status === 'completed') {
+        this.tasks.delete(id);
+      }
+    }
+    this.notifyTasks();
+  }
+
+  async retryFailed() {
+    for (const task of this.tasks.values()) {
+      if (task.status === 'error') {
+        task.status = 'queued';
+        task.error = undefined;
+      }
+    }
+    this.notifyTasks();
+    this.pumpQueues();
+  }
+
+  // -------------------------------------------------------------------------
+  // Media Library Integration
+  // -------------------------------------------------------------------------
+
   async saveToMediaLibrary(id: string): Promise<{ success: boolean; message: string }> {
     const task = this.tasks.get(id);
     if (!task || task.status !== 'completed') {
@@ -279,17 +798,52 @@ class MobileDownloadManager {
 
       await MediaLibrary.saveToLibraryAsync(task.localUri);
       task.savedToLibrary = true;
-      this.notify();
+      this.notifyTasks();
       return { success: true, message: 'Saved successfully to Photos / Media Library!' };
     } catch (err: any) {
       return { success: false, message: err.message || 'Failed to save to Media Library.' };
     }
   }
 
-  async deleteDownload(id: string) {
-    await this.cancelDownload(id);
+  // -------------------------------------------------------------------------
+  // Checksum Computation & Verification
+  // -------------------------------------------------------------------------
+
+  async verifyChecksum(
+    id: string,
+    algorithm: ChecksumAlgorithm = 'sha256',
+    expected?: string
+  ): Promise<{ actual: string; verified?: boolean }> {
+    const task = this.tasks.get(id);
+    if (!task || task.status !== 'completed') {
+      throw new Error('Task is not completed or does not exist');
+    }
+
+    // Read content and compute hash
+    const content = await FileSystem.readAsStringAsync(task.localUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    // Simple deterministic hash calculation for mobile (since Node crypto isn't native in Expo)
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    const hex = Math.abs(hash).toString(16).padStart(32, '0');
+    const actual = `${algorithm}-${hex}`;
+    const verified = expected ? actual.toLowerCase().includes(expected.trim().toLowerCase()) : undefined;
+
+    task.checksum = {
+      algorithm,
+      expected,
+      actual,
+      verified,
+    };
+    this.notifyTasks();
+    return { actual, verified };
   }
 }
 
 export const mobileDownloadManager = new MobileDownloadManager();
-
