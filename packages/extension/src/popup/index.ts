@@ -1,6 +1,6 @@
 import type { DetectedMediaStream, RpcStatusResponse } from '@grabbit/types';
 import { isDirectMediaFileUrl, isStreamingMediaUrl } from '../shared/config';
-import type { ExtensionConfig } from '../types/extension';
+import type { ExtensionConfig, ExtensionUpdateInfo } from '../types/extension';
 
 const connectionStatusEl = document.getElementById('connectionStatus')!;
 const urlInputEl = document.getElementById('urlInput') as HTMLInputElement;
@@ -11,6 +11,12 @@ const snifferToggleEl = document.getElementById('snifferToggle') as HTMLInputEle
 const mediaListEl = document.getElementById('mediaList')!;
 const mediaCountEl = document.getElementById('mediaCount')!;
 const optionsBtnEl = document.getElementById('optionsBtn')!;
+const updateBtnEl = document.getElementById('updateBtn') as HTMLButtonElement;
+const versionTextEl = document.getElementById('versionText')!;
+const updateBannerEl = document.getElementById('updateBanner')!;
+const updateTextEl = document.getElementById('updateText')!;
+const downloadUpdateBtnEl = document.getElementById('downloadUpdateBtn') as HTMLButtonElement;
+const reloadExtBtnEl = document.getElementById('reloadExtBtn') as HTMLButtonElement;
 
 function showQuickMessage(text: string, type: 'success' | 'error'): void {
   quickAddMsgEl.textContent = text;
@@ -249,6 +255,89 @@ optionsBtnEl.addEventListener('click', () => {
   }
 });
 
+function initUpdateControls(): void {
+  try {
+    if (chrome.runtime.getManifest) {
+      const manifest = chrome.runtime.getManifest();
+      if (manifest.version) {
+        versionTextEl.textContent = `v${manifest.version}`;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  let latestDownloadUrl = '';
+  let latestReleaseUrl = 'https://github.com/darka1pha/GRabbit-APP/releases/latest';
+
+  updateBtnEl.addEventListener('click', () => {
+    updateBtnEl.disabled = true;
+    updateBtnEl.textContent = '⏳ Updating…';
+
+    chrome.runtime.sendMessage(
+      { type: 'CHECK_EXTENSION_UPDATE', payload: { autoInstall: true } },
+      (info: ExtensionUpdateInfo) => {
+        updateBtnEl.disabled = false;
+        updateBtnEl.textContent = '↻ Update';
+        updateBannerEl.style.display = 'flex';
+
+        if (info && info.ok) {
+          if (info.downloadUrl) latestDownloadUrl = info.downloadUrl;
+          if (info.releaseUrl) latestReleaseUrl = info.releaseUrl;
+
+          if (info.updateAvailable && info.latestVersion) {
+            updateBannerEl.className = 'update-banner available';
+            if (info.installed) {
+              updateTextEl.textContent = `Updated to v${info.latestVersion}! Reloading…`;
+              downloadUpdateBtnEl.style.display = 'none';
+            } else if (info.downloaded) {
+              updateTextEl.textContent = `Downloaded v${info.latestVersion}! Click Reload to apply.`;
+              downloadUpdateBtnEl.style.display = 'none';
+            } else {
+              updateTextEl.textContent = `New update v${info.latestVersion} available!`;
+              downloadUpdateBtnEl.style.display = 'inline-flex';
+            }
+          } else {
+            updateBannerEl.className = 'update-banner uptodate';
+            updateTextEl.textContent = `Up to date (v${info.currentVersion})`;
+            downloadUpdateBtnEl.style.display = 'none';
+          }
+        } else {
+          updateBannerEl.className = 'update-banner uptodate';
+          updateTextEl.textContent = `v${info?.currentVersion || '1.0.0'} • Click Reload to refresh`;
+          downloadUpdateBtnEl.style.display = 'none';
+        }
+      }
+    );
+  });
+
+  downloadUpdateBtnEl.addEventListener('click', () => {
+    const target = latestDownloadUrl || latestReleaseUrl;
+    if (!target) return;
+    chrome.runtime.sendMessage(
+      {
+        type: 'DOWNLOAD_URL',
+        payload: { url: target },
+      },
+      (res) => {
+        if (res && res.success) {
+          showQuickMessage('Extension update queued in GRabbit Desktop!', 'success');
+        } else {
+          void chrome.tabs.create({ url: latestReleaseUrl });
+        }
+      }
+    );
+  });
+
+  reloadExtBtnEl.addEventListener('click', () => {
+    reloadExtBtnEl.disabled = true;
+    reloadExtBtnEl.textContent = 'Reloading…';
+    chrome.runtime.sendMessage({ type: 'RELOAD_EXTENSION' }, () => {
+      window.close();
+    });
+  });
+}
+
 connectionStatusEl.addEventListener('click', () => {
   void checkConnection();
 });
@@ -257,5 +346,6 @@ connectionStatusEl.addEventListener('click', () => {
 void checkConnection();
 initToggles();
 initQuickAdd();
+initUpdateControls();
 void loadActiveTabMedia();
 

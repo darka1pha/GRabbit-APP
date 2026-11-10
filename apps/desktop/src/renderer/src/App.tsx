@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AudioLines, Download, Gauge, Link, Settings, Sparkles } from 'lucide-react';
-import { CATEGORIES, type Category, type ClipboardLink } from '../../shared/types';
+import { AudioLines, Download, Gauge, Link, LoaderCircle, RotateCw, Settings, Sparkles } from 'lucide-react';
+import { CATEGORIES, type Category, type ClipboardLink, type UpdateStatusInfo } from '../../shared/types';
 import { createTranslator, I18nContext, type MessageKey } from './i18n';
 import { api, AppProvider, useApp } from './state';
 import { formatSpeed, isHttpUrl, looksLikeDirectFile } from './format';
@@ -41,6 +41,14 @@ function Shell() {
   const [addDialog, setAddDialog] = useState<{ url?: string } | null>(null);
   const [grabInput, setGrabInput] = useState<string | null>(null);
   const [clipboardLink, setClipboardLink] = useState<ClipboardLink | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
+
+  useEffect(() => {
+    const unsub = api.updater.onStatus((status) => {
+      setUpdateStatus(status);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -134,6 +142,41 @@ function Shell() {
           </div>
           <div className="spacer" />
           <div className="titlebar-actions">
+            <button
+              className="quick-pill btn ghost"
+              disabled={updateStatus?.state === 'checking' || updateStatus?.state === 'downloading'}
+              onClick={async () => {
+                if (updateStatus?.state === 'downloaded') {
+                  await api.updater.install();
+                  return;
+                }
+                if (updateStatus?.state === 'available') {
+                  await api.updater.download();
+                  return;
+                }
+                const st = await api.updater.check();
+                setUpdateStatus(st);
+                if (st.state === 'not-available') {
+                  toast(`${t('set.upToDate')} (v${st.version || ''})`, 'success');
+                }
+              }}
+              title={t('set.checkForUpdates')}
+            >
+              {updateStatus?.state === 'checking' || updateStatus?.state === 'downloading' ? (
+                <LoaderCircle size={13} className="spin" />
+              ) : (
+                <RotateCw size={13} />
+              )}
+              <span>
+                {updateStatus?.state === 'checking'
+                  ? t('set.checkingUpdates')
+                  : updateStatus?.state === 'downloading'
+                  ? `${updateStatus.progressPercent ?? 0}%`
+                  : updateStatus?.state === 'downloaded'
+                  ? t('set.restartAndInstall')
+                  : 'Update'}
+              </span>
+            </button>
             <button
               className="quick-pill btn ghost"
               onClick={() => void api.pill.submit('', 'grab')}

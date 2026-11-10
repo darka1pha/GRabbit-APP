@@ -1,9 +1,45 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
+import { mobileUpdater, MobileUpdateStatus } from '../services/updater';
 
 const StackNavigator = Stack as any;
+
+function HeaderUpdateButton() {
+  const [status, setStatus] = useState<MobileUpdateStatus>(mobileUpdater.getStatus());
+
+  useEffect(() => {
+    return mobileUpdater.subscribe(setStatus);
+  }, []);
+
+  const busy = status.state === 'checking' || status.state === 'downloading';
+
+  return (
+    <TouchableOpacity
+      style={[styles.updateBtn, busy && { opacity: 0.65 }]}
+      disabled={busy}
+      onPress={async () => {
+        const res = await mobileUpdater.checkAndInstallUpdate();
+        if (res.state === 'up-to-date') {
+          Alert.alert('Up to Date', `GRabbit Mobile v${res.currentVersion} is already on the latest version.`);
+        } else if (res.state === 'error' && res.error) {
+          Alert.alert('Update Error', res.error);
+        }
+      }}
+    >
+      <Ionicons name="refresh-outline" size={14} color="#38bdf8" />
+      <Text style={styles.updateBtnText}>
+        {status.state === 'checking'
+          ? 'Checking…'
+          : status.state === 'downloading'
+          ? `${status.progressPercent ?? 0}%`
+          : 'Update'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -54,13 +90,36 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#020617' },
         }}
       >
-        <StackNavigator.Screen name="index" options={{ title: 'GRabbit' }} />
+        <StackNavigator.Screen
+          name="index"
+          options={{
+            title: 'GRabbit',
+            headerRight: () => <HeaderUpdateButton />,
+          }}
+        />
       </StackNavigator>
     </AppErrorBoundary>
   );
 }
 
 const styles = StyleSheet.create({
+  updateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  updateBtnText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   errorContainer: {
     flex: 1,
     backgroundColor: '#020617',

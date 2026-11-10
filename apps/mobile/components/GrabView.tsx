@@ -20,6 +20,7 @@ import {
 } from '@grabbit/types';
 import { formatBytes, formatDuration, isHttpUrl, looksLikeDirectFile } from '@grabbit/utils';
 import { mobileBridge, PLATFORM_COLORS, PLATFORM_NAMES } from '../services/bridge';
+import { mobileSettingsManager } from '../services/settings-manager';
 import { useDownloads } from '../hooks/useDownloads';
 
 const PLATFORM_CHIPS = [
@@ -131,6 +132,19 @@ export function GrabView({
       onDownloadStarted?.();
     } catch (err: any) {
       Alert.alert('Download Error', err.message || 'Could not start download');
+    }
+  };
+
+  const handleSendToDesktop = async () => {
+    if (!resolvedMeta || !resolvedMeta.items[0]) return;
+    const item = resolvedMeta.items[0];
+    const res = await mobileBridge.sendToDesktop(item.url, { fileName: item.title });
+    if (res.success) {
+      Alert.alert('Sent to Desktop PC', `"${item.title}" was added to your GRabbit Desktop download queue!`);
+      setInput('');
+      setResolvedMeta(null);
+    } else {
+      Alert.alert('Desktop Sync Failed', res.error || 'Could not reach GRabbit Desktop RPC Bridge.');
     }
   };
 
@@ -381,6 +395,16 @@ export function GrabView({
               <Ionicons name="download" size={16} color="#ffffff" />
               <Text style={styles.downloadBtnText}>Download to GRabbit</Text>
             </TouchableOpacity>
+
+            {mobileSettingsManager.getSettings().desktopBridge.enabled && (
+              <TouchableOpacity
+                style={styles.previewBtn}
+                onPress={handleSendToDesktop}
+              >
+                <Ionicons name="desktop-outline" size={16} color="#38bdf8" />
+                <Text style={styles.previewBtnText}>PC</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       )}

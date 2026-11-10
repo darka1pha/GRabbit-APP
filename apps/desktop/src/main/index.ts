@@ -282,10 +282,12 @@ function createTray(): void {
 const rpcBridge = new DesktopRpcBridge({
   manager,
   router,
+  recognizer,
   settings,
   version: app.getVersion(),
   onDownloadAdded: (item) => {
-    notify('Download added from browser', fileLabel(item), () => showWindow('downloads'));
+    showWindow('downloads');
+    notify('Download added from browser / mobile', fileLabel(item), () => showWindow('downloads'));
   },
 });
 
@@ -360,7 +362,8 @@ app.whenReady().then(() => {
     if (next.downloadDir !== previous.downloadDir) mkdirSync(next.downloadDir, { recursive: true });
     if (
       next.extension.enabled !== previous.extension.enabled ||
-      next.extension.port !== previous.extension.port
+      next.extension.port !== previous.extension.port ||
+      next.extension.allowLan !== previous.extension.allowLan
     ) {
       rpcBridge.start();
     }
@@ -392,7 +395,7 @@ app.whenReady().then(() => {
 
   if (s.updates.autoCheck) {
     setTimeout(() => {
-      void updater.checkForUpdates();
+      void updater.checkForUpdates(false);
     }, 6000);
   }
 

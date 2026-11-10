@@ -276,13 +276,86 @@ input[type="checkbox"] {
   color: #818cf8;
 }
 
-/* Footer */
+/* Update Banner & Footer */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #141722;
+  border: 1px solid #282d3f;
+  font-size: 11px;
+}
+
+.update-banner.available {
+  background: rgba(99, 102, 241, 0.14);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: #c7d2fe;
+}
+
+.update-banner.uptodate {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+}
+
+.update-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.update-text {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn.secondary {
+  background: #282d3f;
+  color: #e2e8f0;
+}
+
+.btn.secondary:hover {
+  background: #333a4f;
+}
+
 .footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-top: 1px solid #1e2230;
   padding-top: 8px;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn.update-btn {
+  background: #181b26;
+  border: 1px solid #282d3f;
+  color: #cbd5e1;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+
+.btn.update-btn:hover {
+  background: #282d3f;
+  color: #ffffff;
+  border-color: #6366f1;
 }
 
 .version {

@@ -1,25 +1,97 @@
 import type { DetectedMediaStream } from '@grabbit/types';
 import {
+  DEFAULT_EXTENSION_CONFIG,
   extractFileExtension,
+  extractFilenameFromUrl,
   isDirectMediaFileUrl,
   isStreamingMediaUrl,
+  shouldInterceptDownload,
 } from '../shared/config';
-import type { ExtractedLink } from '../types/extension';
+import type { ExtensionConfig, ExtractedLink } from '../types/extension';
 
 const detectedStreams = new Map<string, DetectedMediaStream>();
 let snifferEnabled = true;
+let currentConfig: ExtensionConfig = { ...DEFAULT_EXTENSION_CONFIG };
+let desktopConnected = false;
 
-// Query extension config for sniffer toggle
-try {
-  chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
-    if (chrome.runtime.lastError) return;
-    if (res && res.config && typeof res.config.enableVideoSniffer === 'boolean') {
-      snifferEnabled = res.config.enableVideoSniffer;
-    }
-  });
-} catch {
-  // ignore
+function refreshConfigAndConnection(): void {
+  try {
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
+      if (chrome.runtime.lastError) return;
+      if (res && res.config) {
+        currentConfig = res.config;
+        if (typeof res.config.enableVideoSniffer === 'boolean') {
+          snifferEnabled = res.config.enableVideoSniffer;
+        }
+      }
+      if (res && typeof res.connected === 'boolean') {
+        desktopConnected = res.connected;
+      }
+    });
+  } catch {
+    // ignore
+  }
 }
+
+// Query extension config & Desktop connection status on load and when window gains focus
+refreshConfigAndConnection();
+window.addEventListener('focus', refreshConfigAndConnection);
+
+// Intercept direct clicks on downloadable <a href="..."> links when GRabbit Desktop is online
+// (Hold Alt while clicking to bypass GRabbit and use the browser's built-in downloader)
+document.addEventListener(
+  'click',
+  (e: MouseEvent) => {
+    if (e.defaultPrevented || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+      return;
+    }
+    if (!currentConfig.interceptDownloads || !desktopConnected) {
+      return;
+    }
+
+    const target = e.target as HTMLElement | null;
+    const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!anchor || !anchor.href) return;
+
+    const href = anchor.href;
+    if (!href.startsWith('http://') && !href.startsWith('https://')) return;
+
+    // Do not intercept navigation to streaming social media pages (those use the floating video grabber)
+    if (isStreamingMediaUrl(href) && !extractFileExtension(href)) return;
+
+    const downloadAttr = anchor.getAttribute('download') || '';
+    if (!shouldInterceptDownload(href, downloadAttr, currentConfig)) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const fileName = downloadAttr || extractFilenameFromUrl(href);
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'DOWNLOAD_URL',
+          payload: {
+            url: href,
+            fileName,
+            referrer: window.location.href,
+          },
+        },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.success) {
+            // Fallback: if Desktop went offline right before click, let browser navigate/download
+            desktopConnected = false;
+            window.location.assign(href);
+          }
+        }
+      );
+    } catch {
+      window.location.assign(href);
+    }
+  },
+  true
+);
 
 // ---------------------------------------------------------------------------
 // Link Extractor for "Download all links"

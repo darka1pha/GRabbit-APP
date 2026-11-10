@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { base64ToBytes, compareSemver, md5Hex, sha1Hex, sha256Hex } from '@grabbit/utils';
 import { detectCategory, mobileDownloadManager } from '../services/download-manager';
+import { extractYouTubeVideoId, mobileBridge } from '../services/bridge';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { mobileRecognizer } from '../services/recognizer';
 
@@ -151,6 +153,48 @@ describe('Mobile App Desktop Feature Parity', () => {
     it('manages recognition history and clears it', async () => {
       await mobileRecognizer.clearHistory();
       expect(mobileRecognizer.getHistory()).toEqual([]);
+    });
+  });
+
+  describe('Cryptographic Checksums & Stream Extraction', () => {
+    it('computes RFC-compliant MD5, SHA-1, and SHA-256 hex digests', () => {
+      // "abc" in Base64 is "YWJj"
+      const bytes = base64ToBytes('YWJj');
+      expect(Array.from(bytes)).toEqual([97, 98, 99]);
+      expect(md5Hex(bytes)).toBe('900150983cd24fb0d6963f7d28e17f72');
+      expect(sha1Hex(bytes)).toBe('a9993e364706816aba3e25717850c26c9cd0d89d');
+      expect(sha256Hex(bytes)).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    });
+
+    it('extracts YouTube video IDs from watch, shorts, and youtu.be URLs', () => {
+      expect(extractYouTubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+      expect(extractYouTubeVideoId('https://youtu.be/dQw4w9WgXcQ?si=123')).toBe('dQw4w9WgXcQ');
+      expect(extractYouTubeVideoId('https://www.youtube.com/shorts/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+      expect(extractYouTubeVideoId('https://music.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    });
+
+    it('resolves direct stream URL immediately when MediaOption carries directStreamUrl', async () => {
+      const resolved = await mobileBridge.resolveDirectStreamUrl(
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'youtube',
+        {
+          format: 'video',
+          qualityId: '720p',
+          label: '720p MP4',
+          extension: 'mp4',
+          estimatedSizeBytes: 5000000,
+          directStreamUrl: 'https://rr1---sn.googlevideo.com/videoplayback?id=123',
+        }
+      );
+      expect(resolved.streamUrl).toBe('https://rr1---sn.googlevideo.com/videoplayback?id=123');
+      expect(resolved.sizeBytes).toBe(5000000);
+    });
+
+    it('compares semantic versions accurately for auto-updater', () => {
+      expect(compareSemver('1.0.1', '1.0.0')).toBe(1);
+      expect(compareSemver('v2.0.0', '1.9.9')).toBe(1);
+      expect(compareSemver('1.0.0', '1.0.0')).toBe(0);
+      expect(compareSemver('1.0.0', '1.2.0')).toBe(-1);
     });
   });
 });

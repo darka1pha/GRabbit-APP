@@ -22,6 +22,8 @@ export interface MediaOption {
   estimatedSizeBytes?: number;
   /** Audio kept in the source codec (no re-encode). */
   isOriginalQuality?: boolean;
+  /** Resolved direct stream URL when extracted client-side (e.g. standalone mobile). */
+  directStreamUrl?: string;
 }
 
 export interface MediaItem {
@@ -248,6 +250,8 @@ export interface ExtensionSettings {
   port: number;
   token: string;
   autoCapture: boolean;
+  /** Bind RPC bridge to 0.0.0.0 so Android companion app can pair over local Wi-Fi. */
+  allowLan?: boolean;
 }
 
 export interface AppSettings {
@@ -362,6 +366,7 @@ export interface ToolInfo {
   ffprobe: { path: string; version: string | null };
   appVersion: string;
   dataDir: string;
+  lanIp?: string;
 }
 
 export interface ClipboardLink {

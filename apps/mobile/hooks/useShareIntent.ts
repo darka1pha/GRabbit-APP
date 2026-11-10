@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as Linking from 'expo-linking';
 import { mobileBridge } from '../services/bridge';
+import { mobileSettingsManager } from '../services/settings-manager';
 
 export function useShareIntent(onUrlReceived?: (url: string) => void) {
   const [sharedUrl, setSharedUrl] = useState<string | null>(null);
@@ -11,6 +12,25 @@ export function useShareIntent(onUrlReceived?: (url: string) => void) {
     try {
       // Check for grabbit:// scheme
       const parsed = Linking.parse(uri);
+
+      // Handle Desktop RPC pairing URI: grabbit://pair?host=...&port=...&token=...
+      if (parsed.path === 'pair' || parsed.hostname === 'pair') {
+        const host = parsed.queryParams?.host ? String(parsed.queryParams.host) : '';
+        const port = parsed.queryParams?.port ? Number(parsed.queryParams.port) : 31542;
+        const token = parsed.queryParams?.token ? String(parsed.queryParams.token) : '';
+        if (host) {
+          void mobileSettingsManager.updateSettings({
+            desktopBridge: {
+              enabled: true,
+              host,
+              port: port || 31542,
+              token,
+            },
+          });
+        }
+        return;
+      }
+
       let targetUrl: string | null = null;
 
       if (parsed.queryParams?.url) {

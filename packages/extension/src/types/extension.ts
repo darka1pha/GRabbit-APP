@@ -20,8 +20,22 @@ export type ExtensionMessageType =
   | 'DOWNLOAD_URL'
   | 'DOWNLOAD_BATCH'
   | 'CHECK_CONNECTION'
+  | 'CHECK_EXTENSION_UPDATE'
+  | 'RELOAD_EXTENSION'
   | 'GET_CONFIG'
   | 'SAVE_CONFIG';
+
+export interface ExtensionUpdateInfo {
+  ok: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  downloadUrl?: string;
+  releaseUrl?: string;
+  installed?: boolean;
+  downloaded?: boolean;
+  error?: string;
+}
 
 export interface ExtensionMessage<T = unknown> {
   type: ExtensionMessageType;
@@ -59,6 +73,8 @@ declare global {
       const id: string;
       const lastError: { message?: string } | undefined;
       function getURL(path: string): string;
+      function getManifest(): { version: string; name: string };
+      function reload(): void;
       function openOptionsPage(callback?: () => void): void;
       function sendMessage<M = any, R = any>(message: M): Promise<R>;
       function sendMessage<M = any, R = any>(
@@ -146,9 +162,12 @@ declare global {
       interface DownloadDelta {
         id: number;
         filename?: { previous?: string; current?: string };
+        mime?: { previous?: string; current?: string };
         state?: { previous?: string; current?: string };
       }
+      function download(options: { url: string; filename?: string }): Promise<number>;
       function pause(downloadId: number): Promise<void>;
+      function resume(downloadId: number): Promise<void>;
       function cancel(downloadId: number): Promise<void>;
       function erase(query: { id: number }): Promise<number[]>;
       function search(

@@ -1,10 +1,12 @@
 import { DEFAULT_INTERCEPTED_EXTENSIONS, DEFAULT_RPC_PORT } from '@grabbit/config';
 import type { ExtensionConfig } from '../types/extension';
 
+const LEGACY_DEFAULT_TOKEN = '519bf7cf-de9e-453f-98d3-fde5db273696';
+
 export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   bridgeHost: '127.0.0.1',
   bridgePort: DEFAULT_RPC_PORT,
-  bridgeToken: '519bf7cf-de9e-453f-98d3-fde5db273696',
+  bridgeToken: '',
   interceptDownloads: true,
   interceptExtensions: [...DEFAULT_INTERCEPTED_EXTENSIONS],
   excludedDomains: ['localhost', '127.0.0.1'],
@@ -66,11 +68,11 @@ export async function loadExtensionConfig(): Promise<ExtensionConfig> {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
       const data = await chrome.storage.sync.get('grabbit_config');
       if (data && data.grabbit_config) {
+        const rawToken = data.grabbit_config.bridgeToken?.trim() ?? '';
         return {
           ...DEFAULT_EXTENSION_CONFIG,
           ...data.grabbit_config,
-          bridgeToken:
-            data.grabbit_config.bridgeToken?.trim() || DEFAULT_EXTENSION_CONFIG.bridgeToken,
+          bridgeToken: rawToken === LEGACY_DEFAULT_TOKEN ? '' : rawToken,
           interceptExtensions: Array.isArray(data.grabbit_config.interceptExtensions)
             ? data.grabbit_config.interceptExtensions
             : DEFAULT_EXTENSION_CONFIG.interceptExtensions,
@@ -96,7 +98,30 @@ export async function saveExtensionConfig(config: Partial<ExtensionConfig>): Pro
   return updated;
 }
 
+const INTERCEPTABLE_MIMES = new Set([
+  'application/octet-stream',
+  'application/x-msdownload',
+  'application/x-msdos-program',
+  'application/x-msi',
+  'application/x-exe',
+  'application/dos-exe',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/x-rar-compressed',
+  'application/vnd.rar',
+  'application/x-7z-compressed',
+  'application/x-tar',
+  'application/gzip',
+  'application/x-gzip',
+  'application/x-bzip2',
+  'application/x-xz',
+  'application/x-iso9660-image',
+  'application/vnd.android.package-archive',
+  'application/x-apple-diskimage',
+]);
+
 export function extractFileExtension(filenameOrUrl: string): string {
+  if (!filenameOrUrl) return '';
   try {
     let clean = filenameOrUrl.split('?')[0].split('#')[0];
     const slashIdx = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
@@ -105,12 +130,46 @@ export function extractFileExtension(filenameOrUrl: string): string {
     }
     const dotIdx = clean.lastIndexOf('.');
     if (dotIdx > 0 && dotIdx < clean.length - 1) {
-      return clean.substring(dotIdx + 1).toLowerCase();
+      const ext = clean.substring(dotIdx + 1).toLowerCase();
+      if (/^[a-z0-9]{1,10}$/.test(ext)) {
+        return ext;
+      }
+    }
+
+    // Check query parameters for embedded filenames (e.g. GitHub Releases / S3 response-content-disposition)
+    if (filenameOrUrl.includes('?')) {
+      const decoded = decodeURIComponent(filenameOrUrl);
+      const dispMatch = /filename\*?=(?:UTF-8'')?["']?([^"';&\s]+)["']?/i.exec(decoded);
+      if (dispMatch?.[1]) {
+        const innerDot = dispMatch[1].lastIndexOf('.');
+        if (innerDot > 0 && innerDot < dispMatch[1].length - 1) {
+          return dispMatch[1].substring(innerDot + 1).toLowerCase();
+        }
+      }
     }
   } catch {
     // ignore
   }
   return '';
+}
+
+export function extractFilenameFromUrl(urlStr: string): string | undefined {
+  if (!urlStr) return undefined;
+  try {
+    const decoded = decodeURIComponent(urlStr);
+    const dispMatch = /filename\*?=(?:UTF-8'')?["']?([^"';&\s]+)["']?/i.exec(decoded);
+    if (dispMatch?.[1]) {
+      return dispMatch[1].replace(/.*[/\\]/, '');
+    }
+    const pathname = new URL(urlStr).pathname;
+    const base = pathname.split('/').filter(Boolean).pop();
+    if (base && base.includes('.')) {
+      return decodeURIComponent(base);
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
 }
 
 export function extractHostname(urlStr: string): string {
@@ -126,22 +185,31 @@ export function shouldInterceptDownload(
   url: string,
   filename: string,
   config: ExtensionConfig,
-  fileSizeBytes?: number
+  fileSizeBytes?: number,
+  originalUrl?: string,
+  mimeType?: string
 ): boolean {
   if (!config.interceptDownloads) {
     return false;
   }
 
-  // Check URL scheme
+  // Check URL scheme (must be http/https, never blob: or data: or chrome-extension:)
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return false;
   }
 
   const host = extractHostname(url);
-  if (host) {
+  const origHost = originalUrl ? extractHostname(originalUrl) : '';
+  if (host || origHost) {
     const isExcluded = config.excludedDomains.some((d) => {
       const target = d.trim().toLowerCase();
-      return target && (host === target || host.endsWith('.' + target));
+      if (!target) return false;
+      return (
+        host === target ||
+        host.endsWith('.' + target) ||
+        origHost === target ||
+        origHost.endsWith('.' + target)
+      );
     });
     if (isExcluded) {
       return false;
@@ -156,15 +224,46 @@ export function shouldInterceptDownload(
     }
   }
 
-  const extFromFilename = extractFileExtension(filename);
-  const extFromUrl = extractFileExtension(url);
-  const targetExt = extFromFilename || extFromUrl;
+  const allowed = new Set(config.interceptExtensions.map((e) => e.trim().toLowerCase().replace(/^\./, '')));
 
-  if (!targetExt) {
-    return false;
+  const candidates = [
+    extractFileExtension(filename),
+    extractFileExtension(url),
+    originalUrl ? extractFileExtension(originalUrl) : '',
+  ].filter(Boolean);
+
+  for (const ext of candidates) {
+    if (allowed.has(ext)) {
+      return true;
+    }
   }
 
-  const allowed = new Set(config.interceptExtensions.map((e) => e.trim().toLowerCase().replace(/^\./, '')));
-  return allowed.has(targetExt);
+  // Also check binary MIME type if URL has no file extension (e.g. CDN signed URLs before filename is resolved)
+  if (mimeType) {
+    const cleanMime = mimeType.split(';')[0].trim().toLowerCase();
+    if (INTERCEPTABLE_MIMES.has(cleanMime)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Compare two semantic version strings (e.g. "1.1.0" vs "1.0.0").
+ * Returns > 0 if a > b, < 0 if a < b, 0 if equal.
+ */
+export function compareSemver(a: string, b: string): number {
+  const cleanA = a.trim().replace(/^v/i, '').split('-')[0];
+  const cleanB = b.trim().replace(/^v/i, '').split('-')[0];
+  const partsA = cleanA.split('.').map((n) => parseInt(n, 10) || 0);
+  const partsB = cleanB.split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(partsA.length, partsB.length, 3);
+  for (let i = 0; i < len; i++) {
+    const va = partsA[i] ?? 0;
+    const vb = partsB[i] ?? 0;
+    if (va !== vb) return va - vb;
+  }
+  return 0;
 }
 

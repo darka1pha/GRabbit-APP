@@ -19,6 +19,7 @@ export class ExtensionRpcClient {
   private headers(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'X-GRabbit-Client': 'browser-extension',
     };
     if (this.config.bridgeToken) {
       headers['X-GRabbit-Token'] = this.config.bridgeToken;
@@ -132,6 +133,36 @@ export class ExtensionRpcClient {
         };
       }
       return (await res.json()) as { success: boolean; count?: number; items?: unknown[] };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  public async installExtensionUpdate(
+    downloadUrl: string,
+    version: string,
+    timeoutMs = 30000
+  ): Promise<{ success: boolean; installedVersion?: string; error?: string }> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      const res = await fetch(`${this.baseUrl()}/extension/update`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ downloadUrl, version }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const errorJson = (await res.json().catch(() => ({}))) as { error?: string };
+        return {
+          success: false,
+          error: errorJson.error || `HTTP ${res.status}`,
+        };
+      }
+      return (await res.json()) as { success: boolean; installedVersion?: string };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

@@ -1,6 +1,6 @@
 import { DEFAULT_EXTENSION_CONFIG } from '../shared/config';
 import { ExtensionRpcClient } from '../shared/rpc-client';
-import type { ExtensionConfig } from '../types/extension';
+import type { ExtensionConfig, ExtensionUpdateInfo } from '../types/extension';
 
 const bridgeHostEl = document.getElementById('bridgeHost') as HTMLInputElement;
 const bridgePortEl = document.getElementById('bridgePort') as HTMLInputElement;
@@ -14,6 +14,10 @@ const excludedDomainsEl = document.getElementById('excludedDomains') as HTMLText
 const minFileSizeMBEl = document.getElementById('minFileSizeMB') as HTMLInputElement;
 
 const enableVideoSnifferEl = document.getElementById('enableVideoSniffer') as HTMLInputElement;
+const checkUpdateBtnEl = document.getElementById('checkUpdateBtn') as HTMLButtonElement;
+const reloadExtensionBtnEl = document.getElementById('reloadExtensionBtn') as HTMLButtonElement;
+const downloadExtUpdateBtnEl = document.getElementById('downloadExtUpdateBtn') as HTMLButtonElement;
+const updateResultEl = document.getElementById('updateResult')!;
 const saveBtnEl = document.getElementById('saveBtn') as HTMLButtonElement;
 const resetBtnEl = document.getElementById('resetBtn') as HTMLButtonElement;
 const saveStatusEl = document.getElementById('saveStatus')!;
@@ -121,6 +125,68 @@ async function init(): Promise<void> {
         }, 3000);
       });
     }
+  });
+
+  // Check for extension updates
+  let latestDownloadUrl = '';
+  let latestReleaseUrl = 'https://github.com/darka1pha/GRabbit-APP/releases/latest';
+
+  checkUpdateBtnEl.addEventListener('click', () => {
+    checkUpdateBtnEl.disabled = true;
+    checkUpdateBtnEl.textContent = 'Updating…';
+    updateResultEl.style.display = 'none';
+    downloadExtUpdateBtnEl.style.display = 'none';
+
+    chrome.runtime.sendMessage(
+      { type: 'CHECK_EXTENSION_UPDATE', payload: { autoInstall: true } },
+      (info: ExtensionUpdateInfo) => {
+        checkUpdateBtnEl.disabled = false;
+        checkUpdateBtnEl.textContent = 'Check & Install Update';
+        updateResultEl.style.display = 'block';
+
+        if (info && info.ok) {
+          if (info.downloadUrl) latestDownloadUrl = info.downloadUrl;
+          if (info.releaseUrl) latestReleaseUrl = info.releaseUrl;
+
+          if (info.updateAvailable && info.latestVersion) {
+            updateResultEl.className = 'test-result success';
+            if (info.installed) {
+              updateResultEl.textContent = `Downloaded & installed v${info.latestVersion}! Reloading extension…`;
+            } else if (info.downloaded) {
+              updateResultEl.textContent = `Downloaded v${info.latestVersion} via GRabbit! Click Reload Extension to apply.`;
+            } else {
+              updateResultEl.textContent = `New version v${info.latestVersion} is available! (Current: v${info.currentVersion})`;
+              downloadExtUpdateBtnEl.style.display = 'inline-flex';
+            }
+          } else {
+            updateResultEl.className = 'test-result success';
+            updateResultEl.textContent = `GRabbit Extension is up to date (v${info.currentVersion}).`;
+          }
+        } else {
+          updateResultEl.className = 'test-result error';
+          updateResultEl.textContent = info?.error || 'Could not check for updates.';
+        }
+      }
+    );
+  });
+
+  downloadExtUpdateBtnEl.addEventListener('click', () => {
+    const target = latestDownloadUrl || latestReleaseUrl;
+    if (!target) return;
+    chrome.runtime.sendMessage({ type: 'DOWNLOAD_URL', payload: { url: target } }, (res) => {
+      if (res && res.success) {
+        updateResultEl.className = 'test-result success';
+        updateResultEl.textContent = 'Extension update queued in GRabbit Desktop!';
+      } else {
+        void chrome.tabs.create({ url: latestReleaseUrl });
+      }
+    });
+  });
+
+  reloadExtensionBtnEl.addEventListener('click', () => {
+    reloadExtensionBtnEl.disabled = true;
+    reloadExtensionBtnEl.textContent = 'Reloading…';
+    chrome.runtime.sendMessage({ type: 'RELOAD_EXTENSION' });
   });
 }
 

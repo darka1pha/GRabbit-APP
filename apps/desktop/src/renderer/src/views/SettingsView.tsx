@@ -285,6 +285,27 @@ export function SettingsView() {
                   <CircleCheck size={12} /> {t('set.extensionListening', { port: s.extension.port })}
                 </span>
               </Setting>
+              <Setting label={t('set.extensionAllowLan')} hint={t('set.extensionAllowLanHint')}>
+                <Switch
+                  checked={s.extension.allowLan !== false}
+                  onChange={(allowLan) => void save({ extension: { allowLan } })}
+                />
+              </Setting>
+              {s.extension.allowLan !== false && tools?.lanIp && (
+                <Setting label={t('set.extensionLanIp')} hint={`http://${tools.lanIp}:${s.extension.port}`}>
+                  <span className="badge mono">{tools.lanIp}:{s.extension.port}</span>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      const uri = `grabbit://pair?host=${encodeURIComponent(tools.lanIp!)}&port=${s.extension.port}&token=${encodeURIComponent(s.extension.token)}`;
+                      void navigator.clipboard.writeText(uri);
+                      toast(t('set.pairingCopied'), 'success');
+                    }}
+                  >
+                    <Copy size={14} /> {t('set.copyPairingCode')}
+                  </button>
+                </Setting>
+              )}
               <Setting label={t('set.extensionPort')}>
                 <LazyInput
                   className="mono"
@@ -413,13 +434,16 @@ export function SettingsView() {
               </button>
             ) : (
               <button
-                className="btn"
-                disabled={checkingUpdates}
+                className="btn primary"
+                disabled={checkingUpdates || updateStatus?.state === 'downloading'}
                 onClick={async () => {
                   setCheckingUpdates(true);
                   try {
                     const status = await api.updater.check();
                     setUpdateStatus(status);
+                    if (status.state === 'not-available') {
+                      toast(`${t('set.upToDate')} (v${status.version ?? tools?.appVersion ?? '1.0.0'})`, 'success');
+                    }
                   } catch (err) {
                     toast(errorText(t, err), 'error');
                   } finally {
@@ -427,8 +451,12 @@ export function SettingsView() {
                   }
                 }}
               >
-                <RotateCw size={14} className={checkingUpdates ? 'spin' : ''} />
-                {checkingUpdates ? t('set.checkingUpdates') : t('set.checkForUpdates')}
+                <RotateCw size={14} className={checkingUpdates || updateStatus?.state === 'downloading' ? 'spin' : ''} />
+                {checkingUpdates
+                  ? t('set.checkingUpdates')
+                  : updateStatus?.state === 'downloading'
+                  ? t('set.downloadingUpdate', { percent: updateStatus.progressPercent ?? 0 })
+                  : t('set.checkForUpdates')}
               </button>
             )}
           </Setting>

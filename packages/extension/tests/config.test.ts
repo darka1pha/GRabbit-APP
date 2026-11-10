@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  compareSemver,
   extractFileExtension,
+  extractFilenameFromUrl,
   extractHostname,
   shouldInterceptDownload,
   DEFAULT_EXTENSION_CONFIG,
@@ -8,11 +10,27 @@ import {
 import type { ExtensionConfig } from '../src/types/extension';
 
 describe('Extension Config & URL Helpers', () => {
-  it('extracts file extensions correctly', () => {
+  it('compares semantic versions accurately for update checks', () => {
+    expect(compareSemver('1.1.0', '1.0.0')).toBeGreaterThan(0);
+    expect(compareSemver('v2.0.0', '1.9.9')).toBeGreaterThan(0);
+    expect(compareSemver('1.0.0', '1.0.0')).toBe(0);
+    expect(compareSemver('1.0.0', '1.0.1')).toBeLessThan(0);
+  });
+  it('extracts file extensions correctly including query content-disposition', () => {
     expect(extractFileExtension('archive.zip')).toBe('zip');
     expect(extractFileExtension('https://example.com/downloads/setup.exe')).toBe('exe');
     expect(extractFileExtension('https://example.com/video.mp4?token=123&quality=1080')).toBe('mp4');
     expect(extractFileExtension('https://example.com/image.png#preview')).toBe('png');
+    expect(
+      extractFileExtension(
+        'https://objects.githubusercontent.com/github-production-release-asset/12345?response-content-disposition=attachment%3B%20filename%3DGRabbit-Setup-1.0.0.exe'
+      )
+    ).toBe('exe');
+    expect(
+      extractFilenameFromUrl(
+        'https://objects.githubusercontent.com/github-production-release-asset/12345?response-content-disposition=attachment%3B%20filename%3DGRabbit-Setup-1.0.0.exe'
+      )
+    ).toBe('GRabbit-Setup-1.0.0.exe');
     expect(extractFileExtension('no-extension-here')).toBe('');
     expect(extractFileExtension('https://example.com/path/')).toBe('');
   });
@@ -92,6 +110,31 @@ describe('Extension Config & URL Helpers', () => {
 
       expect(
         shouldInterceptDownload('https://example.com/large.zip', 'large.zip', sizeConfig, twentyMB)
+      ).toBe(true);
+    });
+
+    it('intercepts redirected CDN downloads using originalUrl or binary MIME type when filename is empty', () => {
+      // GitHub Release / S3 redirect where finalUrl has no extension in path and filename is still ""
+      expect(
+        shouldInterceptDownload(
+          'https://objects.githubusercontent.com/github-production-release-asset/99999?X-Amz-Signature=abc',
+          '',
+          config,
+          undefined,
+          'https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.0.0.exe'
+        )
+      ).toBe(true);
+
+      // Extensionless URL with binary MIME type
+      expect(
+        shouldInterceptDownload(
+          'https://cdn.example.com/download/987654',
+          '',
+          config,
+          undefined,
+          undefined,
+          'application/octet-stream'
+        )
       ).toBe(true);
     });
   });

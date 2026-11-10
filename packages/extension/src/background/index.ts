@@ -1,6 +1,8 @@
 import type { DetectedMediaStream, RpcAddDownloadRequest } from '@grabbit/types';
 import {
+  compareSemver,
   extractFileExtension,
+  extractFilenameFromUrl,
   loadExtensionConfig,
   saveExtensionConfig,
   shouldInterceptDownload,
@@ -11,9 +13,104 @@ import type {
   DownloadUrlPayload,
   ExtensionConfig,
   ExtensionMessage,
+  ExtensionUpdateInfo,
   ExtractedLink,
   MediaDetectedPayload,
 } from '../types/extension';
+
+const GITHUB_LATEST_RELEASE_API = 'https://api.github.com/repos/darka1pha/GRabbit-APP/releases/latest';
+const GITHUB_RELEASES_PAGE = 'https://github.com/darka1pha/GRabbit-APP/releases/latest';
+
+async function checkExtensionUpdate(autoInstall = true): Promise<ExtensionUpdateInfo> {
+  const currentVersion =
+    (typeof chrome !== 'undefined' && chrome.runtime?.getManifest ? chrome.runtime.getManifest().version : null) ||
+    '1.0.0';
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(GITHUB_LATEST_RELEASE_API, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        currentVersion,
+        updateAvailable: false,
+        error: `GitHub API returned HTTP ${res.status}`,
+      };
+    }
+
+    const data = await res.json();
+    const rawTag = String(data?.tag_name || '').trim();
+    const latestVersion = rawTag.replace(/^v/i, '') || currentVersion;
+    const updateAvailable = compareSemver(latestVersion, currentVersion) > 0;
+
+    const assets: Array<{ name?: string; browser_download_url?: string }> = Array.isArray(data?.assets)
+      ? data.assets
+      : [];
+    const extAsset =
+      assets.find((a) => a.name && /extension.*\.zip$/i.test(a.name)) ||
+      assets.find((a) => a.name && /\.zip$/i.test(a.name));
+
+    const downloadUrl =
+      extAsset?.browser_download_url ||
+      `https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v${latestVersion}.zip`;
+    const releaseUrl = data?.html_url || GITHUB_RELEASES_PAGE;
+
+    let installed = false;
+    let downloaded = false;
+
+    if (updateAvailable && autoInstall && downloadUrl) {
+      try {
+        const config = await loadExtensionConfig();
+        const rpc = new ExtensionRpcClient(config);
+        const installRes = await rpc.installExtensionUpdate(downloadUrl, latestVersion);
+        if (installRes.success) {
+          installed = true;
+          downloaded = true;
+        } else {
+          const dlRes = await rpc.addDownload({
+            url: downloadUrl,
+            fileName: `GRabbit-Chrome-Extension-v${latestVersion}.zip`,
+          });
+          if (dlRes.success) {
+            downloaded = true;
+          } else if (typeof chrome !== 'undefined' && chrome.downloads?.download) {
+            await chrome.downloads.download({
+              url: downloadUrl,
+              filename: `GRabbit-Chrome-Extension-v${latestVersion}.zip`,
+            });
+            downloaded = true;
+          }
+        }
+      } catch {
+        // ignore fallback errors
+      }
+    }
+
+    return {
+      ok: true,
+      currentVersion,
+      latestVersion,
+      updateAvailable,
+      downloadUrl,
+      releaseUrl,
+      installed,
+      downloaded,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      currentVersion,
+      updateAvailable: false,
+      error: err instanceof Error ? err.message : 'Could not reach GitHub Releases',
+    };
+  }
+}
 
 // In-memory tab media registry: tabId -> DetectedMediaStream[]
 const tabMediaMap = new Map<number, DetectedMediaStream[]>();
@@ -214,56 +311,80 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Automatic Download Interception
 // ---------------------------------------------------------------------------
 
-async function tryInterceptDownload(downloadItem: chrome.downloads.DownloadItem): Promise<void> {
+async function tryInterceptDownload(
+  downloadItem: chrome.downloads.DownloadItem,
+  suggestedFilename?: string
+): Promise<void> {
   if (interceptedDownloadIds.has(downloadItem.id)) return;
 
   const config = await loadExtensionConfig();
   if (!config.interceptDownloads) return;
 
   const url = downloadItem.finalUrl || downloadItem.url;
-  const filename = downloadItem.filename || '';
+  const originalUrl = downloadItem.url;
+  const rawFilename = suggestedFilename || downloadItem.filename || '';
 
-  if (!shouldInterceptDownload(url, filename, config, downloadItem.totalBytes)) {
+  if (
+    !shouldInterceptDownload(
+      url,
+      rawFilename,
+      config,
+      downloadItem.totalBytes,
+      originalUrl,
+      downloadItem.mime
+    )
+  ) {
     return;
   }
 
-  // Verify GRabbit Desktop is online & authenticated BEFORE canceling the browser download
-  const rpc = new ExtensionRpcClient(config);
-  const ping = await rpc.ping(1500);
-  if (!ping.ok || !ping.data?.authenticated) {
-    return;
-  }
-
+  // Mark immediately to prevent duplicate triggers from onCreated / onDeterminingFilename / onChanged
   interceptedDownloadIds.add(downloadItem.id);
 
-  // Cancel browser download and forward to GRabbit Desktop
+  // Pause browser download immediately so Chrome does not complete or show Save-As while contacting Desktop
   try {
-    await chrome.downloads.cancel(downloadItem.id);
-    await chrome.downloads.erase({ id: downloadItem.id });
-  } catch (err) {
-    console.warn('[GRabbit Extension] Could not cancel browser download:', err);
+    await chrome.downloads.pause(downloadItem.id);
+  } catch {
+    // ignore if already paused or not pausable
   }
 
+  const rpc = new ExtensionRpcClient(config);
   const cookies = await getCookiesHeader(url);
-  const cleanFileName = filename ? filename.replace(/.*[/\\]/, '') : undefined;
-  const res = await rpc.addDownload({
-    url,
-    fileName: cleanFileName,
-    referrer: downloadItem.referrer,
-    cookies,
-    userAgent: navigator.userAgent,
-  });
+  const cleanFileName = rawFilename
+    ? rawFilename.replace(/.*[/\\]/, '')
+    : extractFilenameFromUrl(url) || extractFilenameFromUrl(originalUrl);
+
+  const res = await rpc.addDownload(
+    {
+      url,
+      fileName: cleanFileName,
+      referrer: downloadItem.referrer,
+      cookies,
+      userAgent: navigator.userAgent,
+    },
+    4000
+  );
 
   if (res.success) {
+    // Successfully handed off to GRabbit Desktop — cancel and erase the browser download
+    try {
+      await chrome.downloads.cancel(downloadItem.id);
+      await chrome.downloads.erase({ id: downloadItem.id });
+    } catch (err) {
+      console.warn('[GRabbit Extension] Could not cancel browser download:', err);
+    }
+
     showNotification(
       'Download Captured',
-      `Transferred to GRabbit: ${cleanFileName || url}`
+      `Transferred to GRabbit: ${cleanFileName || res.item?.fileName || url}`
     );
   } else {
-    showNotification(
-      'GRabbit Bridge Offline',
-      `Could not send download to GRabbit. Please ensure GRabbit is running.`
-    );
+    // GRabbit Desktop is not running or unreachable — let the browser finish downloading normally
+    interceptedDownloadIds.delete(downloadItem.id);
+    try {
+      await chrome.downloads.resume(downloadItem.id);
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -271,11 +392,23 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   void tryInterceptDownload(downloadItem);
 });
 
+if (chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+    // Allow Chrome's default filename suggestion to proceed while tryInterceptDownload pauses/cancels if matched
+    try {
+      suggest();
+    } catch {
+      // ignore
+    }
+    void tryInterceptDownload(downloadItem, downloadItem.filename);
+  });
+}
+
 chrome.downloads.onChanged.addListener((delta) => {
-  if (delta.filename?.current && !interceptedDownloadIds.has(delta.id)) {
+  if ((delta.filename?.current || delta.mime?.current) && !interceptedDownloadIds.has(delta.id)) {
     chrome.downloads.search({ id: delta.id }, (items) => {
       if (items && items[0] && items[0].state === 'in_progress') {
-        void tryInterceptDownload(items[0]);
+        void tryInterceptDownload(items[0], delta.filename?.current);
       }
     });
   }
@@ -325,6 +458,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         userAgent: navigator.userAgent,
         startPaused: payload.startPaused,
       });
+      if (res.success) {
+        showNotification(
+          'Download Captured',
+          `Transferred to GRabbit: ${res.item?.fileName || payload.fileName || payload.url}`
+        );
+      }
       sendResponse(res);
     })();
     return true;
@@ -366,7 +505,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   if (message.type === 'GET_CONFIG') {
     void (async () => {
       const config = await loadExtensionConfig();
-      sendResponse({ ok: true, config });
+      const rpc = new ExtensionRpcClient(config);
+      const ping = await rpc.ping(800);
+      sendResponse({
+        ok: true,
+        config,
+        connected: Boolean(ping.ok && ping.data?.authenticated),
+      });
     })();
     return true;
   }
@@ -376,6 +521,40 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     void (async () => {
       const updated = await saveExtensionConfig(patch);
       sendResponse({ ok: true, config: updated });
+    })();
+    return true;
+  }
+
+  if (message.type === 'CHECK_EXTENSION_UPDATE') {
+    void (async () => {
+      const payload = message.payload as { autoInstall?: boolean } | undefined;
+      const info = await checkExtensionUpdate(payload?.autoInstall !== false);
+      sendResponse(info);
+      if (info.installed) {
+        await injectIntoOpenTabs();
+        setTimeout(() => {
+          try {
+            chrome.runtime.reload();
+          } catch {
+            // ignore
+          }
+        }, 600);
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === 'RELOAD_EXTENSION') {
+    void (async () => {
+      await injectIntoOpenTabs();
+      sendResponse({ ok: true });
+      setTimeout(() => {
+        try {
+          chrome.runtime.reload();
+        } catch {
+          // ignore
+        }
+      }, 150);
     })();
     return true;
   }

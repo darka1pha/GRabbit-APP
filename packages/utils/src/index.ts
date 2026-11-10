@@ -145,3 +145,321 @@ export function calculateSpeedAndEta(
   const etaSeconds = Math.ceil(remainingBytes / speedBytesPerSec);
   return { speedBytesPerSec, etaSeconds };
 }
+
+/**
+ * Decode a Base64 string into a Uint8Array (works in Node, Browser, and React Native).
+ */
+export function base64ToBytes(b64: string): Uint8Array {
+  const clean = b64.replace(/[\r\n\s]/g, '');
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+
+  let bufferLength = Math.floor((clean.length * 3) / 4);
+  if (clean.endsWith('==')) bufferLength -= 2;
+  else if (clean.endsWith('=')) bufferLength -= 1;
+
+  const bytes = new Uint8Array(Math.max(0, bufferLength));
+  let p = 0;
+  for (let i = 0; i < clean.length; i += 4) {
+    const e1 = lookup[clean.charCodeAt(i)] ?? 0;
+    const e2 = lookup[clean.charCodeAt(i + 1)] ?? 0;
+    const e3 = lookup[clean.charCodeAt(i + 2)] ?? 0;
+    const e4 = lookup[clean.charCodeAt(i + 3)] ?? 0;
+
+    if (p < bufferLength) bytes[p++] = (e1 << 2) | (e2 >> 4);
+    if (p < bufferLength) bytes[p++] = ((e2 & 15) << 4) | (e3 >> 2);
+    if (p < bufferLength) bytes[p++] = ((e3 & 3) << 6) | (e4 & 63);
+  }
+  return bytes;
+}
+
+function toHex(words: number[], littleEndian = false): string {
+  let out = '';
+  for (const w of words) {
+    if (littleEndian) {
+      for (let i = 0; i < 4; i++) {
+        out += ((w >>> (i * 8)) & 0xff).toString(16).padStart(2, '0');
+      }
+    } else {
+      out += (w >>> 0).toString(16).padStart(8, '0');
+    }
+  }
+  return out;
+}
+
+/**
+ * Compute RFC 1321 MD5 hex digest for a Uint8Array.
+ */
+export function md5Hex(data: Uint8Array): string {
+  const s = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  ];
+  const K = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) {
+    K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
+  }
+
+  const bitLen = data.length * 8;
+  const padLen = ((56 - ((data.length + 1) % 64)) + 64) % 64;
+  const totalLen = data.length + 1 + padLen + 8;
+  const buf = new Uint8Array(totalLen);
+  buf.set(data);
+  buf[data.length] = 0x80;
+  const view = new DataView(buf.buffer);
+  view.setUint32(totalLen - 8, bitLen >>> 0, true);
+  view.setUint32(totalLen - 4, Math.floor(bitLen / 0x100000000) >>> 0, true);
+
+  let a0 = 0x67452301;
+  let b0 = 0xefcdab89;
+  let c0 = 0x98badcfe;
+  let d0 = 0x10325476;
+
+  const M = new Uint32Array(16);
+  for (let offset = 0; offset < totalLen; offset += 64) {
+    for (let j = 0; j < 16; j++) {
+      M[j] = view.getUint32(offset + j * 4, true);
+    }
+    let A = a0;
+    let B = b0;
+    let C = c0;
+    let D = d0;
+
+    for (let i = 0; i < 64; i++) {
+      let F = 0;
+      let g = 0;
+      if (i < 16) {
+        F = (B & C) | (~B & D);
+        g = i;
+      } else if (i < 32) {
+        F = (D & B) | (~D & C);
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        F = B ^ C ^ D;
+        g = (3 * i + 5) % 16;
+      } else {
+        F = C ^ (B | ~D);
+        g = (7 * i) % 16;
+      }
+      const temp = D;
+      D = C;
+      C = B;
+      const sum = (A + F + K[i] + M[g]) >>> 0;
+      const rot = ((sum << s[i]) | (sum >>> (32 - s[i]))) >>> 0;
+      B = (B + rot) >>> 0;
+      A = temp;
+    }
+
+    a0 = (a0 + A) >>> 0;
+    b0 = (b0 + B) >>> 0;
+    c0 = (c0 + C) >>> 0;
+    d0 = (d0 + D) >>> 0;
+  }
+
+  return toHex([a0, b0, c0, d0], true);
+}
+
+/**
+ * Compute FIPS 180-4 SHA-1 hex digest for a Uint8Array.
+ */
+export function sha1Hex(data: Uint8Array): string {
+  const bitLen = data.length * 8;
+  const padLen = ((56 - ((data.length + 1) % 64)) + 64) % 64;
+  const totalLen = data.length + 1 + padLen + 8;
+  const buf = new Uint8Array(totalLen);
+  buf.set(data);
+  buf[data.length] = 0x80;
+  const view = new DataView(buf.buffer);
+  view.setUint32(totalLen - 8, Math.floor(bitLen / 0x100000000) >>> 0, false);
+  view.setUint32(totalLen - 4, bitLen >>> 0, false);
+
+  let h0 = 0x67452301;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
+  let h3 = 0x10325476;
+  let h4 = 0xc3d2e1f0;
+
+  const W = new Uint32Array(80);
+  for (let offset = 0; offset < totalLen; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      W[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 80; i++) {
+      const n = W[i - 3] ^ W[i - 8] ^ W[i - 14] ^ W[i - 16];
+      W[i] = ((n << 1) | (n >>> 31)) >>> 0;
+    }
+
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+
+    for (let i = 0; i < 80; i++) {
+      let f = 0;
+      let k = 0;
+      if (i < 20) {
+        f = (b & c) | (~b & d);
+        k = 0x5a827999;
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ed9eba1;
+      } else if (i < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8f1bbcdc;
+      } else {
+        f = b ^ c ^ d;
+        k = 0xca62c1d6;
+      }
+      const rotA = ((a << 5) | (a >>> 27)) >>> 0;
+      const temp = (rotA + f + e + k + W[i]) >>> 0;
+      e = d;
+      d = c;
+      c = ((b << 30) | (b >>> 2)) >>> 0;
+      b = a;
+      a = temp;
+    }
+
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+  }
+
+  return toHex([h0, h1, h2, h3, h4], false);
+}
+
+/**
+ * Compute FIPS 180-4 SHA-256 hex digest for a Uint8Array.
+ */
+export function sha256Hex(data: Uint8Array): string {
+  const K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ]);
+
+  const bitLen = data.length * 8;
+  const padLen = ((56 - ((data.length + 1) % 64)) + 64) % 64;
+  const totalLen = data.length + 1 + padLen + 8;
+  const buf = new Uint8Array(totalLen);
+  buf.set(data);
+  buf[data.length] = 0x80;
+  const view = new DataView(buf.buffer);
+  view.setUint32(totalLen - 8, Math.floor(bitLen / 0x100000000) >>> 0, false);
+  view.setUint32(totalLen - 4, bitLen >>> 0, false);
+
+  let h0 = 0x6a09e667;
+  let h1 = 0xbb67ae85;
+  let h2 = 0x3c6ef372;
+  let h3 = 0xa54ff53a;
+  let h4 = 0x510e527f;
+  let h5 = 0x9b05688c;
+  let h6 = 0x1f83d9ab;
+  let h7 = 0x5be0cd19;
+
+  const W = new Uint32Array(64);
+  const rotr = (x: number, n: number) => ((x >>> n) | (x << (32 - n))) >>> 0;
+
+  for (let offset = 0; offset < totalLen; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      W[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(W[i - 15], 7) ^ rotr(W[i - 15], 18) ^ (W[i - 15] >>> 3);
+      const s1 = rotr(W[i - 2], 17) ^ rotr(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+    }
+
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    let f = h5;
+    let g = h6;
+    let h = h7;
+
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+    h5 = (h5 + f) >>> 0;
+    h6 = (h6 + g) >>> 0;
+    h7 = (h7 + h) >>> 0;
+  }
+
+  return toHex([h0, h1, h2, h3, h4, h5, h6, h7], false);
+}
+
+/**
+ * Compute cryptographic hash digest in lowercase hex for MD5, SHA-1, or SHA-256.
+ */
+export function computeHashHex(data: Uint8Array, algorithm: 'md5' | 'sha1' | 'sha256' | 'sha512' = 'sha256'): string {
+  switch (algorithm) {
+    case 'md5':
+      return md5Hex(data);
+    case 'sha1':
+      return sha1Hex(data);
+    case 'sha256':
+    case 'sha512':
+    default:
+      return sha256Hex(data);
+  }
+}
+
+/**
+ * Compare two semantic version strings (e.g. "1.2.0" vs "1.0.0" or "v1.2.0").
+ * Returns 1 if a > b, -1 if a < b, 0 if equal.
+ */
+export function compareSemver(a: string, b: string): number {
+  const cleanA = String(a || '')
+    .replace(/^v/i, '')
+    .split('-')[0]
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0);
+  const cleanB = String(b || '')
+    .replace(/^v/i, '')
+    .split('-')[0]
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(cleanA.length, cleanB.length, 3);
+  for (let i = 0; i < len; i++) {
+    const va = cleanA[i] ?? 0;
+    const vb = cleanB[i] ?? 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+

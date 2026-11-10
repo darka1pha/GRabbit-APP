@@ -10,19 +10,35 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { mobileSettingsManager, MobileSettings } from '../services/settings-manager';
 import { useDownloads } from '../hooks/useDownloads';
 import { mobileRecognizer } from '../services/recognizer';
+import { mobileUpdater, MobileUpdateStatus } from '../services/updater';
 
 export function SettingsView() {
   const [settings, setSettings] = useState<MobileSettings>(mobileSettingsManager.getSettings());
+  const [updateStatus, setUpdateStatus] = useState<MobileUpdateStatus>(mobileUpdater.getStatus());
   const { clearCompleted } = useDownloads();
 
   useEffect(() => {
     mobileSettingsManager.loadSettings().then(setSettings);
-    const unsub = mobileSettingsManager.subscribe(setSettings);
-    return unsub;
+    const unsubSettings = mobileSettingsManager.subscribe(setSettings);
+    const unsubUpdater = mobileUpdater.subscribe(setUpdateStatus);
+    return () => {
+      unsubSettings();
+      unsubUpdater();
+    };
   }, []);
+
+  const handleCheckAndUpdate = async () => {
+    const res = await mobileUpdater.checkAndInstallUpdate();
+    if (res.state === 'up-to-date') {
+      Alert.alert('Up to Date', `GRabbit Mobile v${res.currentVersion} is already on the latest version.`);
+    } else if (res.state === 'error' && res.error) {
+      Alert.alert('Update Error', res.error);
+    }
+  };
 
   const update = (patch: Partial<MobileSettings>) => {
     mobileSettingsManager.updateSettings(patch);
@@ -46,6 +62,30 @@ export function SettingsView() {
       }
     } catch (err: any) {
       Alert.alert('Connection Error', `Could not reach ${host}:${port}. Ensure desktop app is running and on the same WiFi network.`);
+    }
+  };
+
+  const handlePastePairingUri = async () => {
+    try {
+      const raw = (await Clipboard.getStringAsync()).trim();
+      if (!raw) {
+        Alert.alert('Clipboard Empty', 'Copy the Mobile Pairing URI from GRabbit Desktop Settings first.');
+        return;
+      }
+      if (raw.startsWith('grabbit://pair')) {
+        const u = new URL(raw.replace('grabbit://pair', 'http://localhost/pair'));
+        const host = u.searchParams.get('host') || settings.desktopBridge.host;
+        const port = Number(u.searchParams.get('port')) || 31542;
+        const token = u.searchParams.get('token') || '';
+        await mobileSettingsManager.updateSettings({
+          desktopBridge: { enabled: true, host, port, token },
+        });
+        Alert.alert('Paired!', `Configured Desktop Bridge at ${host}:${port}`);
+        return;
+      }
+      Alert.alert('Invalid Pairing Code', 'Clipboard does not contain a grabbit://pair URI.');
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to parse pairing URI from clipboard.');
     }
   };
 
@@ -281,10 +321,19 @@ export function SettingsView() {
                 />
               </View>
 
-              <TouchableOpacity style={styles.testRpcBtn} onPress={handleTestDesktopRpc}>
-                <Ionicons name="wifi-outline" size={16} color="#ffffff" />
-                <Text style={styles.testRpcBtnText}>Test Desktop Connection</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity style={[styles.testRpcBtn, { flex: 1 }]} onPress={handleTestDesktopRpc}>
+                  <Ionicons name="wifi-outline" size={16} color="#ffffff" />
+                  <Text style={styles.testRpcBtnText}>Test Connection</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.testRpcBtn, { flex: 1, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' }]}
+                  onPress={handlePastePairingUri}
+                >
+                  <Ionicons name="clipboard-outline" size={16} color="#38bdf8" />
+                  <Text style={[styles.testRpcBtnText, { color: '#38bdf8' }]}>Paste Pairing URI</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </View>
@@ -327,10 +376,56 @@ export function SettingsView() {
         </View>
       </View>
 
+      {/* App Updates */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Ionicons name="cloud-download-outline" size={18} color="#38bdf8" />
+          <Text style={styles.sectionTitle}>App Updates</Text>
+        </View>
+        <View style={styles.card}>
+          <View style={styles.settingRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingLabel}>GRabbit Mobile v{updateStatus.currentVersion}</Text>
+              <Text style={styles.settingHint}>
+                {updateStatus.state === 'checking'
+                  ? 'Checking GitHub Releases for latest APK…'
+                  : updateStatus.state === 'downloading'
+                  ? `Downloading v${updateStatus.latestVersion} (${updateStatus.progressPercent ?? 0}%)…`
+                  : updateStatus.state === 'installing'
+                  ? `Launching Android installer for v${updateStatus.latestVersion}…`
+                  : updateStatus.state === 'up-to-date'
+                  ? `Up to date (v${updateStatus.currentVersion})`
+                  : updateStatus.state === 'error'
+                  ? updateStatus.error || 'Could not check for updates'
+                  : 'Check & automatically download + install latest version if outdated'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.testRpcBtn,
+                { paddingHorizontal: 14, marginTop: 0 },
+                (updateStatus.state === 'checking' || updateStatus.state === 'downloading') && { opacity: 0.6 },
+              ]}
+              disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
+              onPress={handleCheckAndUpdate}
+            >
+              <Ionicons name="refresh-outline" size={15} color="#ffffff" />
+              <Text style={styles.testRpcBtnText}>
+                {updateStatus.state === 'checking'
+                  ? 'Checking…'
+                  : updateStatus.state === 'downloading'
+                  ? `${updateStatus.progressPercent ?? 0}%`
+                  : 'Update'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
       {/* About */}
       <View style={styles.aboutCard}>
         <Text style={styles.aboutTitle}>🐰 GRabbit Mobile</Text>
-        <Text style={styles.aboutVersion}>v1.0.0 Monorepo Edition</Text>
+        <Text style={styles.aboutVersion}>v{updateStatus.currentVersion} Monorepo Edition</Text>
         <Text style={styles.aboutDesc}>
           Cross-platform segmented download manager & media grabber powered by Expo & @grabbit core engines.
         </Text>

@@ -1,4 +1,8 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { URL } from 'node:url';
 import type {
   AddHttpDownloadRequest,
@@ -11,12 +15,15 @@ import type {
 import type { DownloadManager } from './downloads/manager';
 import type { SettingsService } from './settings';
 import type { PlatformRouter } from './media/router';
+import type { MusicRecognizer } from './media/recognizer';
+import { YtDlpRunner } from './media/ytdlp-runner';
 import { detectPlatform, parseHttpUrl } from './media/url-parser';
 import { logger } from './logger';
 
 export interface RpcBridgeDeps {
   manager: DownloadManager;
   router: PlatformRouter;
+  recognizer?: MusicRecognizer;
   settings: SettingsService;
   version: string;
   onDownloadAdded?: (item: DownloadItem) => void;
@@ -25,6 +32,7 @@ export interface RpcBridgeDeps {
 export class DesktopRpcBridge {
   private server: Server | null = null;
   private currentPort = 0;
+  private currentHost = '127.0.0.1';
   private running = false;
 
   constructor(private readonly deps: RpcBridgeDeps) {}
@@ -36,7 +44,8 @@ export class DesktopRpcBridge {
       return;
     }
 
-    if (this.running && this.currentPort === s.port) {
+    const bindHost = s.allowLan !== false ? '0.0.0.0' : '127.0.0.1';
+    if (this.running && this.currentPort === s.port && this.currentHost === bindHost) {
       return;
     }
 
@@ -44,18 +53,19 @@ export class DesktopRpcBridge {
 
     const server = createServer((req, res) => this.handleRequest(req, res));
     this.currentPort = s.port;
+    this.currentHost = bindHost;
 
     server.on('error', (err: NodeJS.ErrnoException) => {
-      logger.error({ port: s.port, err: err.message }, 'RPC bridge server error');
+      logger.error({ port: s.port, host: bindHost, err: err.message }, 'RPC bridge server error');
       if (err.code === 'EADDRINUSE') {
         logger.warn({ port: s.port }, 'RPC bridge port already in use');
       }
     });
 
-    server.listen(s.port, '127.0.0.1', () => {
+    server.listen(s.port, bindHost, () => {
       this.running = true;
       this.server = server;
-      logger.info({ port: s.port }, 'Desktop RPC bridge listening on 127.0.0.1');
+      logger.info({ port: s.port, host: bindHost }, 'Desktop RPC bridge listening');
     });
   }
 
@@ -116,14 +126,21 @@ export class DesktopRpcBridge {
       return true;
     }
 
-    // Allow local browser extension requests (Origin: chrome-extension:// or moz-extension://)
+    // Allow local browser extension requests (Origin: chrome-extension:// or moz-extension:// or X-GRabbit-Client: browser-extension from loopback)
     const origin = req.headers['origin'];
-    if (
+    const clientHeader = req.headers['x-grabbit-client'];
+    const remoteAddr = req.socket?.remoteAddress || '';
+    const isLoopback =
+      remoteAddr === '127.0.0.1' ||
+      remoteAddr === '::1' ||
+      remoteAddr === '::ffff:127.0.0.1';
+    const isExtensionOrigin =
       typeof origin === 'string' &&
-      (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://')) &&
-      !headerToken &&
-      !authHeader &&
-      !queryToken
+      (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'));
+
+    if (
+      isExtensionOrigin ||
+      (isLoopback && clientHeader === 'browser-extension')
     ) {
       return true;
     }
@@ -260,14 +277,118 @@ export class DesktopRpcBridge {
         return;
       }
 
-      if (req.method === 'POST' && pathname === '/media/resolve') {
+      if (req.method === 'POST' && (pathname === '/media/resolve' || pathname === '/api/resolve')) {
         const body = await this.readBodyJson<{ url: string }>(req);
         if (!body.url) {
           this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
           return;
         }
         const metadata = await this.deps.router.resolve(body.url);
-        this.sendJson(res, 200, { success: true, metadata });
+        this.sendJson(res, 200, { success: true, metadata, ...metadata });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/downloads/list') {
+        this.sendJson(res, 200, { success: true, items: this.deps.manager.list() });
+        return;
+      }
+
+      if (req.method === 'POST' && (pathname === '/media/recognize' || pathname === '/api/recognize')) {
+        const body = await this.readBodyJson<{ url?: string }>(req);
+        if (!body.url || !this.deps.recognizer) {
+          this.sendJson(res, 400, { success: false, error: 'Field "url" is required or recognizer unavailable' });
+          return;
+        }
+        const track = await this.deps.recognizer.identifyUrl(parseHttpUrl(body.url).toString());
+        this.sendJson(res, 200, track ?? { title: null });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/media/stream') {
+        const body = await this.readBodyJson<{ url: string; format?: 'audio' | 'video'; qualityId?: string }>(req);
+        if (!body.url) {
+          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
+          return;
+        }
+        const ytdlp = new YtDlpRunner();
+        const meta = await ytdlp.getMetadata(body.url);
+        const formats = Array.isArray(meta.formats) ? meta.formats : [];
+        const directFormats = formats.filter((f) => typeof (f as any).url === 'string' && !(f as any).url.includes('.m3u8'));
+        let chosen: any = null;
+        if (body.format === 'audio') {
+          chosen =
+            directFormats
+              .filter((f) => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'))
+              .sort((a, b) => (b.tbr || 0) - (a.tbr || 0))[0] ??
+            directFormats.filter((f) => f.acodec && f.acodec !== 'none').pop();
+        } else {
+          const targetHeight = parseInt((body.qualityId || '1080').replace(/\D/g, ''), 10) || 1080;
+          const muxed = directFormats.filter(
+            (f) => f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none'
+          );
+          chosen =
+            muxed.filter((f) => (f.height || 0) <= targetHeight).sort((a, b) => (b.height || 0) - (a.height || 0))[0] ??
+            muxed.sort((a, b) => (b.height || 0) - (a.height || 0))[0] ??
+            directFormats.filter((f) => f.vcodec && f.vcodec !== 'none').pop();
+        }
+        const streamUrl = chosen?.url || (typeof (meta as any).url === 'string' ? (meta as any).url : null);
+        if (!streamUrl) {
+          this.sendJson(res, 404, { success: false, error: 'No direct stream URL found' });
+          return;
+        }
+        this.sendJson(res, 200, {
+          success: true,
+          streamUrl,
+          ext: chosen?.ext || (body.format === 'audio' ? 'm4a' : 'mp4'),
+          sizeBytes: chosen?.filesize || chosen?.filesize_approx,
+          headers: (chosen as any)?.http_headers || (meta as any)?.http_headers,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/extension/update') {
+        const body = await this.readBodyJson<{ downloadUrl?: string; version?: string }>(req);
+        if (!body.downloadUrl) {
+          this.sendJson(res, 400, { success: false, error: 'Field "downloadUrl" is required' });
+          return;
+        }
+        const version = String(body.version || 'latest').replace(/[^a-zA-Z0-9._-]/g, '');
+        const zipRes = await fetch(body.downloadUrl);
+        if (!zipRes.ok) {
+          this.sendJson(res, 502, { success: false, error: `Failed to download extension zip (HTTP ${zipRes.status})` });
+          return;
+        }
+        const buf = Buffer.from(await zipRes.arrayBuffer());
+        const zipPath = join(tmpdir(), `GRabbit-Chrome-Extension-v${version}.zip`);
+        writeFileSync(zipPath, buf);
+
+        const targetDirs: string[] = [];
+        const downloadDir = this.deps.settings.get().downloadDir;
+        if (downloadDir) {
+          const dlExtDir = join(downloadDir, 'GRabbit-Chrome-Extension');
+          mkdirSync(dlExtDir, { recursive: true });
+          targetDirs.push(dlExtDir);
+        }
+        const localRepoDist = resolve(process.cwd(), 'packages/extension/dist');
+        if (existsSync(localRepoDist)) {
+          targetDirs.push(localRepoDist);
+        }
+
+        for (const dest of targetDirs) {
+          await new Promise<void>((resolveExec) => {
+            execFile(
+              'powershell.exe',
+              ['-NoProfile', '-Command', `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`],
+              () => resolveExec()
+            );
+          });
+        }
+
+        this.sendJson(res, 200, {
+          success: true,
+          installedVersion: version,
+          extractedDirs: targetDirs,
+        });
         return;
       }
 

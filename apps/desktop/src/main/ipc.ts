@@ -1,5 +1,6 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { dirname } from 'node:path';
 import {
   IPC,
@@ -169,12 +170,28 @@ export function registerIpc(deps: IpcDeps): void {
   handle(IPC.toolsInfo, async (): Promise<ToolInfo> => {
     const cfg = getMediaConfig();
     const [y, f, p] = await Promise.all([ytdlp.getVersion(), new FFmpegRunner().getVersion(), new FFprobeRunner().getVersion()]);
+    let lanIp: string | undefined;
+    try {
+      const nets = networkInterfaces();
+      for (const iface of Object.values(nets)) {
+        for (const addr of iface ?? []) {
+          if (addr.family === 'IPv4' && !addr.internal && !addr.address.startsWith('169.254.')) {
+            lanIp = addr.address;
+            break;
+          }
+        }
+        if (lanIp) break;
+      }
+    } catch {
+      // ignore
+    }
     return {
       ytdlp: { path: cfg.ytdlpPath, version: y },
       ffmpeg: { path: cfg.ffmpegPath, version: f },
       ffprobe: { path: cfg.ffprobePath, version: p },
       appVersion: deps.appVersion,
       dataDir: deps.dataDir,
+      lanIp,
     };
   });
   handle(IPC.toolsUpdateYtDlp, async () => {

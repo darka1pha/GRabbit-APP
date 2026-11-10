@@ -13,12 +13,15 @@ import {
   AddHttpDownloadRequest,
 } from '@grabbit/types';
 import { computeSegments } from '@grabbit/core';
+import { base64ToBytes, computeHashHex } from '@grabbit/utils';
 import { mobileSettingsManager } from './settings-manager';
+import { mobileBridge } from './bridge';
 
 export interface MobileDownloadTask {
   id: string;
   kind: 'http' | 'media';
   url: string;
+  streamUrl?: string;
   fileName: string;
   title: string;
   author?: string;
@@ -468,6 +471,7 @@ class MobileDownloadManager {
       id,
       kind: 'media',
       url: item.url,
+      streamUrl: option.directStreamUrl,
       fileName,
       title: item.title,
       author: item.uploader,
@@ -633,13 +637,33 @@ class MobileDownloadManager {
         this.notifyTasks();
       };
 
+      // If this is a social media task and doesn't yet have a resolved direct CDN stream URL, resolve it now
+      let targetUrl = task.streamUrl || task.url;
+      if (task.kind === 'media' && !task.streamUrl) {
+        const resolved = await mobileBridge.resolveDirectStreamUrl(task.url, task.platform, {
+          format: task.format,
+          qualityId: task.qualityId,
+          label: task.qualityId,
+          extension: task.extension,
+          estimatedSizeBytes: task.totalBytes,
+        });
+        targetUrl = resolved.streamUrl;
+        task.streamUrl = resolved.streamUrl;
+        if (resolved.sizeBytes && resolved.sizeBytes > 0) {
+          task.totalBytes = resolved.sizeBytes;
+        }
+        if (resolved.headers) {
+          task.headers = { ...(task.headers || {}), ...resolved.headers };
+        }
+      }
+
       const requestHeaders: Record<string, string> = {
         ...(task.headers || {}),
         ...(task.referrer ? { Referer: task.referrer } : {}),
       };
 
       const resumable = FileSystem.createDownloadResumable(
-        task.url,
+        targetUrl,
         task.localUri,
         { headers: requestHeaders },
         downloadCallback
@@ -649,6 +673,18 @@ class MobileDownloadManager {
       const result = await resumable.downloadAsync();
 
       if (result?.uri) {
+        if (typeof result.status === 'number' && (result.status < 200 || result.status >= 300)) {
+          throw new Error(`Server returned HTTP ${result.status}`);
+        }
+        const contentType = (
+          result.headers?.['content-type'] ||
+          result.headers?.['Content-Type'] ||
+          ''
+        ).toLowerCase();
+        if (task.kind === 'media' && contentType.includes('text/html')) {
+          throw new Error('Remote server returned an HTML page instead of a playable media stream.');
+        }
+
         task.status = 'completed';
         task.progress = 1;
         task.receivedBytes = task.totalBytes;
@@ -819,21 +855,15 @@ class MobileDownloadManager {
       throw new Error('Task is not completed or does not exist');
     }
 
-    // Read content and compute hash
+    // Read content and compute genuine RFC-compliant cryptographic hash digest (MD5 / SHA-1 / SHA-256)
     const content = await FileSystem.readAsStringAsync(task.localUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    // Simple deterministic hash calculation for mobile (since Node crypto isn't native in Expo)
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash |= 0;
-    }
-    const hex = Math.abs(hash).toString(16).padStart(32, '0');
-    const actual = `${algorithm}-${hex}`;
-    const verified = expected ? actual.toLowerCase().includes(expected.trim().toLowerCase()) : undefined;
+    const bytes = base64ToBytes(content);
+    const actual = computeHashHex(bytes, algorithm);
+    const cleanExpected = expected?.trim().toLowerCase().replace(/^(sha256|sha1|md5)[-:]?/i, '');
+    const verified = cleanExpected ? actual.toLowerCase() === cleanExpected : undefined;
 
     task.checksum = {
       algorithm,

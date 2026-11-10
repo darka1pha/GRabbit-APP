@@ -214,4 +214,38 @@ describe('DesktopRpcBridge', () => {
     expect(data.count).toBe(2);
     expect(mockManager.addHttp).toHaveBeenCalledTimes(2);
   });
+
+  it('returns download list on GET /downloads/list', async () => {
+    const res = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/list`, {
+      headers: { 'X-GRabbit-Token': TEST_TOKEN },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as any;
+    expect(data.success).toBe(true);
+    expect(Array.isArray(data.items)).toBe(true);
+    expect(data.items[0].fileName).toBe('archive.zip');
+  });
+
+  it('resolves metadata on POST /media/resolve and POST /api/resolve', async () => {
+    (mockRouter.resolve as any).mockResolvedValue({
+      platform: 'youtube',
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      title: 'Test Video',
+      items: [{ id: 'yt-1', title: 'Test Video', platform: 'youtube', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', isDownloadable: true, availableOptions: [] }],
+    });
+
+    const res = await fetch(`http://127.0.0.1:${TEST_PORT}/media/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GRabbit-Token': TEST_TOKEN,
+      },
+      body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }),
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as any;
+    expect(data.success).toBe(true);
+    expect(data.metadata.title).toBe('Test Video');
+    expect(data.items).toHaveLength(1);
+  });
 });
