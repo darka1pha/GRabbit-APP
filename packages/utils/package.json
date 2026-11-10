@@ -1,7 +1,7 @@
 {
   "name": "@grabbit/utils",
   "version": "1.0.0",
-  "description": "Shared utility functions for gRabbit",
+  "description": "Shared utility functions for GRabbit",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

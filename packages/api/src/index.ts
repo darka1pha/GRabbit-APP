@@ -11,7 +11,7 @@ export interface RecognitionOptions {
 }
 
 /**
- * Interface defining the API service contract for gRabbit.
+ * Interface defining the API service contract for GRabbit.
  * Can be implemented by local bridges (Desktop Electron IPC)
  * or remote REST / WebSocket backends (Mobile / Cloud).
  */

@@ -28,24 +28,24 @@ function setupContextMenus(): void {
     chrome.contextMenus.removeAll().then(() => {
       chrome.contextMenus.create({
         id: 'grabbit-download-link',
-        title: 'Download with gRabbit',
+        title: 'Download with GRabbit',
         contexts: ['link', 'image', 'video', 'audio', 'selection'],
       });
 
       chrome.contextMenus.create({
         id: 'grabbit-download-all',
-        title: 'Download all links with gRabbit',
+        title: 'Download all links with GRabbit',
         contexts: ['page'],
       });
 
       chrome.contextMenus.create({
         id: 'grabbit-grab-media',
-        title: 'Grab page media with gRabbit',
+        title: 'Grab page media with GRabbit',
         contexts: ['page'],
       });
     });
   } catch (err) {
-    console.warn('[gRabbit Extension] Failed to setup context menus:', err);
+    console.warn('[GRabbit Extension] Failed to setup context menus:', err);
   }
 }
 
@@ -96,7 +96,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }
 
     if (!targetUrl) {
-      showNotification('gRabbit', 'No valid download link found in selection.');
+      showNotification('GRabbit', 'No valid download link found in selection.');
       return;
     }
 
@@ -109,9 +109,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     });
 
     if (res.success) {
-      showNotification('Download Queued', `Sent to gRabbit: ${res.item?.fileName || targetUrl}`);
+      showNotification('Download Queued', `Sent to GRabbit: ${res.item?.fileName || targetUrl}`);
     } else {
-      showNotification('Connection Error', res.error || 'Failed to connect to gRabbit Desktop.');
+      showNotification('Connection Error', res.error || 'Failed to connect to GRabbit Desktop.');
     }
   } else if (info.menuItemId === 'grabbit-download-all') {
     if (!tab?.id) return;
@@ -121,7 +121,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       });
 
       if (!links || links.length === 0) {
-        showNotification('gRabbit', 'No downloadable links found on this page.');
+        showNotification('GRabbit', 'No downloadable links found on this page.');
         return;
       }
 
@@ -139,13 +139,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       if (batchRes.success) {
         showNotification(
           'Batch Import Complete',
-          `Queued ${batchRes.count ?? items.length} downloads in gRabbit.`
+          `Queued ${batchRes.count ?? items.length} downloads in GRabbit.`
         );
       } else {
         showNotification('Batch Failed', batchRes.error || 'Could not queue batch downloads.');
       }
     } catch {
-      showNotification('gRabbit', 'Could not read links from current tab.');
+      showNotification('GRabbit', 'Could not read links from current tab.');
     }
   } else if (info.menuItemId === 'grabbit-grab-media') {
     const pageUrl = tab?.url || info.pageUrl;
@@ -189,7 +189,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     await chrome.downloads.cancel(downloadItem.id);
     await chrome.downloads.erase({ id: downloadItem.id });
   } catch (err) {
-    console.warn('[gRabbit Extension] Could not cancel browser download:', err);
+    console.warn('[GRabbit Extension] Could not cancel browser download:', err);
   }
 
   const cookies = await getCookiesHeader(url);
@@ -207,12 +207,12 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   if (res.success) {
     showNotification(
       'Download Captured',
-      `Transferred to gRabbit: ${cleanFileName || url}`
+      `Transferred to GRabbit: ${cleanFileName || url}`
     );
   } else {
     showNotification(
-      'gRabbit Bridge Offline',
-      `Could not send download to gRabbit. Please ensure gRabbit is running.`
+      'GRabbit Bridge Offline',
+      `Could not send download to GRabbit. Please ensure GRabbit is running.`
     );
   }
 });

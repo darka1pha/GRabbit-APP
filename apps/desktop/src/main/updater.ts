@@ -71,7 +71,7 @@ export class AutoUpdaterService {
       });
 
       this.deps.notify(
-        'gRabbit update ready',
+        'GRabbit update ready',
         `Version ${info.version} has been downloaded. Click to restart and apply update.`,
         () => this.quitAndInstall()
       );

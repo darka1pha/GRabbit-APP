@@ -2,7 +2,7 @@
   "name": "grabbit-monorepo",
   "version": "1.0.0",
   "private": true,
-  "description": "gRabbit - Media Grabber & Download Manager Monorepo",
+  "description": "GRabbit - Media Grabber & Download Manager Monorepo",
   "packageManager": "pnpm@12.5.1",
   "scripts": {
     "build": "turbo run build",
@@ -14,7 +14,8 @@
     "build:desktop": "pnpm --filter grabbit-desktop dist",
     "build:desktop:dir": "pnpm --filter grabbit-desktop dist:dir",
     "build:mobile:assets": "pnpm --filter @grabbit/mobile build:assets",
-    "build:mobile:export": "pnpm --filter @grabbit/mobile export"
+    "build:mobile:export": "pnpm --filter @grabbit/mobile export",
+    "build:extension": "pnpm --filter @grabbit/extension build"
   },
   "devDependencies": {
     "turbo": "^2.4.4",

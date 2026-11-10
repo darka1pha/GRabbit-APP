@@ -70,8 +70,8 @@ export function GrabPillWindow() {
   return (
     <div className="grab-pill-container" onKeyDown={handleKeyDown}>
       <div className="grab-pill-bar">
-        <div className="grab-pill-brand" title="gRabbit Floating Pill">
-          <img src={iconUrl} alt="gRabbit" />
+        <div className="grab-pill-brand" title="GRabbit Floating Pill">
+          <img src={iconUrl} alt="GRabbit" />
           <div className="grab-pill-glow" />
         </div>
 

@@ -1,6 +1,6 @@
 {
   "name": "grabbit-desktop",
-  "productName": "gRabbit",
+  "productName": "GRabbit",
   "version": "1.0.0",
   "description": "g(Rabbit) for Windows: media grabber, music recognizer and multi-connection download manager. Runs 100% locally.",
   "main": "out/main/index.js",

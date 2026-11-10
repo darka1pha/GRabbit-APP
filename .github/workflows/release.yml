@@ -136,8 +136,8 @@ jobs:
             exit 1
           fi
           echo "Found APK: $APK_PATH"
-          cp "$APK_PATH" "dist-apk/gRabbit-v${VERSION}.apk"
-          cp "$APK_PATH" "dist-apk/gRabbit-Android-release.apk"
+          cp "$APK_PATH" "dist-apk/GRabbit-v${VERSION}.apk"
+          cp "$APK_PATH" "dist-apk/GRabbit-Android-release.apk"
 
       - name: Upload Mobile Artifacts
         uses: actions/upload-artifact@v4
@@ -147,11 +147,59 @@ jobs:
           if-no-files-found: error
 
   # ==============================================================
-  # 3. Publish Unified GitHub Release
+  # 3. Browser Extension Build (Chrome / Edge / Firefox MV3 ZIP)
+  # ==============================================================
+  build-extension:
+    name: Build Chrome Extension (MV3)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate Extension Icons & Build Extension
+        run: |
+          node apps/desktop/scripts/make-icon.mjs
+          pnpm --filter @grabbit/extension typecheck
+          pnpm --filter @grabbit/extension test
+          pnpm --filter @grabbit/extension build
+
+      - name: Package Extension ZIP
+        run: |
+          VERSION="${{ github.event.inputs.tag_name || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          mkdir -p dist-extension
+          cd packages/extension/dist
+          zip -r "../../../dist-extension/GRabbit-Chrome-Extension-v${VERSION}.zip" .
+          cp "../../../dist-extension/GRabbit-Chrome-Extension-v${VERSION}.zip" "../../../dist-extension/GRabbit-Chrome-Extension.zip"
+
+      - name: Upload Extension Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-artifacts
+          path: dist-extension/*.zip
+          if-no-files-found: error
+
+  # ==============================================================
+  # 4. Publish Unified GitHub Release
   # ==============================================================
   publish-release:
     name: Publish Release to GitHub
-    needs: [build-desktop, build-mobile]
+    needs: [build-desktop, build-mobile, build-extension]
     runs-on: ubuntu-latest
 
     steps:
@@ -170,6 +218,12 @@ jobs:
           name: mobile-artifacts
           path: release-assets/mobile
 
+      - name: Download Extension Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-artifacts
+          path: release-assets/extension
+
       - name: Compute Checksums & Structure Assets
         run: |
           mkdir -p release-files
@@ -177,6 +231,7 @@ jobs:
           cp release-assets/desktop/latest.yml release-files/ || true
           cp release-assets/desktop/*.blockmap release-files/ || true
           cp release-assets/mobile/*.apk release-files/ || true
+          cp release-assets/extension/*.zip release-files/ || true
 
           cd release-files
           sha256sum * > SHA256SUMS.txt 2>/dev/null || true
@@ -196,7 +251,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_tag.outputs.release_tag }}
-          name: "gRabbit ${{ steps.get_tag.outputs.release_tag }}"
+          name: "GRabbit ${{ steps.get_tag.outputs.release_tag }}"
           draft: ${{ github.event.inputs.draft || false }}
           prerelease: ${{ github.event.inputs.prerelease || false }}
           generate_release_notes: true

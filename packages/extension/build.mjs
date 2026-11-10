@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(__dirname, 'src');
 const distDir = join(__dirname, 'dist');
 
-console.log('[gRabbit Extension Build] Starting build...');
+console.log('[GRabbit Extension Build] Starting build...');
 
 // Clean dist
 if (existsSync(distDir)) {
@@ -100,5 +100,5 @@ for (const entry of entries) {
   console.log(`  ✓ Bundled ${entry} -> ${entry.replace(/\.ts$/, '.js')}`);
 }
 
-console.log('[gRabbit Extension Build] Build complete! Extension ready in packages/extension/dist/');
+console.log('[GRabbit Extension Build] Build complete! Extension ready in packages/extension/dist/');
 

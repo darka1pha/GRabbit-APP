@@ -376,7 +376,7 @@ export function SettingsView() {
         </Section>
 
         <Section title={t('set.appUpdates')} icon={<ArrowUpCircle size={15} />}>
-          <Setting label={`gRabbit ${tools?.appVersion ? `v${tools.appVersion}` : ''}`}>
+          <Setting label={`GRabbit ${tools?.appVersion ? `v${tools.appVersion}` : ''}`}>
             {checkingUpdates ? (
               <span className="badge info">
                 <LoaderCircle size={12} className="spin" /> {t('set.checkingUpdates')}
@@ -441,7 +441,7 @@ export function SettingsView() {
         </Section>
 
         <Section title={t('set.about')} icon={<Info size={15} />}>
-          <Setting label={`gRabbit ${tools?.appVersion ?? ''}`} hint={t('set.aboutText')}>
+          <Setting label={`GRabbit ${tools?.appVersion ?? ''}`} hint={t('set.aboutText')}>
             <span />
           </Setting>
         </Section>

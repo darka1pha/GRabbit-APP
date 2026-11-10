@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "gRabbit",
+    "name": "GRabbit",
     "slug": "grabbit-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,8 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.grabbit.mobile",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "gRabbit needs access to your photos to save downloaded videos and audio.",
-        "NSPhotoLibraryAddUsageDescription": "gRabbit needs permission to save downloaded media to your library."
+        "NSPhotoLibraryUsageDescription": "GRabbit needs access to your photos to save downloaded videos and audio.",
+        "NSPhotoLibraryAddUsageDescription": "GRabbit needs permission to save downloaded media to your library."
       }
     },
     "android": {
@@ -64,8 +64,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow gRabbit to access your photos.",
-          "savePhotosPermission": "Allow gRabbit to save media to your photos.",
+          "photosPermission": "Allow GRabbit to access your photos.",
+          "savePhotosPermission": "Allow GRabbit to save media to your photos.",
           "isAccessMediaLocationEnabled": true
         }
       ]

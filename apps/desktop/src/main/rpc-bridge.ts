@@ -166,7 +166,7 @@ export class DesktopRpcBridge {
     if (req.method === 'GET' && (pathname === '/ping' || pathname === '/health')) {
       const authenticated = this.authenticate(req, parsedUrl);
       const pingResp: RpcPingResponse = {
-        app: 'gRabbit',
+        app: 'GRabbit',
         version: this.deps.version,
         authenticated,
         port: this.currentPort,
@@ -193,7 +193,7 @@ export class DesktopRpcBridge {
         const totalSpeed = activeItems.reduce((acc, i) => acc + (i.speed || 0), 0);
 
         const statusResp: RpcStatusResponse = {
-          app: 'gRabbit',
+          app: 'GRabbit',
           version: this.deps.version,
           authenticated: true,
           port: this.currentPort,

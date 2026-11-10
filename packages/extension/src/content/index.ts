@@ -79,7 +79,7 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
 
   const container = document.createElement('div');
   container.className = 'grabbit-sniffer-pill';
-  container.title = 'gRabbit Video Grabber';
+  container.title = 'GRabbit Video Grabber';
 
   const btn = document.createElement('button');
   btn.className = 'grabbit-sniffer-btn';
@@ -97,7 +97,7 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
     e.stopPropagation();
     e.preventDefault();
 
-    btn.innerHTML = `<span class="grabbit-icon">⏳</span> Sending to gRabbit…`;
+    btn.innerHTML = `<span class="grabbit-icon">⏳</span> Sending to GRabbit…`;
     btn.classList.add('grabbit-loading');
 
     chrome.runtime.sendMessage(
@@ -111,7 +111,7 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
       },
       (res) => {
         if (res && res.success) {
-          btn.innerHTML = `<span class="grabbit-icon">✅</span> Queued in gRabbit!`;
+          btn.innerHTML = `<span class="grabbit-icon">✅</span> Queued in GRabbit!`;
           btn.classList.remove('grabbit-loading');
           btn.classList.add('grabbit-success');
           setTimeout(() => {

@@ -32,7 +32,7 @@ describe('ExtensionRpcClient', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            app: 'gRabbit',
+            app: 'GRabbit',
             version: '1.0.0',
             authenticated: true,
             port: 31542,
@@ -42,7 +42,7 @@ describe('ExtensionRpcClient', () => {
 
     const res = await client.ping();
     expect(res.ok).toBe(true);
-    expect(res.data?.app).toBe('gRabbit');
+    expect(res.data?.app).toBe('GRabbit');
     expect(capturedUrl).toBe('http://127.0.0.1:31542/ping');
     expect(capturedHeaders['X-GRabbit-Token']).toBe('test-secret-token');
     expect(capturedHeaders['Authorization']).toBe('Bearer test-secret-token');

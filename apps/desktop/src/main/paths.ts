@@ -66,7 +66,7 @@ export function resolveBinaries(): BinaryPaths {
 export async function installYtDlp(): Promise<string> {
   const target = join(userBinDir(), `yt-dlp${EXE}`);
   const tmp = `${target}.download`;
-  const res = await httpRequest(YTDLP_RELEASE_URL, { headers: { 'User-Agent': 'gRabbit-Desktop' } });
+  const res = await httpRequest(YTDLP_RELEASE_URL, { headers: { 'User-Agent': 'GRabbit-Desktop' } });
   if (res.status !== 200) {
     res.body.resume();
     throw new Error(`GitHub answered HTTP ${res.status}`);

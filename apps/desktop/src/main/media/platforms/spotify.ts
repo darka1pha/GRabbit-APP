@@ -120,7 +120,7 @@ export class SpotifyAdapter implements IPlatformAdapter {
 
     try {
       const response = await fetch(oembedUrl, {
-        headers: { 'User-Agent': 'gRabbit-Desktop/1.0' },
+        headers: { 'User-Agent': 'GRabbit-Desktop/1.0' },
         signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
 

@@ -15,7 +15,7 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#020617' },
         }}
       >
-        <StackNavigator.Screen name="index" options={{ title: 'gRabbit' }} />
+        <StackNavigator.Screen name="index" options={{ title: 'GRabbit' }} />
       </StackNavigator>
     </>
   );

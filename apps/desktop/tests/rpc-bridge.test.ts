@@ -34,7 +34,7 @@ describe('DesktopRpcBridge', () => {
       startMinimized: true,
       globalShortcut: { enabled: true, accelerator: 'CommandOrControl+Alt+G' },
       updates: { autoCheck: true, autoDownload: false },
-      userAgent: 'gRabbitTest/1.0',
+      userAgent: 'GRabbitTest/1.0',
       proxy: '',
       afterQueue: 'none',
       scheduler: { enabled: false, startTime: '', stopTime: '' },
@@ -124,7 +124,7 @@ describe('DesktopRpcBridge', () => {
     const res = await fetch(`http://127.0.0.1:${TEST_PORT}/ping`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as any;
-    expect(data.app).toBe('gRabbit');
+    expect(data.app).toBe('GRabbit');
     expect(data.version).toBe('1.0.0-test');
     expect(data.authenticated).toBe(false);
   });
@@ -152,7 +152,7 @@ describe('DesktopRpcBridge', () => {
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as any;
-    expect(data.app).toBe('gRabbit');
+    expect(data.app).toBe('GRabbit');
     expect(data.authenticated).toBe(true);
     expect(data.activeDownloads).toBe(1);
     expect(data.totalSpeed).toBe(256000);

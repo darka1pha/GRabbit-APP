@@ -265,7 +265,7 @@ export interface AppSettings {
   notifications: boolean;
   closeToTray: boolean;
   resumeOnStartup: boolean;
-  /** Launch gRabbit on Windows startup (openAtLogin). */
+  /** Launch GRabbit on Windows startup (openAtLogin). */
   startOnBoot: boolean;
   /** Start minimized to the system tray when launching on boot. */
   startMinimized: boolean;
@@ -307,14 +307,14 @@ export interface AppSettings {
 // ---------------------------------------------------------------------------
 
 export interface RpcPingResponse {
-  app: 'gRabbit';
+  app: 'GRabbit';
   version: string;
   authenticated: boolean;
   port: number;
 }
 
 export interface RpcStatusResponse {
-  app: 'gRabbit';
+  app: 'GRabbit';
   version: string;
   authenticated: boolean;
   port: number;

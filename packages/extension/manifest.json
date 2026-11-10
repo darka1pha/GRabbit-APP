@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "gRabbit - High-Speed Download Companion",
+  "name": "GRabbit - High-Speed Download Companion",
   "version": "1.0.0",
-  "description": "High-performance download interceptor and video sniffer companion for gRabbit desktop.",
+  "description": "High-performance download interceptor and video sniffer companion for GRabbit desktop.",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -15,7 +15,7 @@
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     },
-    "default_title": "gRabbit Companion"
+    "default_title": "GRabbit Companion"
   },
   "background": {
     "service_worker": "background/index.js",

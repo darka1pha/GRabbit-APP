@@ -1,7 +1,7 @@
 {
   "name": "@grabbit/core",
   "version": "1.0.0",
-  "description": "Shared core business logic for gRabbit",
+  "description": "Shared core business logic for GRabbit",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

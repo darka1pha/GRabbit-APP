@@ -13,7 +13,7 @@ export function defaultSettings(): AppSettings {
   return {
     language: locale.toLowerCase().startsWith('fa') ? 'fa' : 'en',
     theme: 'system',
-    downloadDir: downloadsPath ? join(downloadsPath, 'gRabbit') : 'gRabbit',
+    downloadDir: downloadsPath ? join(downloadsPath, 'GRabbit') : 'GRabbit',
     categorySubfolders: true,
     maxConcurrent: 3,
     defaultConnections: 8,

@@ -130,7 +130,7 @@ function Shell() {
         <header className="titlebar">
           <div className="brand">
             <img src={iconUrl} alt="" />
-            gRabbit <small>{t('app.slogan')}</small>
+            GRabbit <small>{t('app.slogan')}</small>
           </div>
           <div className="spacer" />
           <div className="titlebar-actions">

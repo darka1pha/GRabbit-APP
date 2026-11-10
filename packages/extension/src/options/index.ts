@@ -77,7 +77,7 @@ async function init(): Promise<void> {
       if (pingRes.ok) {
         if (pingRes.data?.authenticated) {
           testResultEl.className = 'test-result success';
-          testResultEl.textContent = `Connected successfully to gRabbit Desktop v${pingRes.data.version || '1.0'}`;
+          testResultEl.textContent = `Connected successfully to GRabbit Desktop v${pingRes.data.version || '1.0'}`;
         } else {
           testResultEl.className = 'test-result error';
           testResultEl.textContent = `Desktop app found, but authentication failed. Check your security token!`;

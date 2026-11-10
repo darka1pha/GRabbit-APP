@@ -135,11 +135,11 @@ function runAfterQueueAction(): void {
     quitting = true;
     app.quit();
   } else if (action === 'sleep') {
-    notify('gRabbit', 'All downloads finished. Putting the PC to sleep.');
+    notify('GRabbit', 'All downloads finished. Putting the PC to sleep.');
     setTimeout(() => spawn('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'], { windowsHide: true, detached: true }), 5000);
   } else if (action === 'shutdown') {
-    notify('gRabbit', 'All downloads finished. Windows will shut down in 60 seconds (run "shutdown /a" to cancel).');
-    spawn('shutdown', ['/s', '/t', '60', '/c', 'gRabbit finished all downloads. Run "shutdown /a" to cancel.'], {
+    notify('GRabbit', 'All downloads finished. Windows will shut down in 60 seconds (run "shutdown /a" to cancel).');
+    spawn('shutdown', ['/s', '/t', '60', '/c', 'GRabbit finished all downloads. Run "shutdown /a" to cancel.'], {
       windowsHide: true,
       detached: true,
     });
@@ -152,7 +152,7 @@ const clipboardWatcher = new ClipboardWatcher((link: ClipboardLink) => {
   send(IPC.clipboardLink, link);
   const focused = mainWindow?.isFocused();
   if (!focused) {
-    notify(link.kind === 'media' ? 'Media link copied' : 'Download link copied', `${link.url}\nClick to grab it with gRabbit.`, () => {
+    notify(link.kind === 'media' ? 'Media link copied' : 'Download link copied', `${link.url}\nClick to grab it with GRabbit.`, () => {
       showWindow(link.kind === 'media' ? 'grab' : 'downloads');
       send(IPC.clipboardLink, link);
     });
@@ -198,7 +198,7 @@ function createWindow(): void {
     minWidth: 980,
     minHeight: 620,
     show: false,
-    title: 'gRabbit',
+    title: 'GRabbit',
     icon: appIcon(),
     backgroundColor: colors.background,
     titleBarStyle: 'hidden',
@@ -248,16 +248,16 @@ function createWindow(): void {
 function updateTrayTooltip(): void {
   if (!tray) return;
   const active = manager.list().filter((i) => i.status === 'downloading' || i.status === 'starting' || i.status === 'processing');
-  tray.setToolTip(active.length > 0 ? `gRabbit: ${active.length} active download${active.length > 1 ? 's' : ''}` : 'gRabbit');
+  tray.setToolTip(active.length > 0 ? `GRabbit: ${active.length} active download${active.length > 1 ? 's' : ''}` : 'GRabbit');
 }
 
 function createTray(): void {
   const icon = appIcon().resize({ width: 16, height: 16 });
   tray = new Tray(icon);
-  tray.setToolTip('gRabbit');
+  tray.setToolTip('GRabbit');
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open gRabbit', click: () => showWindow() },
+      { label: 'Open GRabbit', click: () => showWindow() },
       { label: 'Quick Grab Pill (Ctrl+Alt+G)', click: () => grabPill.show() },
       { label: 'Grab media…', click: () => showWindow('grab') },
       { label: 'Downloads', click: () => showWindow('downloads') },
@@ -396,5 +396,5 @@ app.whenReady().then(() => {
     }, 6000);
   }
 
-  logger.info({ version: app.getVersion(), dataDir }, 'gRabbit started');
+  logger.info({ version: app.getVersion(), dataDir }, 'GRabbit started');
 });

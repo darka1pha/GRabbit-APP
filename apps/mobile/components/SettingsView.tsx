@@ -40,7 +40,7 @@ export function SettingsView() {
         headers: { 'X-GRabbit-Token': token },
       });
       if (res.ok) {
-        Alert.alert('Success', 'Successfully connected to gRabbit Desktop RPC Bridge!');
+        Alert.alert('Success', 'Successfully connected to GRabbit Desktop RPC Bridge!');
       } else {
         Alert.alert('Connection Failed', `Desktop returned status ${res.status}`);
       }
@@ -223,7 +223,7 @@ export function SettingsView() {
             <View style={{ flex: 1 }}>
               <Text style={styles.settingLabel}>Connect to Desktop Engine</Text>
               <Text style={styles.settingHint}>
-                Pair with gRabbit Desktop over local WiFi to utilize yt-dlp & FFmpeg extraction
+                Pair with GRabbit Desktop over local WiFi to utilize yt-dlp & FFmpeg extraction
               </Text>
             </View>
             <Switch
@@ -329,7 +329,7 @@ export function SettingsView() {
 
       {/* About */}
       <View style={styles.aboutCard}>
-        <Text style={styles.aboutTitle}>🐰 gRabbit Mobile</Text>
+        <Text style={styles.aboutTitle}>🐰 GRabbit Mobile</Text>
         <Text style={styles.aboutVersion}>v1.0.0 Monorepo Edition</Text>
         <Text style={styles.aboutDesc}>
           Cross-platform segmented download manager & media grabber powered by Expo & @grabbit core engines.

@@ -31,7 +31,7 @@ function updateConnectionPill(
     connectionStatusEl.classList.add('status-connected');
     const activeText = status?.activeDownloads ? ` (${status.activeDownloads} active)` : '';
     connectionStatusEl.querySelector('.status-text')!.textContent = `Connected${activeText}`;
-    connectionStatusEl.title = `gRabbit Desktop RPC is online. Total downloads: ${status?.queueLength ?? 0}`;
+    connectionStatusEl.title = `GRabbit Desktop RPC is online. Total downloads: ${status?.queueLength ?? 0}`;
   } else if (connected && !authenticated) {
     connectionStatusEl.classList.add('status-disconnected');
     connectionStatusEl.querySelector('.status-text')!.textContent = 'Auth Failed';
@@ -39,7 +39,7 @@ function updateConnectionPill(
   } else {
     connectionStatusEl.classList.add('status-disconnected');
     connectionStatusEl.querySelector('.status-text')!.textContent = 'Offline';
-    connectionStatusEl.title = error || 'gRabbit Desktop is not running or RPC is disabled.';
+    connectionStatusEl.title = error || 'GRabbit Desktop is not running or RPC is disabled.';
   }
 }
 
@@ -164,7 +164,7 @@ function initQuickAdd(): void {
         addBtnEl.textContent = 'Grab';
         if (res && res.success) {
           urlInputEl.value = '';
-          showQuickMessage('Download queued in gRabbit!', 'success');
+          showQuickMessage('Download queued in GRabbit!', 'success');
         } else {
           showQuickMessage(res?.error || 'Failed to add download.', 'error');
         }

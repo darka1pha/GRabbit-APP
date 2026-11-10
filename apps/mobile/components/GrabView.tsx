@@ -166,7 +166,7 @@ export function GrabView({
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>🐰 gRabbit</Text>
+        <Text style={styles.title}>🐰 GRabbit</Text>
         <Text style={styles.subtitle}>Drop a link. Grab the goods.</Text>
       </View>
 
@@ -379,7 +379,7 @@ export function GrabView({
               disabled={!selectedOption}
             >
               <Ionicons name="download" size={16} color="#ffffff" />
-              <Text style={styles.downloadBtnText}>Download to gRabbit</Text>
+              <Text style={styles.downloadBtnText}>Download to GRabbit</Text>
             </TouchableOpacity>
           </View>
         </View>

@@ -1,8 +1,8 @@
-# 🐰 gRabbit for Windows
+# 🐰 GRabbit for Windows
 
 > **Drop a link. Grab the goods.** Now as a desktop app, no bot and no server.
 
-gRabbit Desktop turns the g(Rabbit) Telegram bot into a native Windows app (Electron + React + TypeScript).
+GRabbit Desktop turns the g(Rabbit) Telegram bot into a native Windows app (Electron + React + TypeScript).
 Everything runs on your PC: there is no Telegram, PostgreSQL, Redis or backend server of any kind.
 The app only talks to the sites you download from.
 
@@ -108,7 +108,7 @@ src/
 └── renderer/                React UI: Grab, Downloads, Recognize, Settings
 ```
 
-Data lives in `%APPDATA%\gRabbit` (`settings.json`, `downloads.json`, `logs/`, `bin/yt-dlp.exe`, `temp/`).
+Data lives in `%APPDATA%\GRabbit` (`settings.json`, `downloads.json`, `logs/`, `bin/yt-dlp.exe`, `temp/`).
 In-progress HTTP downloads keep their parts in a hidden `.grabbit-<id>` folder next to the target file.
 
 ## Notes

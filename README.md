@@ -1,4 +1,4 @@
-# 🐰 gRabbit Monorepo
+# 🐰 GRabbit Monorepo
 
 > **Drop a link. Grab the goods.** Cross-platform media grabber, music recognizer, and multi-connection download manager.
 
@@ -36,7 +36,8 @@ GRabbitApp/
 │   ├── types/                   # Shared TypeScript definitions
 │   ├── schemas/                 # Zod validation schemas
 │   ├── utils/                   # Shared utility functions
-│   └── config/                  # Shared configurations and constants
+│   ├── config/                  # Shared configurations and constants
+│   └── extension/               # Chrome / Edge / Firefox browser companion extension
 │
 ├── docs/                        # Architecture & documentation
 ├── .github/
@@ -75,6 +76,9 @@ pnpm --filter grabbit-desktop dev
 
 # Run Expo Mobile App
 pnpm --filter @grabbit/mobile start
+
+# Build Browser Extension (outputs to packages/extension/dist/)
+pnpm build:extension
 ```
 
 ### Type Checking & Build
@@ -123,10 +127,16 @@ pnpm --filter @grabbit/mobile prebuild:android
 cd apps/mobile/android && ./gradlew assembleRelease
 ```
 
+### Browser Extension (Chrome / Edge / Firefox)
+```bash
+# Build unpacked MV3 extension into packages/extension/dist/
+pnpm build:extension
+```
+
 ### GitHub Releases Pipeline
 The repository includes an automated CI/CD release workflow in `.github/workflows/release.yml`.
 
-To publish a new version for both Desktop (`.exe` installer & portable) and Mobile (`.apk`):
+To publish a new version for Desktop (`.exe` installer & portable), Mobile (`.apk`), and the Chrome Extension (`.zip`):
 1. Tag a release commit:
    ```bash
    git tag v1.0.0
