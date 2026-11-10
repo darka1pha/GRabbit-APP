@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GRabbit — High-Speed Download Manager, Media Grabber & Browser Companion</title>
+  <meta
+    name="description"
+    content="GRabbit is a fast, 100% local multi-connection download manager, social video grabber (YouTube, Instagram, TikTok, Spotify), Shazam song recognizer, Android app, and Chrome Extension."
+  />
+  <link rel="icon" type="image/png" href="./icon.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- ====================================================================
+       Navigation Bar
+       ==================================================================== -->
+  <header class="navbar">
+    <div class="container navbar-inner">
+      <a href="#" class="brand">
+        <img src="./icon.png" alt="GRabbit Logo" />
+        <span><span class="brand-gradient">GRabbit</span></span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#downloads">Downloads</a>
+        <a href="#features">Features</a>
+        <a href="#usage">Usage & Setup Guide</a>
+        <a href="#usage" data-open-tab="extension">Chrome Extension</a>
+        <a href="#usage" data-open-tab="android">Android App</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a
+          href="https://github.com/darka1pha/GRabbit-APP"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn btn-sm btn-secondary"
+        >
+          GitHub
+        </a>
+        <a href="#downloads" class="btn btn-sm btn-primary">
+          Download <span class="js-release-version">v1.0.0</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====================================================================
+       Hero Section
+       ==================================================================== -->
+  <section class="hero">
+    <div class="container">
+      <div class="badge-pill">
+        <span class="pulse-dot"></span>
+        <span>Release <strong class="js-release-version">v1.0.0</strong> Available • 100% Free, Local & Ad-Free</span>
+      </div>
+
+      <h1 class="hero-title">
+        Grab Anything. <span class="brand-gradient">At Maximum Speed.</span>
+      </h1>
+
+      <p class="hero-subtitle">
+        A blazing-fast up to 32-connection segmented HTTP download manager, 4K/8K media grabber for YouTube, Instagram, TikTok &amp; Spotify, built-in Shazam song recognizer, Android companion, and Chrome Extension.
+      </p>
+
+      <div class="hero-cta-group">
+        <a
+          id="heroPrimaryDownload"
+          href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.0.0.exe"
+          class="btn btn-lg btn-primary js-dl-win-installer"
+        >
+          <span>⬇</span>
+          <span id="heroPrimaryLabel">Download for Windows (64-bit)</span>
+        </a>
+
+        <a
+          href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.0.0.apk"
+          class="btn btn-lg btn-secondary js-dl-android"
+        >
+          <span>📱</span>
+          <span>Download Android APK</span>
+        </a>
+
+        <a
+          href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.0.0.zip"
+          class="btn btn-lg btn-outline js-dl-extension"
+        >
+          <span>🧩</span>
+          <span>Chrome Extension (.zip)</span>
+        </a>
+      </div>
+
+      <div class="hero-meta">
+        <span>✓ Windows 10 / 11 (x64)</span>
+        <span>✓ Android 8.0+ (ARM64 / Universal)</span>
+        <span>✓ Chrome / Edge / Brave MV3</span>
+        <span>✓ Bundled with yt-dlp &amp; FFmpeg</span>
+      </div>
+
+      <!-- App Mockup Preview -->
+      <div class="mockup-window">
+        <div class="mockup-titlebar">
+          <div class="window-dots">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="mockup-title">
+            <img src="./icon.png" alt="" width="16" height="16" style="border-radius:4px;" />
+            <span>GRabbit Desktop — Multi-Connection Engine &amp; Media Grabber</span>
+          </div>
+          <div style="font-size: 0.76rem; color: #10b981; font-weight: 600;">
+            ● RPC Bridge Online (:31542)
+          </div>
+        </div>
+
+        <div class="mockup-body">
+          <div class="mockup-sidebar">
+            <div class="mockup-nav-item active">⚡ Downloads (3)</div>
+            <div class="mockup-nav-item">🎬 Grab Media</div>
+            <div class="mockup-nav-item">🎵 Recognize Song</div>
+            <div class="mockup-nav-item">🗂️ Queues &amp; Scheduler</div>
+            <div class="mockup-nav-item">⚙️ Settings</div>
+          </div>
+
+          <div class="mockup-content">
+            <!-- Task 1 -->
+            <div class="mockup-task">
+              <div class="mockup-task-header">
+                <span class="mockup-task-title">📦 ubuntu-24.04.1-desktop-amd64.iso</span>
+                <span class="mockup-task-speed">48.4 MB/s • ETA 00:34</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" style="width: 74%;"></div>
+              </div>
+              <div class="mockup-task-meta">
+                <span>3.48 GB / 4.70 GB (74%)</span>
+                <span>16 Active Connections • Resumable</span>
+              </div>
+              <div class="segments-bar">
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+                <div class="segment-chip"></div>
+              </div>
+            </div>
+
+            <!-- Task 2 -->
+            <div class="mockup-task">
+              <div class="mockup-task-header">
+                <span class="mockup-task-title">🎬 [YouTube 4K 60fps] Unreal Engine 5.5 Tech Demo.mp4</span>
+                <span class="mockup-task-speed">22.1 MB/s • Merging Audio + Video</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" style="width: 91%;"></div>
+              </div>
+              <div class="mockup-task-meta">
+                <span>612 MB / 672 MB (91%)</span>
+                <span>Captured via GRabbit Chrome Extension</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Supported Media Platforms Strip -->
+      <div class="platforms-strip">
+        <span class="platform-pill">▶️ YouTube 4K/8K &amp; Shorts</span>
+        <span class="platform-pill">📸 Instagram Reels &amp; Posts</span>
+        <span class="platform-pill">🎵 TikTok (No Watermark)</span>
+        <span class="platform-pill">🎧 Spotify Tracks &amp; Playlists</span>
+        <span class="platform-pill">☁️ SoundCloud</span>
+        <span class="platform-pill">🐦 X / Twitter Videos</span>
+        <span class="platform-pill">⚡ Direct HTTP / FTP / Archives</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       Downloads Section
+       ==================================================================== -->
+  <section id="downloads" class="section">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Official Releases</div>
+        <h2 class="section-title">Download GRabbit <span class="js-release-version">v1.0.0</span></h2>
+        <p class="section-desc">
+          Choose your platform below. All builds are compiled automatically via GitHub Actions and include SHA-256 integrity checksums.
+        </p>
+      </div>
+
+      <div class="downloads-grid">
+        <!-- 1. Windows Installer -->
+        <div class="download-card featured">
+          <div>
+            <span class="card-ribbon">Recommended</span>
+            <div class="platform-icon">🖥️</div>
+            <h3>Windows Installer</h3>
+            <div class="download-os-tag">Windows 10 &amp; 11 (64-bit NSIS)</div>
+            <p>
+              Full desktop setup with Start Menu &amp; Desktop shortcuts, `yt-dlp` + `FFmpeg` pre-bundled, global `Ctrl+Alt+G` Grab Pill, and automatic updates.
+            </p>
+          </div>
+          <div>
+            <div class="download-file-meta">
+              <span>GRabbit-Setup-1.0.0.exe</span>
+              <span id="size-win-installer">~150 MB</span>
+            </div>
+            <a
+              href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.0.0.exe"
+              class="btn btn-primary js-dl-win-installer"
+              style="width: 100%;"
+            >
+              ⬇ Download Installer (.exe)
+            </a>
+          </div>
+        </div>
+
+        <!-- 2. Windows Portable -->
+        <div class="download-card">
+          <div>
+            <div class="platform-icon">💼</div>
+            <h3>Windows Portable</h3>
+            <div class="download-os-tag">Windows 10 &amp; 11 (Zero-Install)</div>
+            <p>
+              Standalone single-file executable. Run directly from a USB drive or local folder without installation permissions.
+            </p>
+          </div>
+          <div>
+            <div class="download-file-meta">
+              <span>GRabbit-1.0.0-portable.exe</span>
+              <span id="size-win-portable">~150 MB</span>
+            </div>
+            <a
+              href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.0.0-portable.exe"
+              class="btn btn-secondary js-dl-win-portable"
+              style="width: 100%;"
+            >
+              ⬇ Download Portable (.exe)
+            </a>
+          </div>
+        </div>
+
+        <!-- 3. Android APK -->
+        <div class="download-card">
+          <div>
+            <div class="platform-icon">📱</div>
+            <h3>Android Mobile App</h3>
+            <div class="download-os-tag">Android 8.0+ (Xiaomi MIUI / Samsung / Pixel)</div>
+            <p>
+              Multi-segment mobile downloader, social media grabber via Android Share Sheet, built-in video/audio player, and Desktop LAN RPC sync.
+            </p>
+          </div>
+          <div>
+            <div class="download-file-meta">
+              <span>GRabbit-v1.0.0.apk</span>
+              <span id="size-android-apk">~28 MB</span>
+            </div>
+            <a
+              href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.0.0.apk"
+              class="btn btn-secondary js-dl-android"
+              style="width: 100%;"
+            >
+              ⬇ Download Android (.apk)
+            </a>
+          </div>
+        </div>
+
+        <!-- 4. Chrome Extension -->
+        <div class="download-card">
+          <div>
+            <div class="platform-icon">🧩</div>
+            <h3>Browser Extension</h3>
+            <div class="download-os-tag">Chrome • Edge • Brave • Opera (MV3)</div>
+            <p>
+              Auto-captures browser downloads, adds floating "Download with GRabbit" buttons on YouTube &amp; web videos, and forwards session cookies to Desktop.
+            </p>
+          </div>
+          <div>
+            <div class="download-file-meta">
+              <span>GRabbit-Chrome-Extension.zip</span>
+              <span id="size-chrome-ext">~35 KB</span>
+            </div>
+            <a
+              href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.0.0.zip"
+              class="btn btn-outline js-dl-extension"
+              style="width: 100%;"
+            >
+              ⬇ Download Extension (.zip)
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="checksum-bar">
+        <div>
+          🔒 <strong>Verify Download Integrity:</strong> Every release includes signed SHA-256 checksums for all binaries and packages.
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <a
+            href="https://github.com/darka1pha/GRabbit-APP/releases/latest/download/SHA256SUMS.txt"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-sm btn-secondary js-dl-checksums"
+          >
+            View SHA256SUMS.txt
+          </a>
+          <a
+            href="https://github.com/darka1pha/GRabbit-APP/releases"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn-sm btn-secondary"
+          >
+            All GitHub Releases →
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       Usage & Installation Instructions Section
+       ==================================================================== -->
+  <section id="usage" class="section">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Step-by-Step Documentation</div>
+        <h2 class="section-title">How to Install &amp; Use GRabbit</h2>
+        <p class="section-desc">
+          Select a component below for complete setup and usage instructions.
+        </p>
+      </div>
+
+      <!-- Guide Tabs -->
+      <div class="guide-tabs">
+        <button class="guide-tab-btn active" data-tab="desktop">
+          🖥️ Windows Desktop Guide
+        </button>
+        <button class="guide-tab-btn" data-tab="extension">
+          🧩 Chrome Extension Setup (Unpacked)
+        </button>
+        <button class="guide-tab-btn" data-tab="android">
+          📱 Android APK Guide
+        </button>
+        <button class="guide-tab-btn" data-tab="media">
+          🎬 Media Grabber &amp; Song ID
+        </button>
+      </div>
+
+      <!-- Panel 1: Windows Desktop -->
+      <div id="panel-desktop" class="guide-panel active">
+        <div class="steps-list">
+          <div class="step-card">
+            <div class="step-number">1</div>
+            <h4>Install &amp; Launch GRabbit</h4>
+            <p>
+              Download and run <code>GRabbit-Setup-1.0.0.exe</code> (or launch <code>GRabbit-1.0.0-portable.exe</code>). Both <code>yt-dlp</code> and <code>FFmpeg</code> are bundled inside—no extra tools required.
+            </p>
+            <div class="code-snippet">
+              <span>Default Save Path: Downloads\GRabbit</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">2</div>
+            <h4>Multi-Connection Direct Downloads</h4>
+            <p>
+              Click <strong>+ Add Download</strong> in the <strong>Downloads</strong> tab and paste any direct file URL (ISO, ZIP, RAR, EXE, MP4). GRabbit splits the file into up to 32 parallel byte-range segments.
+            </p>
+            <div class="code-snippet">
+              <span>Up to 32 Connections • Auto-Resume</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">3</div>
+            <h4>Global Quick Grab Pill (Ctrl+Alt+G)</h4>
+            <p>
+              Copy any link anywhere in Windows—GRabbit's clipboard monitor notifies you automatically, or press <strong>Ctrl + Alt + G</strong> at any time to summon the floating Quick Grab Pill.
+            </p>
+            <div class="code-snippet">
+              <span>Shortcut: Ctrl + Alt + G</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">4</div>
+            <h4>Queues, Scheduler &amp; Speed Limits</h4>
+            <p>
+              Organize tasks into custom queues (e.g., <em>Night Queue</em>), configure start/stop schedules (e.g., 02:00 → 08:00), and set an after-queue action (Quit, Sleep, or Shutdown PC).
+            </p>
+            <div class="code-snippet">
+              <span>Settings → Downloads → Scheduler</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel 2: Chrome Extension -->
+      <div id="panel-extension" class="guide-panel">
+        <div class="steps-list">
+          <div class="step-card">
+            <div class="step-number">1</div>
+            <h4>Download &amp; Extract the ZIP</h4>
+            <p>
+              Download <code>GRabbit-Chrome-Extension-v1.0.0.zip</code> from the Downloads section above and extract (unzip) it to a permanent folder on your PC (or use <code>packages/extension/dist</code> if building from source).
+            </p>
+            <div class="code-snippet">
+              <span>Extract to e.g. C:\GRabbit-Extension</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">2</div>
+            <h4>Load Unpacked in Chrome / Edge / Brave</h4>
+            <p>
+              Open your browser's Extensions page, toggle <strong>Developer mode</strong> ON in the top-right corner, click <strong>Load unpacked</strong> (top-left), and select the extracted folder containing <code>manifest.json</code>.
+            </p>
+            <div class="code-snippet">
+              <span>chrome://extensions</span>
+              <button class="copy-chip" data-copy="chrome://extensions">Copy URL</button>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">3</div>
+            <h4>Verify "Connected" Status</h4>
+            <p>
+              Make sure <strong>GRabbit Desktop</strong> is running on your PC. Click the GRabbit icon in your browser toolbar—the badge in the top-right will show <strong>🟢 Connected</strong> automatically on port <code>31542</code>.
+            </p>
+            <div class="code-snippet">
+              <span>Bridge: http://127.0.0.1:31542</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">4</div>
+            <h4>Grab Videos &amp; Auto-Intercept</h4>
+            <p>
+              • Hover any video on YouTube/Instagram/TikTok and click <strong>🐰 Download with GRabbit</strong>.<br />
+              • Right-click any link or page and choose <strong>Download with GRabbit</strong>.<br />
+              • Browser file downloads are automatically captured and accelerated by GRabbit Desktop.
+            </p>
+          </div>
+        </div>
+
+        <div class="guide-callout">
+          💡 <strong>Custom Token Pairing (Optional):</strong> If you regenerate your security token in <strong>GRabbit Desktop → Settings → Browser Extension</strong>, click the Copy button in Desktop Settings, open the Chrome Extension's <strong>⚙️ Settings (Options)</strong> page, paste the token, and click <strong>Save Settings</strong>.
+        </div>
+      </div>
+
+      <!-- Panel 3: Android Mobile App -->
+      <div id="panel-android" class="guide-panel">
+        <div class="steps-list">
+          <div class="step-card">
+            <div class="step-number">1</div>
+            <h4>Install GRabbit-v1.0.0.apk</h4>
+            <p>
+              Download <code>GRabbit-v1.0.0.apk</code> on your Android phone and tap to install. If prompted by Android or Xiaomi MIUI, allow <em>"Install unknown apps"</em> for your browser or file manager.
+            </p>
+            <div class="code-snippet">
+              <span>Supports Android 8.0 – 15 &amp; Xiaomi MIUI</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">2</div>
+            <h4>Share Directly from Other Apps</h4>
+            <p>
+              While watching a video in the <strong>YouTube, Instagram, TikTok, or X</strong> app, tap <strong>Share → GRabbit</strong>. GRabbit Mobile opens automatically and resolves all available video/audio qualities.
+            </p>
+            <div class="code-snippet">
+              <span>Share Sheet → GRabbit</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">3</div>
+            <h4>Play &amp; Save to Gallery</h4>
+            <p>
+              Preview streams or play completed downloads with the built-in Video/Audio player, inspect byte segments, verify SHA-256 checksums, and tap <strong>Save to Library</strong> to export to your phone's Gallery.
+            </p>
+            <div class="code-snippet">
+              <span>Downloads Tab → Play / Save to Photos</span>
+            </div>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">4</div>
+            <h4>Optional: Connect to Desktop over Wi-Fi</h4>
+            <p>
+              In <strong>Settings → Desktop RPC Bridge</strong>, enter your PC's local IP address (e.g. <code>192.168.1.x</code>), port <code>31542</code>, and token to send heavy downloads directly from your phone to your PC!
+            </p>
+            <div class="code-snippet">
+              <span>Settings → Test Desktop Connection</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel 4: Media Grabber & Song ID -->
+      <div id="panel-media" class="guide-panel">
+        <div class="steps-list">
+          <div class="step-card">
+            <div class="step-number">1</div>
+            <h4>Grab 4K Video or MP3 Audio</h4>
+            <p>
+              Open the <strong>Grab Media</strong> tab, paste any YouTube, Instagram, TikTok, X/Twitter, SoundCloud, or Vimeo URL, and choose your preferred resolution (up to 4K/8K) or audio format (<code>MP3</code> / <code>M4A</code>).
+            </p>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">2</div>
+            <h4>Playlists &amp; Spotify Matching</h4>
+            <p>
+              Paste a full YouTube playlist or Spotify track/playlist URL. GRabbit lists every item so you can select individual tracks or batch-download the entire playlist with one click.
+            </p>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">3</div>
+            <h4>Shazam Song Recognition</h4>
+            <p>
+              Heard a background song in a Reel, TikTok, or local file? Open the <strong>Recognize</strong> tab, paste the video URL or pick a local file, and GRabbit fingerprints the audio to identify the title, artist, album art, and lyrics.
+            </p>
+          </div>
+
+          <div class="step-card">
+            <div class="step-number">4</div>
+            <h4>Private / Age-Restricted Videos</h4>
+            <p>
+              Need to grab members-only or age-restricted media? Go to <strong>Settings → Media</strong> and select your browser under <strong>Read Cookies from Browser</strong> (or attach a <code>cookies.txt</code> file).
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       Key Features Grid
+       ==================================================================== -->
+  <section id="features" class="section">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Built for Power Users</div>
+        <h2 class="section-title">Everything You Need in One Ecosystem</h2>
+        <p class="section-desc">
+          Engineered as a unified TypeScript monorepo across Windows Desktop, Android Mobile, and Chromium Browsers.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3>Up to 32 Dynamic Connections</h3>
+          <p>
+            Splits large downloads into parallel HTTP byte-range segments with live per-segment progress bars, automatic retry with exponential backoff, and global bandwidth throttling.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🎬</div>
+          <h3>Universal Media Grabber</h3>
+          <p>
+            Powered by bundled <code>yt-dlp</code> and <code>FFmpeg</code>. Extracts 4K/8K video and crystal-clear MP3/M4A audio from YouTube, Instagram, TikTok, Spotify, SoundCloud, and X/Twitter.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🎵</div>
+          <h3>Built-In Song Recognizer</h3>
+          <p>
+            Identify unknown songs directly from any social video link or local audio/video file using acoustic fingerprinting—complete with cover art and 1-click "Find &amp; Download".
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🧩</div>
+          <h3>Seamless Browser Integration</h3>
+          <p>
+            Manifest V3 Chrome Extension intercepts downloads automatically, injects a floating download button on web videos, and passes authenticated cookies safely over localhost.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🗂️</div>
+          <h3>Smart Queues &amp; Night Scheduler</h3>
+          <p>
+            Create multiple independent download queues with custom concurrency limits, automatic category subfolders, scheduled start/stop windows, and post-queue sleep/shutdown actions.
+          </p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>SHA-256 / MD5 Checksum Verifier</h3>
+          <p>
+            Verify downloaded ISOs, archives, and installers against expected MD5, SHA-1, or SHA-256 hashes right inside the app on both Desktop and Android.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       Footer
+       ==================================================================== -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <img src="./icon.png" alt="GRabbit" width="28" height="28" style="border-radius: 7px;" />
+        <span><strong>GRabbit</strong> — High-Speed Download Manager &amp; Media Grabber. MIT License.</span>
+      </div>
+
+      <div class="footer-links">
+        <a href="#downloads">Downloads</a>
+        <a href="#usage">Usage Guide</a>
+        <a href="https://github.com/darka1pha/GRabbit-APP" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+        <a href="https://github.com/darka1pha/GRabbit-APP/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+        <a href="https://github.com/darka1pha/GRabbit-APP/issues" target="_blank" rel="noopener noreferrer">Report Issue</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
