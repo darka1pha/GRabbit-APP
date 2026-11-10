@@ -1,8 +1,10 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { URL } from 'node:url';
 import type {
   AddHttpDownloadRequest,
@@ -17,8 +19,40 @@ import type { SettingsService } from './settings';
 import type { PlatformRouter } from './media/router';
 import type { MusicRecognizer } from './media/recognizer';
 import { YtDlpRunner } from './media/ytdlp-runner';
-import { detectPlatform, parseHttpUrl } from './media/url-parser';
+import { detectPlatform, isPrivateHost, parseHttpUrl } from './media/url-parser';
+import { InvalidUrlError } from './media/errors';
 import { logger } from './logger';
+
+/** Platforms whose content is music: links from the browser become audio downloads. */
+const AUDIO_PLATFORMS = new Set<string>(['spotify', 'soundcloud']);
+
+/** Most downloads one /downloads/batch call may add. */
+export const MAX_BATCH_ITEMS = 200;
+/** Largest extension package /extension/update will fetch. */
+const MAX_EXTENSION_ZIP_BYTES = 50 * 1024 * 1024;
+/** The only place an extension update may come from: this project's GitHub release assets. */
+const EXTENSION_RELEASE_URL = /^https:\/\/github\.com\/darka1pha\/GRabbit-APP\/releases\/(?:download\/[^/?#]+|latest\/download)\/[^/?#]+\.zip$/i;
+
+/** A request the bridge refuses because of what it asks for (answered with HTTP 400). */
+class RpcRequestError extends Error {}
+
+/**
+ * URL the desktop is asked to fetch on a caller's behalf and report back on. Loopback, private
+ * and link-local hosts are refused so the bridge cannot be used to read from the user's own network.
+ */
+function publicHttpUrl(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) throw new RpcRequestError('Field "url" is required');
+  const parsed = parseHttpUrl(raw);
+  if (isPrivateHost(parsed.hostname)) throw new RpcRequestError('Local and private network addresses are not allowed here');
+  return parsed.toString();
+}
+
+/** Constant-time comparison (hashing first makes both sides the same length). */
+function tokensMatch(given: string, expected: string): boolean {
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
 
 export interface RpcBridgeDeps {
   manager: DownloadManager;
@@ -44,7 +78,8 @@ export class DesktopRpcBridge {
       return;
     }
 
-    const bindHost = s.allowLan !== false ? '0.0.0.0' : '127.0.0.1';
+    // Loopback unless the user explicitly opted in to LAN access (mobile pairing)
+    const bindHost = s.allowLan === true ? '0.0.0.0' : '127.0.0.1';
     if (this.running && this.currentPort === s.port && this.currentHost === bindHost) {
       return;
     }
@@ -62,9 +97,11 @@ export class DesktopRpcBridge {
       }
     });
 
+    // Tracked before it is listening, so a stop() that arrives first still closes it
+    this.server = server;
     server.listen(s.port, bindHost, () => {
+      if (this.server !== server) return;
       this.running = true;
-      this.server = server;
       logger.info({ port: s.port, host: bindHost }, 'Desktop RPC bridge listening');
     });
   }
@@ -73,6 +110,8 @@ export class DesktopRpcBridge {
     if (this.server) {
       try {
         this.server.close();
+        // Keep-alive sockets would otherwise keep being served by the old server
+        this.server.closeAllConnections();
       } catch {
         // ignore
       }
@@ -90,62 +129,59 @@ export class DesktopRpcBridge {
     return this.currentPort;
   }
 
-  private setCorsHeaders(res: ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+  /**
+   * Only browser extensions may read responses cross-origin. Ordinary web pages get no
+   * CORS grant, so they can neither probe for the app nor read anything from it.
+   */
+  private setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+    const origin = req.headers['origin'];
+    if (typeof origin === 'string' && /^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i.test(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GRabbit-Token');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
 
   private sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
-    this.setCorsHeaders(res);
     res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(data));
   }
 
-  private authenticate(req: IncomingMessage, urlObj: URL): boolean {
-    const s = this.deps.settings.get().extension;
-    const expectedToken = s.token;
-    if (!expectedToken) return true;
+  /**
+   * The token is the only credential. Request headers such as Origin or a client name are
+   * chosen by the caller and prove nothing, so they are never accepted in its place.
+   */
+  private authenticate(req: IncomingMessage): boolean {
+    const expectedToken = this.deps.settings.get().extension.token;
+    if (!expectedToken) return false;
 
     const headerToken = req.headers['x-grabbit-token'];
-    if (typeof headerToken === 'string' && headerToken === expectedToken) {
-      return true;
-    }
+    if (typeof headerToken === 'string' && tokensMatch(headerToken, expectedToken)) return true;
 
     const authHeader = req.headers['authorization'];
     if (typeof authHeader === 'string') {
       const match = authHeader.match(/^Bearer\s+(.+)$/i);
-      if (match && match[1] === expectedToken) {
-        return true;
-      }
+      if (match && tokensMatch(match[1], expectedToken)) return true;
     }
-
-    const queryToken = urlObj.searchParams.get('token');
-    if (queryToken && queryToken === expectedToken) {
-      return true;
-    }
-
-    // Allow local browser extension requests (Origin: chrome-extension:// or moz-extension:// or X-GRabbit-Client: browser-extension from loopback)
-    const origin = req.headers['origin'];
-    const clientHeader = req.headers['x-grabbit-client'];
-    const remoteAddr = req.socket?.remoteAddress || '';
-    const isLoopback =
-      remoteAddr === '127.0.0.1' ||
-      remoteAddr === '::1' ||
-      remoteAddr === '::ffff:127.0.0.1';
-    const isExtensionOrigin =
-      typeof origin === 'string' &&
-      (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'));
-
-    if (
-      isExtensionOrigin ||
-      (isLoopback && clientHeader === 'browser-extension')
-    ) {
-      return true;
-    }
-
     return false;
+  }
+
+  /**
+   * DNS-rebinding guard: a web page can point its own domain at this machine, but the browser
+   * then sends that domain in Host. Real clients address the bridge by IP or "localhost".
+   */
+  private hostAllowed(req: IncomingMessage): boolean {
+    const raw = req.headers['host'];
+    if (typeof raw !== 'string' || !raw) return false;
+    let hostname: string;
+    try {
+      hostname = new URL(`http://${raw}`).hostname.replace(/^\[|\]$/g, '');
+    } catch {
+      return false;
+    }
+    return hostname.toLowerCase() === 'localhost' || isIP(hostname) !== 0;
   }
 
   private async readBodyJson<T>(req: IncomingMessage): Promise<T> {
@@ -179,7 +215,15 @@ export class DesktopRpcBridge {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    this.setCorsHeaders(res);
+    this.setCorsHeaders(req, res);
+    // One request per connection: calls are infrequent, and no client is left holding a
+    // socket to a server that has since been stopped or rebound.
+    res.setHeader('Connection', 'close');
+
+    if (!this.hostAllowed(req)) {
+      this.sendJson(res, 403, { success: false, error: 'Forbidden: unexpected Host header' });
+      return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -193,7 +237,7 @@ export class DesktopRpcBridge {
 
     // Public ping / health check endpoint
     if (req.method === 'GET' && (pathname === '/ping' || pathname === '/health')) {
-      const authenticated = this.authenticate(req, parsedUrl);
+      const authenticated = this.authenticate(req);
       const pingResp: RpcPingResponse = {
         app: 'GRabbit',
         version: this.deps.version,
@@ -205,10 +249,10 @@ export class DesktopRpcBridge {
     }
 
     // All subsequent endpoints require authentication
-    if (!this.authenticate(req, parsedUrl)) {
+    if (!this.authenticate(req)) {
       this.sendJson(res, 401, {
         success: false,
-        error: 'Unauthorized: invalid or missing X-GRabbit-Token header or token parameter',
+        error: 'Unauthorized: invalid or missing X-GRabbit-Token header',
       });
       return;
     }
@@ -259,10 +303,14 @@ export class DesktopRpcBridge {
           this.sendJson(res, 400, { success: false, error: 'Field "items" must be a non-empty array' });
           return;
         }
+        if (body.items.length > MAX_BATCH_ITEMS) {
+          this.sendJson(res, 400, { success: false, error: `A batch may contain at most ${MAX_BATCH_ITEMS} items` });
+          return;
+        }
 
         const results: DownloadItem[] = [];
         for (const reqItem of body.items) {
-          if (reqItem.url) {
+          if (reqItem && typeof reqItem.url === 'string' && reqItem.url) {
             const added = await this.processDownloadRequest(reqItem);
             if (added) {
               results.push(added);
@@ -279,11 +327,7 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && (pathname === '/media/resolve' || pathname === '/api/resolve')) {
         const body = await this.readBodyJson<{ url: string }>(req);
-        if (!body.url) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
-          return;
-        }
-        const metadata = await this.deps.router.resolve(body.url);
+        const metadata = await this.deps.router.resolve(publicHttpUrl(body.url));
         this.sendJson(res, 200, { success: true, metadata, ...metadata });
         return;
       }
@@ -295,23 +339,19 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && (pathname === '/media/recognize' || pathname === '/api/recognize')) {
         const body = await this.readBodyJson<{ url?: string }>(req);
-        if (!body.url || !this.deps.recognizer) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required or recognizer unavailable' });
+        if (!this.deps.recognizer) {
+          this.sendJson(res, 400, { success: false, error: 'Recognizer unavailable' });
           return;
         }
-        const track = await this.deps.recognizer.identifyUrl(parseHttpUrl(body.url).toString());
+        const track = await this.deps.recognizer.identifyUrl(publicHttpUrl(body.url));
         this.sendJson(res, 200, track ?? { title: null });
         return;
       }
 
       if (req.method === 'POST' && pathname === '/media/stream') {
         const body = await this.readBodyJson<{ url: string; format?: 'audio' | 'video'; qualityId?: string }>(req);
-        if (!body.url) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
-          return;
-        }
         const ytdlp = new YtDlpRunner();
-        const meta = await ytdlp.getMetadata(body.url);
+        const meta = await ytdlp.getMetadata(publicHttpUrl(body.url));
         const formats = Array.isArray(meta.formats) ? meta.formats : [];
         const directFormats = formats.filter((f) => typeof (f as any).url === 'string' && !(f as any).url.includes('.m3u8'));
         let chosen: any = null;
@@ -348,8 +388,11 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && pathname === '/extension/update') {
         const body = await this.readBodyJson<{ downloadUrl?: string; version?: string }>(req);
-        if (!body.downloadUrl) {
-          this.sendJson(res, 400, { success: false, error: 'Field "downloadUrl" is required' });
+        if (typeof body.downloadUrl !== 'string' || !EXTENSION_RELEASE_URL.test(body.downloadUrl)) {
+          this.sendJson(res, 400, {
+            success: false,
+            error: 'Field "downloadUrl" must be a .zip asset of a GRabbit GitHub release',
+          });
           return;
         }
         const version = String(body.version || 'latest').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -359,6 +402,10 @@ export class DesktopRpcBridge {
           return;
         }
         const buf = Buffer.from(await zipRes.arrayBuffer());
+        if (buf.length > MAX_EXTENSION_ZIP_BYTES) {
+          this.sendJson(res, 502, { success: false, error: 'Extension zip is unexpectedly large' });
+          return;
+        }
         const zipPath = join(tmpdir(), `GRabbit-Chrome-Extension-v${version}.zip`);
         writeFileSync(zipPath, buf);
 
@@ -368,10 +415,6 @@ export class DesktopRpcBridge {
           const dlExtDir = join(downloadDir, 'GRabbit-Chrome-Extension');
           mkdirSync(dlExtDir, { recursive: true });
           targetDirs.push(dlExtDir);
-        }
-        const localRepoDist = resolve(process.cwd(), 'packages/extension/dist');
-        if (existsSync(localRepoDist)) {
-          targetDirs.push(localRepoDist);
         }
 
         for (const dest of targetDirs) {
@@ -395,12 +438,32 @@ export class DesktopRpcBridge {
       // 404 for any other route
       this.sendJson(res, 404, { success: false, error: `Route not found: ${req.method} ${pathname}` });
     } catch (err) {
+      if (err instanceof RpcRequestError || err instanceof InvalidUrlError) {
+        this.sendJson(res, 400, { success: false, error: err.message });
+        return;
+      }
       logger.error({ err, pathname }, 'RPC bridge request error');
       this.sendJson(res, 500, {
         success: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Remote callers may only choose a folder inside the user's download folder. Anything else
+   * is dropped and the download lands in the default location for its category.
+   */
+  private safeDirectory(requested: unknown): string | undefined {
+    if (typeof requested !== 'string' || !requested.trim()) return undefined;
+    const root = resolve(this.deps.settings.get().downloadDir);
+    const target = resolve(root, requested.trim());
+    const rel = relative(root, target);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      logger.warn({ requested }, 'RPC download asked for a folder outside the download folder; using the default');
+      return undefined;
+    }
+    return target;
   }
 
   private async processDownloadRequest(req: RpcAddDownloadRequest): Promise<DownloadItem | null> {
@@ -425,8 +488,14 @@ export class DesktopRpcBridge {
           const first = meta.items[0];
           if (first && first.isDownloadable && first.availableOptions.length > 0) {
             const s = this.deps.settings.get();
-            const preferredFormat = s.media.defaultAudioFormat === 'mp3' ? 'video' : 'video';
-            const option = first.availableOptions.find((o) => o.format === preferredFormat) ?? first.availableOptions[0];
+            const preferredFormat = req.format ?? (AUDIO_PLATFORMS.has(platform) ? 'audio' : 'video');
+            const candidates = first.availableOptions.filter((o) => o.format === preferredFormat);
+            const option =
+              (preferredFormat === 'audio'
+                ? candidates.find((o) => o.qualityId.startsWith(s.media.defaultAudioFormat))
+                : undefined) ??
+              candidates[0] ??
+              first.availableOptions[0];
             const added = this.deps.manager.addMedia([
               {
                 platform,
@@ -453,7 +522,7 @@ export class DesktopRpcBridge {
         url: rawUrl,
         fileName: req.fileName,
         category: req.category,
-        directory: req.directory,
+        directory: this.safeDirectory(req.directory),
         referrer: req.referrer,
         headers,
         startPaused: req.startPaused,

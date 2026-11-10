@@ -306,11 +306,11 @@ export function SettingsView() {
               </Setting>
               <Setting label={t('set.extensionAllowLan')} hint={t('set.extensionAllowLanHint')}>
                 <Switch
-                  checked={s.extension.allowLan !== false}
+                  checked={s.extension.allowLan === true}
                   onChange={(allowLan) => void save({ extension: { allowLan } })}
                 />
               </Setting>
-              {s.extension.allowLan !== false && tools?.lanIp && (
+              {s.extension.allowLan === true && tools?.lanIp && (
                 <Setting label={t('set.extensionLanIp')} hint={`http://${tools.lanIp}:${s.extension.port}`}>
                   <span className="badge mono">{tools.lanIp}:{s.extension.port}</span>
                   <button
