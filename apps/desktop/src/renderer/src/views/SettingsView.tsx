@@ -3,7 +3,7 @@ import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderO
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
-import { Switch } from '../components/ui';
+import { DayPicker, Switch } from '../components/ui';
 
 function Section({ id, title, icon, children }: { id?: string; title: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -211,6 +211,11 @@ export function SettingsView() {
               <input className="input narrow" type="time" value={s.scheduler.startTime} onChange={(e) => void save({ scheduler: { startTime: e.target.value } })} />
               <span className="muted">→</span>
               <input className="input narrow" type="time" value={s.scheduler.stopTime} onChange={(e) => void save({ scheduler: { stopTime: e.target.value } })} />
+            </Setting>
+          )}
+          {s.scheduler.enabled && (
+            <Setting label={t('sched.days')}>
+              <DayPicker value={s.scheduler.days} onChange={(days) => void save({ scheduler: { days } })} />
             </Setting>
           )}
         </Section>

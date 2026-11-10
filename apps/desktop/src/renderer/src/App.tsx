@@ -237,7 +237,7 @@ function Shell() {
                   ? `${updateStatus.progressPercent ?? 0}%`
                   : updateStatus?.state === 'downloaded'
                   ? t('set.restartAndInstall')
-                  : 'Update'}
+                  : t('app.update')}
               </span>
             </button>
             <button
@@ -312,10 +312,10 @@ function Shell() {
             <div className="sidebar-status-row">
               <span className="sidebar-status-label">
                 <Gauge size={13} />
-                {active.length > 0 ? `${active.length} Active` : 'Engine Ready'}
+                {active.length > 0 ? t('status.active', { count: active.length }) : t('status.ready')}
               </span>
               <b className="sidebar-status-speed">
-                {active.length > 0 ? formatSpeed(totalSpeed, language) || '0 B/s' : 'Idle'}
+                {active.length > 0 ? formatSpeed(totalSpeed, language) || '0 B/s' : t('status.idle')}
               </b>
             </div>
             {active.length > 0 && (
@@ -327,7 +327,7 @@ function Shell() {
               <span className={`rpc-dot ${settings.extension.enabled ? 'on' : 'off'}`} />
               <span>
                 {settings.extension.enabled
-                  ? `RPC Bridge :${settings.extension.port}`
+                  ? `${t('status.rpcBridge')} :${settings.extension.port}`
                   : t('set.extensionDisabled')}
               </span>
             </div>
@@ -381,7 +381,7 @@ function Shell() {
                 transition={{ type: 'spring', damping: 20, stiffness: 300 }}
               >
                 <Download size={32} />
-                <b>Drop link to grab or download</b>
+                <b>{t('app.dropLink')}</b>
               </motion.div>
             </motion.div>
           )}

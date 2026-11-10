@@ -182,6 +182,8 @@ export interface DownloadQueueScheduler {
   startTime: string;
   /** 'HH:MM', or '' for no stop time */
   stopTime: string;
+  /** Weekdays (0 = Sunday … 6 = Saturday) the schedule starts on. Missing or empty = every day. */
+  days?: number[];
 }
 
 export type QueueAfterAction = 'none' | 'stopQueue' | 'quit' | 'sleep' | 'shutdown';
@@ -293,6 +295,8 @@ export interface AppSettings {
     startTime: string;
     /** HH:MM, or '' for no stop time. */
     stopTime: string;
+    /** Weekdays (0 = Sunday … 6 = Saturday) the schedule starts on. Missing or empty = every day. */
+    days?: number[];
   };
   media: {
     defaultAudioFormat: 'mp3' | 'm4a';
