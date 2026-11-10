@@ -4,13 +4,62 @@ import type { ExtensionConfig } from '../types/extension';
 export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   bridgeHost: '127.0.0.1',
   bridgePort: DEFAULT_RPC_PORT,
-  bridgeToken: '',
+  bridgeToken: '519bf7cf-de9e-453f-98d3-fde5db273696',
   interceptDownloads: true,
   interceptExtensions: [...DEFAULT_INTERCEPTED_EXTENSIONS],
   excludedDomains: ['localhost', '127.0.0.1'],
   enableVideoSniffer: true,
   minFileSizeMB: 0,
 };
+
+const STREAMING_HOSTS = [
+  'youtube.com',
+  'youtu.be',
+  'instagram.com',
+  'tiktok.com',
+  'twitter.com',
+  'x.com',
+  'soundcloud.com',
+  'spotify.com',
+  'twitch.tv',
+  'vimeo.com',
+  'dailymotion.com',
+  'bilibili.com',
+  'reddit.com',
+  'facebook.com',
+  'fb.watch',
+  'pinterest.com',
+];
+
+const DIRECT_MEDIA_EXTENSIONS = new Set([
+  'mp4',
+  'mkv',
+  'webm',
+  'mov',
+  'avi',
+  'flv',
+  'm4v',
+  'mp3',
+  'm4a',
+  'flac',
+  'wav',
+  'ogg',
+  'aac',
+  'opus',
+  'm3u8',
+  'mpd',
+]);
+
+export function isStreamingMediaUrl(urlStr: string): boolean {
+  const host = extractHostname(urlStr);
+  if (!host) return false;
+  return STREAMING_HOSTS.some((d) => host === d || host.endsWith('.' + d));
+}
+
+export function isDirectMediaFileUrl(urlStr: string): boolean {
+  const ext = extractFileExtension(urlStr);
+  return Boolean(ext && DIRECT_MEDIA_EXTENSIONS.has(ext));
+}
 
 export async function loadExtensionConfig(): Promise<ExtensionConfig> {
   try {
@@ -20,6 +69,8 @@ export async function loadExtensionConfig(): Promise<ExtensionConfig> {
         return {
           ...DEFAULT_EXTENSION_CONFIG,
           ...data.grabbit_config,
+          bridgeToken:
+            data.grabbit_config.bridgeToken?.trim() || DEFAULT_EXTENSION_CONFIG.bridgeToken,
           interceptExtensions: Array.isArray(data.grabbit_config.interceptExtensions)
             ? data.grabbit_config.interceptExtensions
             : DEFAULT_EXTENSION_CONFIG.interceptExtensions,

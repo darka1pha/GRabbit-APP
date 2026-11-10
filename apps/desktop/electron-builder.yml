@@ -3,7 +3,7 @@ productName: GRabbit
 copyright: Copyright © 2026 DarkAlpha
 publish:
   provider: github
-  owner: DarkAlpha
+  owner: darka1pha
   repo: GRabbit-APP
 directories:
   output: release

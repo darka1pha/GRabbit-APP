@@ -1,4 +1,5 @@
 import type { DetectedMediaStream, RpcStatusResponse } from '@grabbit/types';
+import { isDirectMediaFileUrl, isStreamingMediaUrl } from '../shared/config';
 import type { ExtensionConfig } from '../types/extension';
 
 const connectionStatusEl = document.getElementById('connectionStatus')!;
@@ -77,65 +78,126 @@ function initToggles(): void {
   });
 }
 
+function renderMediaList(mediaList: DetectedMediaStream[], activeTabUrl?: string): void {
+  mediaCountEl.textContent = String(mediaList.length);
+
+  if (mediaList.length === 0) {
+    mediaListEl.innerHTML = `<div class="empty-state">No media streams detected on this tab.</div>`;
+    return;
+  }
+
+  mediaListEl.innerHTML = '';
+  for (const item of mediaList) {
+    const card = document.createElement('div');
+    card.className = 'media-card';
+
+    const info = document.createElement('div');
+    info.className = 'media-info';
+    info.innerHTML = `
+      <span class="media-title" title="${item.title || item.url}">${item.title || 'Media Stream'}</span>
+      <span class="media-meta">${item.format?.toUpperCase() || 'VIDEO'} • ${item.quality || 'Best Available'}</span>
+    `;
+
+    const grabBtn = document.createElement('button');
+    grabBtn.className = 'btn primary sm';
+    grabBtn.textContent = 'Grab';
+
+    grabBtn.addEventListener('click', () => {
+      grabBtn.disabled = true;
+      grabBtn.textContent = 'Sending…';
+
+      const payload: { url: string; fileName?: string; referrer?: string } = {
+        url: item.url,
+        referrer: activeTabUrl,
+      };
+      if (isDirectMediaFileUrl(item.url) && !isStreamingMediaUrl(item.url)) {
+        payload.fileName = `${(item.title || 'video').replace(/[^\w\s-]/g, '').trim()}.mp4`;
+      }
+
+      chrome.runtime.sendMessage(
+        {
+          type: 'DOWNLOAD_URL',
+          payload,
+        },
+        (dlRes) => {
+          if (dlRes && dlRes.success) {
+            grabBtn.textContent = 'Queued! ✅';
+          } else {
+            grabBtn.textContent = 'Failed ❌';
+            grabBtn.title = dlRes?.error || 'Failed to queue in GRabbit';
+            grabBtn.disabled = false;
+          }
+        }
+      );
+    });
+
+    card.appendChild(info);
+    card.appendChild(grabBtn);
+    mediaListEl.appendChild(card);
+  }
+}
+
 async function loadActiveTabMedia(): Promise<void> {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const activeTab = tabs[0];
   if (!activeTab || !activeTab.id) return;
 
+  const tabId = activeTab.id;
+  const tabUrl = activeTab.url || '';
+  const tabTitle = activeTab.title?.replace(/\s*-\s*YouTube$/i, '').trim() || 'Page Media';
+
+  // Pre-fill Quick Grab input if the active tab is a supported streaming media page
+  if (tabUrl.startsWith('http') && isStreamingMediaUrl(tabUrl) && !urlInputEl.value) {
+    urlInputEl.value = tabUrl;
+  }
+
+  const combined = new Map<string, DetectedMediaStream>();
+  if (tabUrl.startsWith('http') && isStreamingMediaUrl(tabUrl)) {
+    combined.set(tabUrl, {
+      url: tabUrl,
+      title: tabTitle,
+      format: 'video',
+      quality: 'Best Available',
+    });
+  }
+
+  // 1. Ask background for already-recorded streams on this tab
   chrome.runtime.sendMessage(
-    { type: 'GET_PAGE_MEDIA', payload: { tabId: activeTab.id } },
-    (res) => {
-      const mediaList: DetectedMediaStream[] = res?.media || [];
-      mediaCountEl.textContent = String(mediaList.length);
+    { type: 'GET_PAGE_MEDIA', payload: { tabId } },
+    (bgRes) => {
+      const bgMedia: DetectedMediaStream[] = bgRes?.media || [];
+      for (const m of bgMedia) combined.set(m.url, m);
+      renderMediaList(Array.from(combined.values()), tabUrl);
 
-      if (mediaList.length === 0) {
-        mediaListEl.innerHTML = `<div class="empty-state">No media streams detected on this tab.</div>`;
-        return;
-      }
-
-      mediaListEl.innerHTML = '';
-      for (const item of mediaList) {
-        const card = document.createElement('div');
-        card.className = 'media-card';
-
-        const info = document.createElement('div');
-        info.className = 'media-info';
-        info.innerHTML = `
-          <span class="media-title" title="${item.title || item.url}">${item.title || 'Media Stream'}</span>
-          <span class="media-meta">${item.format?.toUpperCase() || 'VIDEO'} • ${item.quality || 'Standard'}</span>
-        `;
-
-        const grabBtn = document.createElement('button');
-        grabBtn.className = 'btn primary sm';
-        grabBtn.textContent = 'Grab';
-
-        grabBtn.addEventListener('click', () => {
-          grabBtn.disabled = true;
-          grabBtn.textContent = 'Sending…';
-
-          chrome.runtime.sendMessage(
-            {
-              type: 'DOWNLOAD_URL',
-              payload: {
-                url: item.url,
-                fileName: `${(item.title || 'video').replace(/[^\w\s-]/g, '').trim()}.mp4`,
-                referrer: activeTab.url,
-              },
-            },
-            (dlRes) => {
-              if (dlRes && dlRes.success) {
-                grabBtn.textContent = 'Queued! ✅';
-              } else {
-                grabBtn.textContent = 'Failed ❌';
-                grabBtn.disabled = false;
+      // 2. Ask the content script on the active tab to scan live <video>/<audio> elements
+      if (tabUrl.startsWith('http')) {
+        try {
+          chrome.tabs.sendMessage(tabId, { type: 'SCAN_PAGE_MEDIA' }, (csRes) => {
+            if (chrome.runtime.lastError) {
+              // Content script wasn't injected on this pre-existing tab yet — inject it now
+              if (chrome.scripting && chrome.scripting.executeScript) {
+                chrome.scripting
+                  .executeScript({
+                    target: { tabId },
+                    files: ['content/index.js'],
+                  })
+                  .then(() => {
+                    chrome.tabs.sendMessage(tabId, { type: 'SCAN_PAGE_MEDIA' }, (retryRes) => {
+                      if (chrome.runtime.lastError) return;
+                      for (const m of retryRes?.media || []) combined.set(m.url, m);
+                      renderMediaList(Array.from(combined.values()), tabUrl);
+                    });
+                  })
+                  .catch(() => {});
               }
+              return;
             }
-          );
-        });
-
-        card.appendChild(info);
-        card.appendChild(grabBtn);
-        mediaListEl.appendChild(card);
+            for (const m of csRes?.media || []) combined.set(m.url, m);
+            renderMediaList(Array.from(combined.values()), tabUrl);
+          });
+        } catch {
+          // ignore
+        }
       }
     }
   );

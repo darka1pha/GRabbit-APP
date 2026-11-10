@@ -17,11 +17,40 @@ import type {
 
 // In-memory tab media registry: tabId -> DetectedMediaStream[]
 const tabMediaMap = new Map<number, DetectedMediaStream[]>();
+const interceptedDownloadIds = new Set<number>();
 
-// Initialize context menus on extension install or update
+// Initialize context menus and inject content scripts into open tabs on install/update
 chrome.runtime.onInstalled.addListener(() => {
   setupContextMenus();
+  void injectIntoOpenTabs();
 });
+
+// Ensure context menus exist on service worker wakeup
+setupContextMenus();
+
+async function injectIntoOpenTabs(): Promise<void> {
+  try {
+    if (!chrome.tabs || !chrome.scripting) return;
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+    for (const tab of tabs) {
+      if (!tab.id) continue;
+      try {
+        await chrome.scripting.insertCSS({
+          target: { tabId: tab.id },
+          files: ['content/styles.css'],
+        });
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/index.js'],
+        });
+      } catch {
+        // Ignore restricted tabs (e.g. Chrome Web Store)
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function setupContextMenus(): void {
   try {
@@ -116,9 +145,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'grabbit-download-all') {
     if (!tab?.id) return;
     try {
-      const links: ExtractedLink[] = await chrome.tabs.sendMessage(tab.id, {
-        type: 'EXTRACT_PAGE_LINKS',
-      });
+      let links: ExtractedLink[] | undefined;
+      try {
+        links = await chrome.tabs.sendMessage(tab.id, {
+          type: 'EXTRACT_PAGE_LINKS',
+        });
+      } catch {
+        // Content script wasn't loaded on this tab yet — inject and retry
+        if (chrome.scripting && chrome.scripting.executeScript) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content/index.js'],
+          });
+          links = await chrome.tabs.sendMessage(tab.id, {
+            type: 'EXTRACT_PAGE_LINKS',
+          });
+        }
+      }
 
       if (!links || links.length === 0) {
         showNotification('GRabbit', 'No downloadable links found on this page.');
@@ -171,20 +214,29 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Automatic Download Interception
 // ---------------------------------------------------------------------------
 
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
+async function tryInterceptDownload(downloadItem: chrome.downloads.DownloadItem): Promise<void> {
+  if (interceptedDownloadIds.has(downloadItem.id)) return;
+
   const config = await loadExtensionConfig();
-  if (!config.interceptDownloads) {
-    return;
-  }
+  if (!config.interceptDownloads) return;
 
   const url = downloadItem.finalUrl || downloadItem.url;
-  const filename = downloadItem.filename;
+  const filename = downloadItem.filename || '';
 
   if (!shouldInterceptDownload(url, filename, config, downloadItem.totalBytes)) {
     return;
   }
 
-  // Intercepting download: cancel browser download
+  // Verify GRabbit Desktop is online & authenticated BEFORE canceling the browser download
+  const rpc = new ExtensionRpcClient(config);
+  const ping = await rpc.ping(1500);
+  if (!ping.ok || !ping.data?.authenticated) {
+    return;
+  }
+
+  interceptedDownloadIds.add(downloadItem.id);
+
+  // Cancel browser download and forward to GRabbit Desktop
   try {
     await chrome.downloads.cancel(downloadItem.id);
     await chrome.downloads.erase({ id: downloadItem.id });
@@ -193,8 +245,6 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   }
 
   const cookies = await getCookiesHeader(url);
-  const rpc = new ExtensionRpcClient(config);
-
   const cleanFileName = filename ? filename.replace(/.*[/\\]/, '') : undefined;
   const res = await rpc.addDownload({
     url,
@@ -214,6 +264,20 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       'GRabbit Bridge Offline',
       `Could not send download to GRabbit. Please ensure GRabbit is running.`
     );
+  }
+}
+
+chrome.downloads.onCreated.addListener((downloadItem) => {
+  void tryInterceptDownload(downloadItem);
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  if (delta.filename?.current && !interceptedDownloadIds.has(delta.id)) {
+    chrome.downloads.search({ id: delta.id }, (items) => {
+      if (items && items[0] && items[0].state === 'in_progress') {
+        void tryInterceptDownload(items[0]);
+      }
+    });
   }
 });
 

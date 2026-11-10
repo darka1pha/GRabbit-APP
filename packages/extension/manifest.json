@@ -35,6 +35,8 @@
     "contextMenus",
     "storage",
     "activeTab",
+    "tabs",
+    "scripting",
     "cookies",
     "notifications"
   ],

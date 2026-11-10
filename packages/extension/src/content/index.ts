@@ -1,16 +1,25 @@
 import type { DetectedMediaStream } from '@grabbit/types';
-import { extractFileExtension } from '../shared/config';
+import {
+  extractFileExtension,
+  isDirectMediaFileUrl,
+  isStreamingMediaUrl,
+} from '../shared/config';
 import type { ExtractedLink } from '../types/extension';
 
-const detectedUrls = new Set<string>();
+const detectedStreams = new Map<string, DetectedMediaStream>();
 let snifferEnabled = true;
 
 // Query extension config for sniffer toggle
-chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
-  if (res && res.config && typeof res.config.enableVideoSniffer === 'boolean') {
-    snifferEnabled = res.config.enableVideoSniffer;
-  }
-});
+try {
+  chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
+    if (chrome.runtime.lastError) return;
+    if (res && res.config && typeof res.config.enableVideoSniffer === 'boolean') {
+      snifferEnabled = res.config.enableVideoSniffer;
+    }
+  });
+} catch {
+  // ignore
+}
 
 // ---------------------------------------------------------------------------
 // Link Extractor for "Download all links"
@@ -49,6 +58,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse(extractDownloadableLinks());
     return true;
   }
+  if (message.type === 'SCAN_PAGE_MEDIA') {
+    scanMediaElements();
+    sendResponse({ ok: true, media: Array.from(detectedStreams.values()) });
+    return true;
+  }
   return false;
 });
 
@@ -57,33 +71,45 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 
 function getMediaTitle(): string {
-  return document.title || 'Video Stream';
+  return document.title?.replace(/\s*-\s*YouTube$/i, '').trim() || 'Video Stream';
 }
 
 function notifyMediaDetected(stream: DetectedMediaStream): void {
-  if (detectedUrls.has(stream.url)) return;
-  detectedUrls.add(stream.url);
+  if (detectedStreams.has(stream.url)) return;
+  detectedStreams.set(stream.url, stream);
 
-  chrome.runtime.sendMessage({
-    type: 'MEDIA_DETECTED',
-    payload: {
-      media: stream,
-    },
-  });
+  try {
+    chrome.runtime.sendMessage({
+      type: 'MEDIA_DETECTED',
+      payload: {
+        media: stream,
+      },
+    });
+  } catch {
+    // ignore if extension context invalidated
+  }
 }
 
 function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: string): void {
   if (!snifferEnabled) return;
-  if (mediaEl.dataset.grabbitSnifferAttached) return;
-  mediaEl.dataset.grabbitSnifferAttached = 'true';
+  if (mediaEl.dataset.grabbitSnifferAttached === streamUrl) return;
+  mediaEl.dataset.grabbitSnifferAttached = streamUrl;
+
+  const parent = mediaEl.parentElement || document.body;
+  const existingPill = parent.querySelector<HTMLElement>('.grabbit-sniffer-pill');
+  if (existingPill) {
+    existingPill.dataset.streamUrl = streamUrl;
+    return;
+  }
 
   const container = document.createElement('div');
   container.className = 'grabbit-sniffer-pill';
   container.title = 'GRabbit Video Grabber';
+  container.dataset.streamUrl = streamUrl;
 
   const btn = document.createElement('button');
   btn.className = 'grabbit-sniffer-btn';
-  btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download this video`;
+  btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download with GRabbit`;
 
   const closeBtn = document.createElement('span');
   closeBtn.className = 'grabbit-sniffer-close';
@@ -97,17 +123,26 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
     e.stopPropagation();
     e.preventDefault();
 
+    const targetUrl =
+      container.dataset.streamUrl && !container.dataset.streamUrl.startsWith('blob:')
+        ? container.dataset.streamUrl
+        : window.location.href;
+
     btn.innerHTML = `<span class="grabbit-icon">⏳</span> Sending to GRabbit…`;
     btn.classList.add('grabbit-loading');
+
+    const payload: { url: string; fileName?: string; referrer: string } = {
+      url: targetUrl,
+      referrer: window.location.href,
+    };
+    if (isDirectMediaFileUrl(targetUrl) && !isStreamingMediaUrl(targetUrl)) {
+      payload.fileName = `${getMediaTitle().replace(/[^\w\s-]/g, '').trim() || 'video'}.mp4`;
+    }
 
     chrome.runtime.sendMessage(
       {
         type: 'DOWNLOAD_URL',
-        payload: {
-          url: streamUrl,
-          fileName: `${document.title.replace(/[^\w\s-]/g, '').trim() || 'video'}.mp4`,
-          referrer: window.location.href,
-        },
+        payload,
       },
       (res) => {
         if (res && res.success) {
@@ -115,15 +150,16 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
           btn.classList.remove('grabbit-loading');
           btn.classList.add('grabbit-success');
           setTimeout(() => {
-            btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download this video`;
+            btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download with GRabbit`;
             btn.classList.remove('grabbit-success');
           }, 3500);
         } else {
-          btn.innerHTML = `<span class="grabbit-icon">❌</span> Connection failed`;
+          btn.innerHTML = `<span class="grabbit-icon">❌</span> ${res?.error ? 'Error' : 'Connection failed'}`;
+          btn.title = res?.error || 'Could not reach GRabbit Desktop';
           btn.classList.remove('grabbit-loading');
           btn.classList.add('grabbit-error');
           setTimeout(() => {
-            btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download this video`;
+            btn.innerHTML = `<span class="grabbit-icon">🐰</span> Download with GRabbit`;
             btn.classList.remove('grabbit-error');
           }, 3500);
         }
@@ -138,7 +174,6 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
   });
 
   // Position pill near media element
-  const parent = mediaEl.parentElement || document.body;
   if (window.getComputedStyle(parent).position === 'static') {
     parent.style.position = 'relative';
   }
@@ -146,26 +181,38 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
 }
 
 function inspectMediaElement(el: HTMLMediaElement): void {
-  let src = el.currentSrc || el.src;
-  if (!src) {
+  let rawSrc = el.currentSrc || el.src;
+  if (!rawSrc) {
     const source = el.querySelector<HTMLSourceElement>('source');
     if (source && source.src) {
-      src = source.src;
+      rawSrc = source.src;
     }
   }
 
-  if (src && src.startsWith('http')) {
-    const ext = extractFileExtension(src);
+  const pageUrl = window.location.href;
+  const isStreamingSite = isStreamingMediaUrl(pageUrl);
+
+  // For MSE blob: streams (YouTube, Instagram, TikTok, X, Twitch, Vimeo, etc.)
+  // or streaming platform video elements, use the page URL so yt-dlp resolves it.
+  let targetUrl = '';
+  if (rawSrc && rawSrc.startsWith('http') && !isStreamingSite) {
+    targetUrl = rawSrc;
+  } else if ((rawSrc && rawSrc.startsWith('blob:')) || isStreamingSite) {
+    targetUrl = pageUrl;
+  }
+
+  if (targetUrl && targetUrl.startsWith('http')) {
     const isVideo = el instanceof HTMLVideoElement;
+    const height = isVideo && el.videoHeight ? `${el.videoHeight}p` : isVideo ? 'HD Video' : 'Audio';
     const stream: DetectedMediaStream = {
-      url: src,
+      url: targetUrl,
       title: getMediaTitle(),
       format: isVideo ? 'video' : 'audio',
-      quality: isVideo ? `${el.videoWidth || 'HD'}p` : 'Audio',
+      quality: height,
     };
 
     notifyMediaDetected(stream);
-    attachFloatingDownloadButton(el, src);
+    attachFloatingDownloadButton(el, targetUrl);
   }
 }
 
@@ -175,6 +222,16 @@ function scanMediaElements(): void {
     inspectMediaElement(media);
     media.addEventListener('play', () => inspectMediaElement(media), { once: true });
     media.addEventListener('loadedmetadata', () => inspectMediaElement(media), { once: true });
+  }
+
+  // Also detect supported streaming pages even before <video> finishes mounting
+  if (medias.length === 0 && isStreamingMediaUrl(window.location.href)) {
+    notifyMediaDetected({
+      url: window.location.href,
+      title: getMediaTitle(),
+      format: 'video',
+      quality: 'Best Available',
+    });
   }
 }
 

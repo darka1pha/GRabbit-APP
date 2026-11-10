@@ -14,6 +14,7 @@ export interface ExtensionConfig {
 export type ExtensionMessageType =
   | 'MEDIA_DETECTED'
   | 'GET_PAGE_MEDIA'
+  | 'SCAN_PAGE_MEDIA'
   | 'EXTRACT_PAGE_LINKS'
   | 'DOWNLOAD_MEDIA'
   | 'DOWNLOAD_URL'
@@ -98,9 +99,29 @@ declare global {
         title?: string;
         active?: boolean;
       }
-      function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
+      function query(queryInfo: {
+        active?: boolean;
+        currentWindow?: boolean;
+        url?: string | string[];
+      }): Promise<Tab[]>;
       function sendMessage<M = any, R = any>(tabId: number, message: M): Promise<R>;
+      function sendMessage<M = any, R = any>(
+        tabId: number,
+        message: M,
+        responseCallback?: (response: R) => void
+      ): void;
       function create(createProperties: { url: string }): Promise<Tab>;
+    }
+
+    namespace scripting {
+      function executeScript(injection: {
+        target: { tabId: number; allFrames?: boolean };
+        files: string[];
+      }): Promise<unknown[]>;
+      function insertCSS(injection: {
+        target: { tabId: number; allFrames?: boolean };
+        files: string[];
+      }): Promise<void>;
     }
 
     namespace downloads {
@@ -122,11 +143,23 @@ declare global {
         fileSize?: number;
         referrer?: string;
       }
+      interface DownloadDelta {
+        id: number;
+        filename?: { previous?: string; current?: string };
+        state?: { previous?: string; current?: string };
+      }
       function pause(downloadId: number): Promise<void>;
       function cancel(downloadId: number): Promise<void>;
       function erase(query: { id: number }): Promise<number[]>;
+      function search(
+        query: { id?: number },
+        callback: (results: DownloadItem[]) => void
+      ): void;
       const onCreated: {
         addListener(callback: (downloadItem: DownloadItem) => void): void;
+      };
+      const onChanged: {
+        addListener(callback: (downloadDelta: DownloadDelta) => void): void;
       };
       const onDeterminingFilename: {
         addListener(

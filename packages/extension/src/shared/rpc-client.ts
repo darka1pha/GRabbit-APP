@@ -81,7 +81,7 @@ export class ExtensionRpcClient {
 
   public async addDownload(
     req: RpcAddDownloadRequest,
-    timeoutMs = 8000
+    timeoutMs = 60000
   ): Promise<RpcAddDownloadResponse> {
     try {
       const controller = new AbortController();

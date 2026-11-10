@@ -116,6 +116,18 @@ export class DesktopRpcBridge {
       return true;
     }
 
+    // Allow local browser extension requests (Origin: chrome-extension:// or moz-extension://)
+    const origin = req.headers['origin'];
+    if (
+      typeof origin === 'string' &&
+      (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://')) &&
+      !headerToken &&
+      !authHeader &&
+      !queryToken
+    ) {
+      return true;
+    }
+
     return false;
   }
 
@@ -285,8 +297,8 @@ export class DesktopRpcBridge {
       const parsed = parseHttpUrl(rawUrl);
       const platform = detectPlatform(parsed.hostname);
 
-      // If recognized streaming media platform and no direct file name specified, try media resolve
-      if (platform !== 'generic' && !req.fileName) {
+      // If recognized streaming media platform, try media resolve first
+      if (platform !== 'generic') {
         try {
           const meta = await this.deps.router.resolve(rawUrl);
           const first = meta.items[0];
