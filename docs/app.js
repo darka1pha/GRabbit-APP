@@ -1,51 +1,23 @@
 const GITHUB_REPO = 'darka1pha/GRabbit-APP';
-const FALLBACK_TAG = 'v1.0.0';
-const BASE_DOWNLOAD = `https://github.com/${GITHUB_REPO}/releases/latest/download`;
-
-const DEFAULT_ASSETS = {
-  winInstaller: `${BASE_DOWNLOAD}/GRabbit-Setup-1.0.0.exe`,
-  winPortable: `${BASE_DOWNLOAD}/GRabbit-1.0.0-portable.exe`,
-  androidApk: `${BASE_DOWNLOAD}/GRabbit-v1.0.0.apk`,
-  chromeExt: `${BASE_DOWNLOAD}/GRabbit-Chrome-Extension-v1.0.0.zip`,
-  checksums: `${BASE_DOWNLOAD}/SHA256SUMS.txt`,
-};
 
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return '';
   const mb = bytes / (1024 * 1024);
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  const kb = bytes / 1024;
-  return `${kb.toFixed(0)} KB`;
+  if (mb >= 1) return `${mb.toFixed(1)} MB ↓`;
+  return `${(bytes / 1024).toFixed(0)} KB ↓`;
 }
 
-// 1. Auto-highlight primary CTA based on visitor OS
-function detectVisitorOS() {
-  const ua = navigator.userAgent || '';
-  const primaryBtn = document.getElementById('heroPrimaryDownload');
-  const primaryLabel = document.getElementById('heroPrimaryLabel');
-  if (!primaryBtn || !primaryLabel) return;
-
-  if (/android/i.test(ua)) {
-    primaryBtn.href = DEFAULT_ASSETS.androidApk;
-    primaryLabel.textContent = 'Download for Android (.apk)';
-  } else {
-    primaryBtn.href = DEFAULT_ASSETS.winInstaller;
-    primaryLabel.textContent = 'Download for Windows (64-bit)';
-  }
-}
-
-// 2. Fetch live GitHub Release metadata to keep version & file sizes up to date
 async function syncLatestRelease() {
   try {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
     if (!res.ok) return;
     const release = await res.json();
-    const tag = release.tag_name || FALLBACK_TAG;
 
-    const versionBadges = document.querySelectorAll('.js-release-version');
-    versionBadges.forEach((el) => {
-      el.textContent = tag;
-    });
+    if (release.tag_name) {
+      document.querySelectorAll('.js-release-version').forEach((el) => {
+        el.textContent = release.tag_name;
+      });
+    }
 
     if (!Array.isArray(release.assets)) return;
 
@@ -62,11 +34,11 @@ async function syncLatestRelease() {
         document.querySelectorAll('.js-dl-win-portable').forEach((el) => (el.href = url));
         const sizeEl = document.getElementById('size-win-portable');
         if (sizeEl && sizeStr) sizeEl.textContent = sizeStr;
-      } else if (/\.apk$/i.test(name)) {
+      } else if (/v.*\.apk$/i.test(name)) {
         document.querySelectorAll('.js-dl-android').forEach((el) => (el.href = url));
         const sizeEl = document.getElementById('size-android-apk');
         if (sizeEl && sizeStr) sizeEl.textContent = sizeStr;
-      } else if (/Extension.*\.zip$/i.test(name)) {
+      } else if (/Extension-v.*\.zip$/i.test(name)) {
         document.querySelectorAll('.js-dl-extension').forEach((el) => (el.href = url));
         const sizeEl = document.getElementById('size-chrome-ext');
         if (sizeEl && sizeStr) sizeEl.textContent = sizeStr;
@@ -75,38 +47,27 @@ async function syncLatestRelease() {
       }
     }
   } catch {
-    // Fallback URLs remain active
+    // Keep default links
   }
 }
 
-// 3. Interactive Usage Guide Tabs
-function initGuideTabs() {
-  const buttons = document.querySelectorAll('.guide-tab-btn');
+function initTabs() {
+  const buttons = document.querySelectorAll('.tab-btn');
   const panels = document.querySelectorAll('.guide-panel');
 
   buttons.forEach((btn) => {
     btn.addEventListener('click', () => {
-      const targetId = btn.getAttribute('data-tab');
+      const tab = btn.getAttribute('data-tab');
       buttons.forEach((b) => b.classList.remove('active'));
       panels.forEach((p) => p.classList.remove('active'));
 
       btn.classList.add('active');
-      const targetPanel = document.getElementById(`panel-${targetId}`);
-      if (targetPanel) targetPanel.classList.add('active');
-    });
-  });
-
-  // Also allow links like #guide-extension to open a specific tab
-  document.querySelectorAll('[data-open-tab]').forEach((link) => {
-    link.addEventListener('click', () => {
-      const tabName = link.getAttribute('data-open-tab');
-      const tabBtn = document.querySelector(`.guide-tab-btn[data-tab="${tabName}"]`);
-      if (tabBtn) tabBtn.click();
+      const panel = document.getElementById(`panel-${tab}`);
+      if (panel) panel.classList.add('active');
     });
   });
 }
 
-// 4. Copy-to-clipboard buttons for snippets
 function initCopyButtons() {
   document.querySelectorAll('[data-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -114,10 +75,10 @@ function initCopyButtons() {
       const original = btn.textContent;
       try {
         await navigator.clipboard.writeText(text);
-        btn.textContent = 'Copied! ✓';
+        btn.textContent = 'Copied';
         setTimeout(() => {
           btn.textContent = original;
-        }, 2000);
+        }, 1800);
       } catch {
         // ignore
       }
@@ -126,8 +87,7 @@ function initCopyButtons() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  detectVisitorOS();
-  initGuideTabs();
+  initTabs();
   initCopyButtons();
   void syncLatestRelease();
 });
