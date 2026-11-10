@@ -247,6 +247,17 @@ jobs:
           fi
           echo "release_tag=$TAG" >> $GITHUB_OUTPUT
 
+      - name: Clean Conflicting Release Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.get_tag.outputs.release_tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            for asset in $(gh release view "$TAG" --json assets -q '.assets[].name'); do
+              gh release delete-asset "$TAG" "$asset" --yes || true
+            done
+          fi
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:

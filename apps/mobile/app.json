@@ -44,19 +44,10 @@
           "category": [
             "DEFAULT"
           ]
-        },
-        {
-          "action": "VIEW",
-          "data": [
-            {
-              "scheme": "grabbit"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
         }
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "plugins": [
@@ -68,7 +59,8 @@
           "savePhotosPermission": "Allow GRabbit to save media to your photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "./plugins/withAndroidFixes"
     ]
   }
 }
