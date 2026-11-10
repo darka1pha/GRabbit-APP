@@ -48,3 +48,4 @@ module.exports = function withAndroidFixes(config) {
 
   return config;
 };
+
