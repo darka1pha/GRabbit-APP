@@ -2,9 +2,9 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http
 import { execFile } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { URL } from 'node:url';
 import type {
   AddHttpDownloadRequest,
@@ -19,11 +19,33 @@ import type { SettingsService } from './settings';
 import type { PlatformRouter } from './media/router';
 import type { MusicRecognizer } from './media/recognizer';
 import { YtDlpRunner } from './media/ytdlp-runner';
-import { detectPlatform, parseHttpUrl } from './media/url-parser';
+import { detectPlatform, isPrivateHost, parseHttpUrl } from './media/url-parser';
+import { InvalidUrlError } from './media/errors';
 import { logger } from './logger';
 
 /** Platforms whose content is music: links from the browser become audio downloads. */
 const AUDIO_PLATFORMS = new Set<string>(['spotify', 'soundcloud']);
+
+/** Most downloads one /downloads/batch call may add. */
+export const MAX_BATCH_ITEMS = 200;
+/** Largest extension package /extension/update will fetch. */
+const MAX_EXTENSION_ZIP_BYTES = 50 * 1024 * 1024;
+/** The only place an extension update may come from: this project's GitHub release assets. */
+const EXTENSION_RELEASE_URL = /^https:\/\/github\.com\/darka1pha\/GRabbit-APP\/releases\/(?:download\/[^/?#]+|latest\/download)\/[^/?#]+\.zip$/i;
+
+/** A request the bridge refuses because of what it asks for (answered with HTTP 400). */
+class RpcRequestError extends Error {}
+
+/**
+ * URL the desktop is asked to fetch on a caller's behalf and report back on. Loopback, private
+ * and link-local hosts are refused so the bridge cannot be used to read from the user's own network.
+ */
+function publicHttpUrl(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) throw new RpcRequestError('Field "url" is required');
+  const parsed = parseHttpUrl(raw);
+  if (isPrivateHost(parsed.hostname)) throw new RpcRequestError('Local and private network addresses are not allowed here');
+  return parsed.toString();
+}
 
 /** Constant-time comparison (hashing first makes both sides the same length). */
 function tokensMatch(given: string, expected: string): boolean {
@@ -281,10 +303,14 @@ export class DesktopRpcBridge {
           this.sendJson(res, 400, { success: false, error: 'Field "items" must be a non-empty array' });
           return;
         }
+        if (body.items.length > MAX_BATCH_ITEMS) {
+          this.sendJson(res, 400, { success: false, error: `A batch may contain at most ${MAX_BATCH_ITEMS} items` });
+          return;
+        }
 
         const results: DownloadItem[] = [];
         for (const reqItem of body.items) {
-          if (reqItem.url) {
+          if (reqItem && typeof reqItem.url === 'string' && reqItem.url) {
             const added = await this.processDownloadRequest(reqItem);
             if (added) {
               results.push(added);
@@ -301,11 +327,7 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && (pathname === '/media/resolve' || pathname === '/api/resolve')) {
         const body = await this.readBodyJson<{ url: string }>(req);
-        if (!body.url) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
-          return;
-        }
-        const metadata = await this.deps.router.resolve(body.url);
+        const metadata = await this.deps.router.resolve(publicHttpUrl(body.url));
         this.sendJson(res, 200, { success: true, metadata, ...metadata });
         return;
       }
@@ -317,23 +339,19 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && (pathname === '/media/recognize' || pathname === '/api/recognize')) {
         const body = await this.readBodyJson<{ url?: string }>(req);
-        if (!body.url || !this.deps.recognizer) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required or recognizer unavailable' });
+        if (!this.deps.recognizer) {
+          this.sendJson(res, 400, { success: false, error: 'Recognizer unavailable' });
           return;
         }
-        const track = await this.deps.recognizer.identifyUrl(parseHttpUrl(body.url).toString());
+        const track = await this.deps.recognizer.identifyUrl(publicHttpUrl(body.url));
         this.sendJson(res, 200, track ?? { title: null });
         return;
       }
 
       if (req.method === 'POST' && pathname === '/media/stream') {
         const body = await this.readBodyJson<{ url: string; format?: 'audio' | 'video'; qualityId?: string }>(req);
-        if (!body.url) {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
-          return;
-        }
         const ytdlp = new YtDlpRunner();
-        const meta = await ytdlp.getMetadata(body.url);
+        const meta = await ytdlp.getMetadata(publicHttpUrl(body.url));
         const formats = Array.isArray(meta.formats) ? meta.formats : [];
         const directFormats = formats.filter((f) => typeof (f as any).url === 'string' && !(f as any).url.includes('.m3u8'));
         let chosen: any = null;
@@ -370,8 +388,11 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && pathname === '/extension/update') {
         const body = await this.readBodyJson<{ downloadUrl?: string; version?: string }>(req);
-        if (!body.downloadUrl) {
-          this.sendJson(res, 400, { success: false, error: 'Field "downloadUrl" is required' });
+        if (typeof body.downloadUrl !== 'string' || !EXTENSION_RELEASE_URL.test(body.downloadUrl)) {
+          this.sendJson(res, 400, {
+            success: false,
+            error: 'Field "downloadUrl" must be a .zip asset of a GRabbit GitHub release',
+          });
           return;
         }
         const version = String(body.version || 'latest').replace(/[^a-zA-Z0-9._-]/g, '');
@@ -381,6 +402,10 @@ export class DesktopRpcBridge {
           return;
         }
         const buf = Buffer.from(await zipRes.arrayBuffer());
+        if (buf.length > MAX_EXTENSION_ZIP_BYTES) {
+          this.sendJson(res, 502, { success: false, error: 'Extension zip is unexpectedly large' });
+          return;
+        }
         const zipPath = join(tmpdir(), `GRabbit-Chrome-Extension-v${version}.zip`);
         writeFileSync(zipPath, buf);
 
@@ -390,10 +415,6 @@ export class DesktopRpcBridge {
           const dlExtDir = join(downloadDir, 'GRabbit-Chrome-Extension');
           mkdirSync(dlExtDir, { recursive: true });
           targetDirs.push(dlExtDir);
-        }
-        const localRepoDist = resolve(process.cwd(), 'packages/extension/dist');
-        if (existsSync(localRepoDist)) {
-          targetDirs.push(localRepoDist);
         }
 
         for (const dest of targetDirs) {
@@ -417,12 +438,32 @@ export class DesktopRpcBridge {
       // 404 for any other route
       this.sendJson(res, 404, { success: false, error: `Route not found: ${req.method} ${pathname}` });
     } catch (err) {
+      if (err instanceof RpcRequestError || err instanceof InvalidUrlError) {
+        this.sendJson(res, 400, { success: false, error: err.message });
+        return;
+      }
       logger.error({ err, pathname }, 'RPC bridge request error');
       this.sendJson(res, 500, {
         success: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Remote callers may only choose a folder inside the user's download folder. Anything else
+   * is dropped and the download lands in the default location for its category.
+   */
+  private safeDirectory(requested: unknown): string | undefined {
+    if (typeof requested !== 'string' || !requested.trim()) return undefined;
+    const root = resolve(this.deps.settings.get().downloadDir);
+    const target = resolve(root, requested.trim());
+    const rel = relative(root, target);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      logger.warn({ requested }, 'RPC download asked for a folder outside the download folder; using the default');
+      return undefined;
+    }
+    return target;
   }
 
   private async processDownloadRequest(req: RpcAddDownloadRequest): Promise<DownloadItem | null> {
@@ -481,7 +522,7 @@ export class DesktopRpcBridge {
         url: rawUrl,
         fileName: req.fileName,
         category: req.category,
-        directory: req.directory,
+        directory: this.safeDirectory(req.directory),
         referrer: req.referrer,
         headers,
         startPaused: req.startPaused,

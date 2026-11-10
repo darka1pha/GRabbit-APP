@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { PlatformId } from '../../shared/types';
 import { InvalidUrlError } from './errors';
 
@@ -74,4 +75,28 @@ export function parsePlatformUrl(inputUrl: string): ParsedPlatformUrl {
       break;
   }
   return { originalUrl: inputUrl, normalizedUrl: clean.toString(), platform };
+}
+
+const PRIVATE_IP_RANGES = [
+  /^127\./, // loopback
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+  /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./, // carrier-grade NAT
+  /^169\.254\./, // link-local
+  /^0\./,
+  /^::1?$/, // IPv6 loopback / unspecified
+  /^::ffff:/i, // IPv4-mapped IPv6
+  /^f[cd][0-9a-f]{2}:/i, // IPv6 unique local
+  /^fe80:/i, // IPv6 link-local
+];
+
+/**
+ * True for hostnames that name this machine or the local network. Checks the name as written
+ * (no DNS lookup), so a public name that resolves to a private address is not caught.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().trim().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  return isIP(host) !== 0 && PRIVATE_IP_RANGES.some((range) => range.test(host));
 }

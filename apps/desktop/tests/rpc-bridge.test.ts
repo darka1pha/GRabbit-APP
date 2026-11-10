@@ -325,6 +325,62 @@ describe('DesktopRpcBridge', () => {
     expect(mockManager.addHttp).toHaveBeenCalledTimes(2);
   });
 
+  describe('limits on what callers may ask for', () => {
+    const post = (path: string, body: unknown) =>
+      fetch(`http://127.0.0.1:${TEST_PORT}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+        body: JSON.stringify(body),
+      });
+    const lastDirectory = () => (mockManager.addHttp as any).mock.lastCall[0][0].directory;
+
+    it('drops a folder outside the download folder', async () => {
+      for (const directory of ['C:\\Users\\me\\Startup', '..\\..\\Windows', 'C:\\Downloads\\..\\Elsewhere']) {
+        expect((await post('/downloads/add', { url: 'https://example.com/a.zip', directory })).status).toBe(200);
+        expect(lastDirectory()).toBeUndefined();
+      }
+    });
+
+    it('keeps a folder inside the download folder', async () => {
+      await post('/downloads/add', { url: 'https://example.com/a.zip', directory: 'C:\\Downloads\\Work' });
+      expect(lastDirectory()).toBe('C:\\Downloads\\Work');
+      await post('/downloads/add', { url: 'https://example.com/a.zip', directory: 'Sub\\Folder' });
+      expect(lastDirectory()).toBe('C:\\Downloads\\Sub\\Folder');
+    });
+
+    it('rejects an oversized batch', async () => {
+      const items = Array.from({ length: 201 }, (_, i) => ({ url: `https://example.com/${i}.bin` }));
+      const res = await post('/downloads/batch', { items });
+      expect(res.status).toBe(400);
+      expect(mockManager.addHttp).not.toHaveBeenCalled();
+    });
+
+    it('refuses to resolve, recognise or stream local-network addresses', async () => {
+      for (const path of ['/media/resolve', '/media/recognize', '/media/stream']) {
+        for (const url of ['http://127.0.0.1:8080/x', 'http://192.168.1.1/admin', 'http://localhost/x', 'http://[::1]/x', 'file:///c:/x']) {
+          expect((await post(path, { url })).status, `${path} ${url}`).toBe(400);
+        }
+      }
+      expect(mockRouter.resolve).not.toHaveBeenCalled();
+    });
+
+    it("only installs extension updates from this project's GitHub releases", async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      for (const downloadUrl of [
+        'https://evil.example/ext.zip',
+        'http://github.com/darka1pha/GRabbit-APP/releases/download/v1/ext.zip',
+        'https://github.com/someone-else/GRabbit-APP/releases/download/v1/ext.zip',
+        'https://github.com/darka1pha/GRabbit-APP/releases/download/v1/ext.exe',
+        'https://github.com/darka1pha/GRabbit-APP/releases/download/v1/../../../x.zip',
+      ]) {
+        expect((await post('/extension/update', { downloadUrl, version: '9.9.9' })).status, downloadUrl).toBe(400);
+      }
+      // Only the test's own calls to the bridge went out: the bridge fetched nothing
+      expect(fetchSpy.mock.calls.every(([u]) => String(u).startsWith(`http://127.0.0.1:${TEST_PORT}`))).toBe(true);
+      fetchSpy.mockRestore();
+    });
+  });
+
   it('returns download list on GET /downloads/list', async () => {
     const res = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/list`, {
       headers: { 'X-GRabbit-Token': TEST_TOKEN },
