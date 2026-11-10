@@ -261,6 +261,8 @@ const en = {
   'set.extension': 'Browser & Mobile Integration (RPC Bridge)',
   'set.extensionEnable': 'Enable local RPC bridge for Browser Extension & Android App',
   'set.extensionAllowLan': 'Allow Mobile Wi-Fi Sync over local network (0.0.0.0)',
+  'set.extensionAllowLanWarning':
+    'GRabbit is now reachable by other devices on this network. Keep the security token private.',
   'set.extensionAllowLanHint':
     'Lets the GRabbit Android app connect to your PC over local Wi-Fi using your LAN IP. Off by default: turn it on only on networks you trust. Every request still needs the security token.',
   'set.extensionLanIp': 'Desktop Local LAN IP',
@@ -574,6 +576,8 @@ const fa: Record<MessageKey, string> = {
   'set.extension': 'اتصال به مرورگر و موبایل (بریج RPC)',
   'set.extensionEnable': 'فعال‌سازی بریج محلی RPC برای اکستنشن مرورگر و برنامه اندروید',
   'set.extensionAllowLan': 'امکان همگام‌سازی موبایل از طریق وای‌فای شبکه محلی (0.0.0.0)',
+  'set.extensionAllowLanWarning':
+    'اکنون دستگاه‌های دیگر این شبکه می‌توانند به GRabbit دسترسی داشته باشند. توکن امنیتی را خصوصی نگه دارید.',
   'set.extensionAllowLanHint':
     'به برنامه اندروید GRabbit اجازه می‌دهد از طریق وای‌فای به رایانه شما متصل شود. به‌طور پیش‌فرض خاموش است: فقط در شبکه‌های مورد اعتماد روشن کنید. هر درخواست همچنان به توکن امنیتی نیاز دارد.',
   'set.extensionLanIp': 'آدرس IP شبکه محلی رایانه (LAN)',

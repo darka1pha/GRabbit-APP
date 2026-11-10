@@ -7,14 +7,14 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/types', '@grabbit/utils'],
+        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/schemas', '@grabbit/types', '@grabbit/utils'],
       }),
     ],
   },
   preload: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/types', '@grabbit/utils'],
+        exclude: ['@grabbit/core', '@grabbit/config', '@grabbit/schemas', '@grabbit/types', '@grabbit/utils'],
       }),
     ],
   },

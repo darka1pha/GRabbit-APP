@@ -181,6 +181,9 @@ importers:
       '@grabbit/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@grabbit/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       '@grabbit/types':
         specifier: workspace:*
         version: link:../../packages/types

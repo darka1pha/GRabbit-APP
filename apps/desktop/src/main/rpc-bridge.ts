@@ -1,15 +1,24 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
 import { execFile } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { URL } from 'node:url';
+import {
+  describeIssue,
+  RpcAddBatchRequestSchema,
+  RpcAddDownloadRequestSchema,
+  RpcExtensionUpdateRequestSchema,
+  RpcStreamRequestSchema,
+  RpcUrlRequestSchema,
+  type ZodTypeAny,
+} from '@grabbit/schemas';
 import type {
   AddHttpDownloadRequest,
   DownloadItem,
-  RpcAddBatchRequest,
   RpcAddDownloadRequest,
   RpcPingResponse,
   RpcStatusResponse,
@@ -36,16 +45,52 @@ const EXTENSION_RELEASE_URL = /^https:\/\/github\.com\/darka1pha\/GRabbit-APP\/r
 /** A request the bridge refuses because of what it asks for (answered with HTTP 400). */
 class RpcRequestError extends Error {}
 
-/**
- * URL the desktop is asked to fetch on a caller's behalf and report back on. Loopback, private
- * and link-local hosts are refused so the bridge cannot be used to read from the user's own network.
- */
-function publicHttpUrl(raw: unknown): string {
-  if (typeof raw !== 'string' || !raw.trim()) throw new RpcRequestError('Field "url" is required');
-  const parsed = parseHttpUrl(raw);
-  if (isPrivateHost(parsed.hostname)) throw new RpcRequestError('Local and private network addresses are not allowed here');
-  return parsed.toString();
+/** Requests one address may make per minute. */
+export const MAX_REQUESTS_PER_MINUTE = 300;
+/** Wrong-token attempts one address may make per minute before it is locked out for the rest of it. */
+export const MAX_AUTH_FAILURES_PER_MINUTE = 20;
+const MAX_OPEN_CONNECTIONS = 64;
+
+/** Counts events per key in fixed windows. */
+class WindowCounter {
+  private windows = new Map<string, { start: number; count: number }>();
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs = 60_000
+  ) {}
+
+  private current(key: string, now: number): { start: number; count: number } {
+    let w = this.windows.get(key);
+    if (!w || now - w.start >= this.windowMs) {
+      if (this.windows.size > 2000) this.prune(now);
+      w = { start: now, count: 0 };
+      this.windows.set(key, w);
+    }
+    return w;
+  }
+
+  private prune(now: number): void {
+    for (const [key, w] of this.windows) if (now - w.start >= this.windowMs) this.windows.delete(key);
+  }
+
+  public add(key: string, now = Date.now()): void {
+    this.current(key, now).count++;
+  }
+
+  public exceeded(key: string, now = Date.now()): boolean {
+    return this.current(key, now).count >= this.limit;
+  }
+
+  /** Seconds until the key's window ends. */
+  public retryAfter(key: string, now = Date.now()): number {
+    return Math.max(1, Math.ceil((this.current(key, now).start + this.windowMs - now) / 1000));
+  }
 }
+
+export type HostLookup = (hostname: string) => Promise<string[]>;
+
+const systemLookup: HostLookup = async (hostname) => (await lookup(hostname, { all: true })).map((a) => a.address);
 
 /** Constant-time comparison (hashing first makes both sides the same length). */
 function tokensMatch(given: string, expected: string): boolean {
@@ -61,6 +106,8 @@ export interface RpcBridgeDeps {
   settings: SettingsService;
   version: string;
   onDownloadAdded?: (item: DownloadItem) => void;
+  /** Resolves a host name to its addresses (defaults to the system resolver). */
+  lookupHost?: HostLookup;
 }
 
 export class DesktopRpcBridge {
@@ -68,8 +115,37 @@ export class DesktopRpcBridge {
   private currentPort = 0;
   private currentHost = '127.0.0.1';
   private running = false;
+  private requests = new WindowCounter(MAX_REQUESTS_PER_MINUTE);
+  private authFailures = new WindowCounter(MAX_AUTH_FAILURES_PER_MINUTE);
 
   constructor(private readonly deps: RpcBridgeDeps) {}
+
+  /**
+   * URL the desktop is asked to fetch on a caller's behalf and report back on. Loopback, private
+   * and link-local targets are refused, by name and by what the name resolves to, so the bridge
+   * cannot be used to read from the user's own network.
+   */
+  private async publicHttpUrl(raw: string): Promise<string> {
+    const parsed = parseHttpUrl(raw);
+    const refuse = () => new RpcRequestError('Local and private network addresses are not allowed here');
+    if (isPrivateHost(parsed.hostname)) throw refuse();
+    if (isIP(parsed.hostname.replace(/^\[|\]$/g, '')) === 0) {
+      let addresses: string[] = [];
+      try {
+        addresses = await (this.deps.lookupHost ?? systemLookup)(parsed.hostname);
+      } catch {
+        // Unresolvable here: the fetch itself will fail the same way
+      }
+      if (addresses.some((address) => isPrivateHost(address))) throw refuse();
+    }
+    return parsed.toString();
+  }
+
+  private parse<S extends ZodTypeAny>(schema: S, body: unknown): ReturnType<S['parse']> {
+    const result = schema.safeParse(body);
+    if (!result.success) throw new RpcRequestError(`Invalid request: ${describeIssue(result.error)}`);
+    return result.data;
+  }
 
   public start(): void {
     const s = this.deps.settings.get().extension;
@@ -87,6 +163,7 @@ export class DesktopRpcBridge {
     this.stop();
 
     const server = createServer((req, res) => this.handleRequest(req, res));
+    server.maxConnections = MAX_OPEN_CONNECTIONS;
     this.currentPort = s.port;
     this.currentHost = bindHost;
 
@@ -184,7 +261,7 @@ export class DesktopRpcBridge {
     return hostname.toLowerCase() === 'localhost' || isIP(hostname) !== 0;
   }
 
-  private async readBodyJson<T>(req: IncomingMessage): Promise<T> {
+  private async readBodyJson<T = unknown>(req: IncomingMessage): Promise<T> {
     return new Promise((resolve, reject) => {
       let body = '';
       const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
@@ -194,7 +271,7 @@ export class DesktopRpcBridge {
         body += chunk;
         if (body.length > MAX_BODY_BYTES) {
           req.destroy();
-          reject(new Error('Request payload too large'));
+          reject(new RpcRequestError('Request payload too large'));
         }
       });
 
@@ -206,7 +283,7 @@ export class DesktopRpcBridge {
         try {
           resolve(JSON.parse(body) as T);
         } catch {
-          reject(new Error('Invalid JSON payload'));
+          reject(new RpcRequestError('Invalid JSON payload'));
         }
       });
 
@@ -231,6 +308,16 @@ export class DesktopRpcBridge {
       return;
     }
 
+    // Per-address limits: a general request budget, and a lockout after repeated wrong tokens
+    const client = req.socket.remoteAddress ?? 'unknown';
+    const limited = this.authFailures.exceeded(client) ? this.authFailures : this.requests.exceeded(client) ? this.requests : null;
+    if (limited) {
+      res.setHeader('Retry-After', String(limited.retryAfter(client)));
+      this.sendJson(res, 429, { success: false, error: 'Too many requests' });
+      return;
+    }
+    this.requests.add(client);
+
     const rawUrl = req.url ?? '/';
     const parsedUrl = new URL(rawUrl, `http://127.0.0.1:${this.currentPort}`);
     const pathname = parsedUrl.pathname;
@@ -250,6 +337,7 @@ export class DesktopRpcBridge {
 
     // All subsequent endpoints require authentication
     if (!this.authenticate(req)) {
+      this.authFailures.add(client);
       this.sendJson(res, 401, {
         success: false,
         error: 'Unauthorized: invalid or missing X-GRabbit-Token header',
@@ -279,11 +367,7 @@ export class DesktopRpcBridge {
       }
 
       if (req.method === 'POST' && pathname === '/downloads/add') {
-        const body = await this.readBodyJson<RpcAddDownloadRequest>(req);
-        if (!body.url || typeof body.url !== 'string') {
-          this.sendJson(res, 400, { success: false, error: 'Field "url" is required' });
-          return;
-        }
+        const body = this.parse(RpcAddDownloadRequestSchema, await this.readBodyJson(req));
 
         const added = await this.processDownloadRequest(body);
         if (added) {
@@ -298,25 +382,22 @@ export class DesktopRpcBridge {
       }
 
       if (req.method === 'POST' && pathname === '/downloads/batch') {
-        const body = await this.readBodyJson<RpcAddBatchRequest>(req);
-        if (!Array.isArray(body.items) || body.items.length === 0) {
-          this.sendJson(res, 400, { success: false, error: 'Field "items" must be a non-empty array' });
-          return;
-        }
+        const body = this.parse(RpcAddBatchRequestSchema, await this.readBodyJson(req));
         if (body.items.length > MAX_BATCH_ITEMS) {
           this.sendJson(res, 400, { success: false, error: `A batch may contain at most ${MAX_BATCH_ITEMS} items` });
           return;
         }
 
         const results: DownloadItem[] = [];
-        for (const reqItem of body.items) {
-          if (reqItem && typeof reqItem.url === 'string' && reqItem.url) {
-            const added = await this.processDownloadRequest(reqItem);
-            if (added) {
-              results.push(added);
-              if (this.deps.onDownloadAdded) {
-                this.deps.onDownloadAdded(added);
-              }
+        for (const rawItem of body.items) {
+          // A malformed entry is skipped rather than failing the whole batch
+          const reqItem = RpcAddDownloadRequestSchema.safeParse(rawItem);
+          if (!reqItem.success) continue;
+          const added = await this.processDownloadRequest(reqItem.data);
+          if (added) {
+            results.push(added);
+            if (this.deps.onDownloadAdded) {
+              this.deps.onDownloadAdded(added);
             }
           }
         }
@@ -326,8 +407,8 @@ export class DesktopRpcBridge {
       }
 
       if (req.method === 'POST' && (pathname === '/media/resolve' || pathname === '/api/resolve')) {
-        const body = await this.readBodyJson<{ url: string }>(req);
-        const metadata = await this.deps.router.resolve(publicHttpUrl(body.url));
+        const body = this.parse(RpcUrlRequestSchema, await this.readBodyJson(req));
+        const metadata = await this.deps.router.resolve(await this.publicHttpUrl(body.url));
         this.sendJson(res, 200, { success: true, metadata, ...metadata });
         return;
       }
@@ -338,20 +419,20 @@ export class DesktopRpcBridge {
       }
 
       if (req.method === 'POST' && (pathname === '/media/recognize' || pathname === '/api/recognize')) {
-        const body = await this.readBodyJson<{ url?: string }>(req);
+        const body = this.parse(RpcUrlRequestSchema, await this.readBodyJson(req));
         if (!this.deps.recognizer) {
           this.sendJson(res, 400, { success: false, error: 'Recognizer unavailable' });
           return;
         }
-        const track = await this.deps.recognizer.identifyUrl(publicHttpUrl(body.url));
+        const track = await this.deps.recognizer.identifyUrl(await this.publicHttpUrl(body.url));
         this.sendJson(res, 200, track ?? { title: null });
         return;
       }
 
       if (req.method === 'POST' && pathname === '/media/stream') {
-        const body = await this.readBodyJson<{ url: string; format?: 'audio' | 'video'; qualityId?: string }>(req);
+        const body = this.parse(RpcStreamRequestSchema, await this.readBodyJson(req));
         const ytdlp = new YtDlpRunner();
-        const meta = await ytdlp.getMetadata(publicHttpUrl(body.url));
+        const meta = await ytdlp.getMetadata(await this.publicHttpUrl(body.url));
         const formats = Array.isArray(meta.formats) ? meta.formats : [];
         const directFormats = formats.filter((f) => typeof (f as any).url === 'string' && !(f as any).url.includes('.m3u8'));
         let chosen: any = null;
@@ -387,8 +468,8 @@ export class DesktopRpcBridge {
       }
 
       if (req.method === 'POST' && pathname === '/extension/update') {
-        const body = await this.readBodyJson<{ downloadUrl?: string; version?: string }>(req);
-        if (typeof body.downloadUrl !== 'string' || !EXTENSION_RELEASE_URL.test(body.downloadUrl)) {
+        const body = this.parse(RpcExtensionUpdateRequestSchema, await this.readBodyJson(req));
+        if (!EXTENSION_RELEASE_URL.test(body.downloadUrl)) {
           this.sendJson(res, 400, {
             success: false,
             error: 'Field "downloadUrl" must be a .zip asset of a GRabbit GitHub release',
