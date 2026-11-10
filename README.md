@@ -1,6 +1,8 @@
 # 🐰 GRabbit Monorepo
 
 > **Drop a link. Grab the goods.** Cross-platform media grabber, music recognizer, and multi-connection download manager.
+>
+> 🌐 **Official Website & Downloads:** [https://darka1pha.github.io/GRabbit-APP/](https://darka1pha.github.io/GRabbit-APP/)
 
 ---
 
