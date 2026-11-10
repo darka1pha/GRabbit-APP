@@ -1,9 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { request } from 'node:http';
 import { DesktopRpcBridge } from '../src/main/rpc-bridge';
 import type { DownloadManager } from '../src/main/downloads/manager';
 import type { PlatformRouter } from '../src/main/media/router';
 import type { SettingsService } from '../src/main/settings';
 import type { AddHttpDownloadRequest, AppSettings, DownloadItem } from '../src/shared/types';
+
+/** GET with a caller-chosen Host header (fetch does not allow overriding it). Resolves to the status code. */
+function rawGet(path: string, headers: Record<string, string>, port = 31589): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, method: 'GET', headers }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 describe('DesktopRpcBridge', () => {
   let bridge: DesktopRpcBridge;
@@ -111,13 +124,109 @@ describe('DesktopRpcBridge', () => {
     bridge.stop();
   });
 
-  it('responds to OPTIONS preflight with CORS headers', async () => {
+  it('answers OPTIONS preflight and grants CORS only to extension origins', async () => {
+    const ext = 'chrome-extension://abcdefghijklmnop';
     const res = await fetch(`http://127.0.0.1:${TEST_PORT}/ping`, {
       method: 'OPTIONS',
+      headers: { Origin: ext },
     });
     expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-origin')).toBe(ext);
     expect(res.headers.get('access-control-allow-headers')).toContain('X-GRabbit-Token');
+
+    const web = await fetch(`http://127.0.0.1:${TEST_PORT}/ping`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://evil.example' },
+    });
+    expect(web.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('does not treat a spoofed extension Origin or client header as authentication', async () => {
+    const spoofed = {
+      'Content-Type': 'application/json',
+      Origin: 'chrome-extension://abcdefghijklmnop',
+      'X-GRabbit-Client': 'browser-extension',
+    };
+    const status = await fetch(`http://127.0.0.1:${TEST_PORT}/status`, { headers: spoofed });
+    expect(status.status).toBe(401);
+
+    const add = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/add`, {
+      method: 'POST',
+      headers: spoofed,
+      body: JSON.stringify({ url: 'https://example.com/evil.bat', directory: 'C:\Startup' }),
+    });
+    expect(add.status).toBe(401);
+    expect(mockManager.addHttp).not.toHaveBeenCalled();
+
+    const ping = await fetch(`http://127.0.0.1:${TEST_PORT}/ping`, { headers: spoofed });
+    expect(((await ping.json()) as any).authenticated).toBe(false);
+  });
+
+  it('rejects a wrong token and a token passed in the query string', async () => {
+    const wrong = await fetch(`http://127.0.0.1:${TEST_PORT}/status`, {
+      headers: { 'X-GRabbit-Token': 'not-the-token' },
+    });
+    expect(wrong.status).toBe(401);
+
+    const query = await fetch(`http://127.0.0.1:${TEST_PORT}/status?token=${TEST_TOKEN}`);
+    expect(query.status).toBe(401);
+  });
+
+  it('rejects every request when no token is configured', async () => {
+    currentSettings.extension.token = '';
+    const res = await fetch(`http://127.0.0.1:${TEST_PORT}/status`, {
+      headers: { 'X-GRabbit-Token': '' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects requests whose Host header is a domain name (DNS rebinding)', async () => {
+    const status = await rawGet('/status', { Host: 'attacker.example', 'X-GRabbit-Token': TEST_TOKEN });
+    expect(status).toBe(403);
+    expect(await rawGet('/status', { Host: `localhost:${TEST_PORT}`, 'X-GRabbit-Token': TEST_TOKEN })).toBe(200);
+  });
+
+  it('listens on loopback only unless LAN access is switched on', () => {
+    expect((bridge as any).currentHost).toBe('127.0.0.1');
+    currentSettings.extension.allowLan = true;
+    bridge.start();
+    expect((bridge as any).currentHost).toBe('0.0.0.0');
+  });
+
+  it('grabs audio from music platforms and honours an explicit format', async () => {
+    const options = [
+      { format: 'video', qualityId: '1080p', label: '1080p', extension: 'mp4' },
+      { format: 'audio', qualityId: 'm4a', label: 'M4A', extension: 'm4a' },
+      { format: 'audio', qualityId: 'mp3-320', label: 'MP3 320k', extension: 'mp3' },
+    ];
+    const meta = (platform: string, url: string) => ({
+      platform,
+      url,
+      title: 'T',
+      items: [{ id: 'm1', title: 'T', platform, url, isDownloadable: true, availableOptions: options }],
+    });
+    (mockManager.addMedia as any).mockImplementation((reqs: any[]) => reqs.map((r) => ({ id: 'x', ...r })));
+    const post = (body: unknown) =>
+      fetch(`http://127.0.0.1:${TEST_PORT}/downloads/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+        body: JSON.stringify(body),
+      });
+
+    const sc = 'https://soundcloud.com/artist/track';
+    (mockRouter.resolve as any).mockResolvedValue(meta('soundcloud', sc));
+    expect((await post({ url: sc })).status).toBe(200);
+    expect(mockManager.addMedia).toHaveBeenLastCalledWith([
+      expect.objectContaining({ format: 'audio', qualityId: 'mp3-320' }),
+    ]);
+
+    const yt = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    (mockRouter.resolve as any).mockResolvedValue(meta('youtube', yt));
+    await post({ url: yt });
+    expect(mockManager.addMedia).toHaveBeenLastCalledWith([expect.objectContaining({ format: 'video' })]);
+
+    await post({ url: yt, format: 'audio' });
+    expect(mockManager.addMedia).toHaveBeenLastCalledWith([expect.objectContaining({ format: 'audio' })]);
   });
 
   it('allows unauthenticated GET /ping', async () => {
@@ -195,10 +304,11 @@ describe('DesktopRpcBridge', () => {
   });
 
   it('adds batch downloads on POST /downloads/batch', async () => {
-    const res = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/batch?token=${TEST_TOKEN}`, {
+    const res = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-GRabbit-Token': TEST_TOKEN,
       },
       body: JSON.stringify({
         items: [

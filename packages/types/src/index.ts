@@ -337,6 +337,8 @@ export interface RpcAddDownloadRequest {
   cookies?: string;
   userAgent?: string;
   startPaused?: boolean;
+  /** For media links: which kind to grab. Defaults to audio on music platforms, video elsewhere. */
+  format?: 'audio' | 'video';
 }
 
 export interface RpcAddBatchRequest {

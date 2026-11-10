@@ -41,8 +41,9 @@ function updateConnectionPill(
     connectionStatusEl.title = `GRabbit Desktop RPC is online. Total downloads: ${status?.queueLength ?? 0}`;
   } else if (connected && !authenticated) {
     connectionStatusEl.classList.add('status-disconnected');
-    connectionStatusEl.querySelector('.status-text')!.textContent = 'Auth Failed';
-    connectionStatusEl.title = 'Security token mismatch. Update token in Options.';
+    connectionStatusEl.querySelector('.status-text')!.textContent = 'Not paired';
+    connectionStatusEl.title =
+      'GRabbit Desktop is running but the security token is missing or wrong. Copy it from GRabbit Desktop → Settings → Browser Integration and paste it into this extension\'s Options.';
   } else {
     connectionStatusEl.classList.add('status-disconnected');
     connectionStatusEl.querySelector('.status-text')!.textContent = 'Offline';

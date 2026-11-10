@@ -1,5 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
 import { execFile } from 'node:child_process';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -19,6 +21,16 @@ import type { MusicRecognizer } from './media/recognizer';
 import { YtDlpRunner } from './media/ytdlp-runner';
 import { detectPlatform, parseHttpUrl } from './media/url-parser';
 import { logger } from './logger';
+
+/** Platforms whose content is music: links from the browser become audio downloads. */
+const AUDIO_PLATFORMS = new Set<string>(['spotify', 'soundcloud']);
+
+/** Constant-time comparison (hashing first makes both sides the same length). */
+function tokensMatch(given: string, expected: string): boolean {
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
 
 export interface RpcBridgeDeps {
   manager: DownloadManager;
@@ -44,7 +56,8 @@ export class DesktopRpcBridge {
       return;
     }
 
-    const bindHost = s.allowLan !== false ? '0.0.0.0' : '127.0.0.1';
+    // Loopback unless the user explicitly opted in to LAN access (mobile pairing)
+    const bindHost = s.allowLan === true ? '0.0.0.0' : '127.0.0.1';
     if (this.running && this.currentPort === s.port && this.currentHost === bindHost) {
       return;
     }
@@ -62,9 +75,11 @@ export class DesktopRpcBridge {
       }
     });
 
+    // Tracked before it is listening, so a stop() that arrives first still closes it
+    this.server = server;
     server.listen(s.port, bindHost, () => {
+      if (this.server !== server) return;
       this.running = true;
-      this.server = server;
       logger.info({ port: s.port, host: bindHost }, 'Desktop RPC bridge listening');
     });
   }
@@ -73,6 +88,8 @@ export class DesktopRpcBridge {
     if (this.server) {
       try {
         this.server.close();
+        // Keep-alive sockets would otherwise keep being served by the old server
+        this.server.closeAllConnections();
       } catch {
         // ignore
       }
@@ -90,62 +107,59 @@ export class DesktopRpcBridge {
     return this.currentPort;
   }
 
-  private setCorsHeaders(res: ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+  /**
+   * Only browser extensions may read responses cross-origin. Ordinary web pages get no
+   * CORS grant, so they can neither probe for the app nor read anything from it.
+   */
+  private setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+    const origin = req.headers['origin'];
+    if (typeof origin === 'string' && /^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i.test(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-GRabbit-Token');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
 
   private sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
-    this.setCorsHeaders(res);
     res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(data));
   }
 
-  private authenticate(req: IncomingMessage, urlObj: URL): boolean {
-    const s = this.deps.settings.get().extension;
-    const expectedToken = s.token;
-    if (!expectedToken) return true;
+  /**
+   * The token is the only credential. Request headers such as Origin or a client name are
+   * chosen by the caller and prove nothing, so they are never accepted in its place.
+   */
+  private authenticate(req: IncomingMessage): boolean {
+    const expectedToken = this.deps.settings.get().extension.token;
+    if (!expectedToken) return false;
 
     const headerToken = req.headers['x-grabbit-token'];
-    if (typeof headerToken === 'string' && headerToken === expectedToken) {
-      return true;
-    }
+    if (typeof headerToken === 'string' && tokensMatch(headerToken, expectedToken)) return true;
 
     const authHeader = req.headers['authorization'];
     if (typeof authHeader === 'string') {
       const match = authHeader.match(/^Bearer\s+(.+)$/i);
-      if (match && match[1] === expectedToken) {
-        return true;
-      }
+      if (match && tokensMatch(match[1], expectedToken)) return true;
     }
-
-    const queryToken = urlObj.searchParams.get('token');
-    if (queryToken && queryToken === expectedToken) {
-      return true;
-    }
-
-    // Allow local browser extension requests (Origin: chrome-extension:// or moz-extension:// or X-GRabbit-Client: browser-extension from loopback)
-    const origin = req.headers['origin'];
-    const clientHeader = req.headers['x-grabbit-client'];
-    const remoteAddr = req.socket?.remoteAddress || '';
-    const isLoopback =
-      remoteAddr === '127.0.0.1' ||
-      remoteAddr === '::1' ||
-      remoteAddr === '::ffff:127.0.0.1';
-    const isExtensionOrigin =
-      typeof origin === 'string' &&
-      (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'));
-
-    if (
-      isExtensionOrigin ||
-      (isLoopback && clientHeader === 'browser-extension')
-    ) {
-      return true;
-    }
-
     return false;
+  }
+
+  /**
+   * DNS-rebinding guard: a web page can point its own domain at this machine, but the browser
+   * then sends that domain in Host. Real clients address the bridge by IP or "localhost".
+   */
+  private hostAllowed(req: IncomingMessage): boolean {
+    const raw = req.headers['host'];
+    if (typeof raw !== 'string' || !raw) return false;
+    let hostname: string;
+    try {
+      hostname = new URL(`http://${raw}`).hostname.replace(/^\[|\]$/g, '');
+    } catch {
+      return false;
+    }
+    return hostname.toLowerCase() === 'localhost' || isIP(hostname) !== 0;
   }
 
   private async readBodyJson<T>(req: IncomingMessage): Promise<T> {
@@ -179,7 +193,15 @@ export class DesktopRpcBridge {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    this.setCorsHeaders(res);
+    this.setCorsHeaders(req, res);
+    // One request per connection: calls are infrequent, and no client is left holding a
+    // socket to a server that has since been stopped or rebound.
+    res.setHeader('Connection', 'close');
+
+    if (!this.hostAllowed(req)) {
+      this.sendJson(res, 403, { success: false, error: 'Forbidden: unexpected Host header' });
+      return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -193,7 +215,7 @@ export class DesktopRpcBridge {
 
     // Public ping / health check endpoint
     if (req.method === 'GET' && (pathname === '/ping' || pathname === '/health')) {
-      const authenticated = this.authenticate(req, parsedUrl);
+      const authenticated = this.authenticate(req);
       const pingResp: RpcPingResponse = {
         app: 'GRabbit',
         version: this.deps.version,
@@ -205,10 +227,10 @@ export class DesktopRpcBridge {
     }
 
     // All subsequent endpoints require authentication
-    if (!this.authenticate(req, parsedUrl)) {
+    if (!this.authenticate(req)) {
       this.sendJson(res, 401, {
         success: false,
-        error: 'Unauthorized: invalid or missing X-GRabbit-Token header or token parameter',
+        error: 'Unauthorized: invalid or missing X-GRabbit-Token header',
       });
       return;
     }
@@ -425,8 +447,14 @@ export class DesktopRpcBridge {
           const first = meta.items[0];
           if (first && first.isDownloadable && first.availableOptions.length > 0) {
             const s = this.deps.settings.get();
-            const preferredFormat = s.media.defaultAudioFormat === 'mp3' ? 'video' : 'video';
-            const option = first.availableOptions.find((o) => o.format === preferredFormat) ?? first.availableOptions[0];
+            const preferredFormat = req.format ?? (AUDIO_PLATFORMS.has(platform) ? 'audio' : 'video');
+            const candidates = first.availableOptions.filter((o) => o.format === preferredFormat);
+            const option =
+              (preferredFormat === 'audio'
+                ? candidates.find((o) => o.qualityId.startsWith(s.media.defaultAudioFormat))
+                : undefined) ??
+              candidates[0] ??
+              first.availableOptions[0];
             const added = this.deps.manager.addMedia([
               {
                 platform,

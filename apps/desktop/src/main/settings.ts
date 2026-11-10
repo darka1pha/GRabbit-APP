@@ -51,7 +51,7 @@ export function defaultSettings(): AppSettings {
       port: 31542,
       token: randomUUID(),
       autoCapture: true,
-      allowLan: true,
+      allowLan: false,
     },
   };
 }
@@ -102,7 +102,7 @@ function sanitize(s: AppSettings): AppSettings {
       port: clamp(s.extension?.port, 1024, 65535, 31542),
       token: s.extension?.token?.trim() || d.extension.token,
       autoCapture: typeof s.extension?.autoCapture === 'boolean' ? s.extension.autoCapture : true,
-      allowLan: typeof s.extension?.allowLan === 'boolean' ? s.extension.allowLan : true,
+      allowLan: typeof s.extension?.allowLan === 'boolean' ? s.extension.allowLan : false,
     },
   };
 }
