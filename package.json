@@ -1,6 +1,6 @@
 {
   "name": "grabbit-monorepo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "GRabbit - Media Grabber & Download Manager Monorepo",
   "packageManager": "pnpm@12.5.1",
