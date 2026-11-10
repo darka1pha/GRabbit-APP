@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Archive, CircleAlert, CircleCheck, FileText, Film, File, Image, Info, Music, Package, X } from 'lucide-react';
 import type { Category, DownloadItem } from '../../../shared/types';
 import { useApp } from '../state';
+import { useI18n, type MessageKey } from '../i18n';
 
 export function Modal({
   title,
@@ -222,6 +223,32 @@ export function ProgressBar({
           transition={{ type: 'spring', damping: 26, stiffness: 200 }}
         />
       )}
+    </div>
+  );
+}
+
+/** Weekday chips for a schedule. An empty selection means every day. */
+export function DayPicker({ value, onChange }: { value: number[] | undefined; onChange(days: number[]): void }) {
+  const { t } = useI18n();
+  const selected = value ?? [];
+  const toggle = (day: number) =>
+    onChange(selected.includes(day) ? selected.filter((d) => d !== day) : [...selected, day].sort((a, b) => a - b));
+  return (
+    <div className="segmented" role="group" aria-label={t('sched.days')} style={{ flexWrap: 'wrap' }}>
+      <button type="button" className={selected.length === 0 ? 'active' : ''} aria-pressed={selected.length === 0} onClick={() => onChange([])}>
+        {t('sched.everyDay')}
+      </button>
+      {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+        <button
+          key={day}
+          type="button"
+          className={selected.includes(day) ? 'active' : ''}
+          aria-pressed={selected.includes(day)}
+          onClick={() => toggle(day)}
+        >
+          {t(`sched.day.${day}` as MessageKey)}
+        </button>
+      ))}
     </div>
   );
 }

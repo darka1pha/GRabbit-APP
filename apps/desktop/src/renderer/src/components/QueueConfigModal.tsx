@@ -3,7 +3,7 @@ import { Clock, Layers, Trash2 } from 'lucide-react';
 import type { DownloadQueue, QueueAfterAction } from '../../../shared/types';
 import { useI18n } from '../i18n';
 import { api, useApp } from '../state';
-import { Modal, Switch } from './ui';
+import { DayPicker, Modal, Switch } from './ui';
 
 export function QueueConfigModal({
   queue,
@@ -31,6 +31,7 @@ export function QueueConfigModal({
   const [schedulerEnabled, setSchedulerEnabled] = useState(queue?.scheduler?.enabled ?? false);
   const [startTime, setStartTime] = useState(queue?.scheduler?.startTime ?? '02:00');
   const [stopTime, setStopTime] = useState(queue?.scheduler?.stopTime ?? '08:00');
+  const [days, setDays] = useState<number[]>(queue?.scheduler?.days ?? []);
   const [afterQueue, setAfterQueue] = useState<QueueAfterAction>(queue?.afterQueue ?? 'stopQueue');
   const [busy, setBusy] = useState(false);
 
@@ -41,14 +42,14 @@ export function QueueConfigModal({
       if (isNew) {
         await api.queues.create(name.trim(), {
           maxConcurrent,
-          scheduler: { enabled: schedulerEnabled, startTime, stopTime },
+          scheduler: { enabled: schedulerEnabled, startTime, stopTime, days },
           afterQueue,
         });
       } else {
         await api.queues.update(queue.id, {
           name: name.trim(),
           maxConcurrent,
-          scheduler: { enabled: schedulerEnabled, startTime, stopTime },
+          scheduler: { enabled: schedulerEnabled, startTime, stopTime, days },
           afterQueue,
         });
       }
@@ -156,6 +157,7 @@ export function QueueConfigModal({
             </div>
           </div>
         )}
+        {schedulerEnabled && <DayPicker value={days} onChange={setDays} />}
       </div>
     </Modal>
   );

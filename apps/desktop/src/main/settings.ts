@@ -37,7 +37,7 @@ export function defaultSettings(): AppSettings {
     userAgent: DEFAULT_USER_AGENT,
     proxy: '',
     afterQueue: 'none',
-    scheduler: { enabled: false, startTime: '02:00', stopTime: '08:00' },
+    scheduler: { enabled: false, startTime: '02:00', stopTime: '08:00', days: [] },
     media: {
       defaultAudioFormat: 'mp3',
       defaultVideoQuality: '1080p',

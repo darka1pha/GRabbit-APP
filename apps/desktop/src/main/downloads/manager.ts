@@ -3,9 +3,11 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { shell } from 'electron';
+import { StoredDownloadItemSchema, StoredQueueSchema } from '@grabbit/schemas';
 import type {
   AddHttpDownloadRequest,
   AddMediaDownloadRequest,
+  AfterQueueAction,
   AppSettings,
   Category,
   ChecksumAlgorithm,
@@ -25,6 +27,7 @@ import { HttpDownloadTask, ProbeInfo, ResourceChangedError } from './http-engine
 import { MediaDownloadTask } from './media-engine';
 import { hashFile, moveFile, uniqueFileName } from './files';
 import { RateLimiter } from './throttle';
+import { ScheduleTracker } from './scheduler';
 
 const TICK_MS = 500;
 const FLUSH_MS = 250;
@@ -42,8 +45,12 @@ export interface ManagerDeps {
   onQueuesChanged?(queues: DownloadQueue[]): void;
   onCompleted(item: DownloadItem): void;
   onFailed(item: DownloadItem): void;
-  /** Every queued download has finished (at least one did during this run). */
-  onQueueDrained(): void;
+  /**
+   * Nothing is left to download (and at least one download finished during this run).
+   * `action` is set when a queue that just finished asked for a specific action; otherwise
+   * the global after-queue setting applies.
+   */
+  onQueueDrained(action?: AfterQueueAction): void;
   onAggregateProgress(progress: {
     fraction: number | null;
     active: number;
@@ -76,8 +83,9 @@ export class DownloadManager {
   private tickTimer: NodeJS.Timeout | null = null;
   private finishedSinceIdle = 0;
   private ticksSinceSave = 0;
-  private schedulerFired = { start: '', stop: '' };
-  private queueSchedulerFired = new Map<string, { start: string; stop: string }>();
+  private schedules = new ScheduleTracker();
+  /** Power action requested by a finished queue, run once everything else is done too. */
+  private pendingAfter: AfterQueueAction | null = null;
 
   constructor(private readonly deps: ManagerDeps) {
     this.store = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'downloads.json'), 1500);
@@ -108,7 +116,12 @@ export class DownloadManager {
       },
     ];
 
-    const loadedQueues = this.queueStore.load(defaultQueues);
+    const loadedQueues: DownloadQueue[] = [];
+    for (const raw of this.queueStore.load(defaultQueues, Array.isArray)) {
+      const parsed = StoredQueueSchema.safeParse(raw);
+      if (parsed.success) loadedQueues.push(parsed.data as DownloadQueue);
+      else logger.warn({ issue: parsed.error.issues[0] }, 'Dropped an unreadable queue from queues.json');
+    }
     for (const q of (loadedQueues.length > 0 ? loadedQueues : defaultQueues)) {
       this.queues.set(q.id, { ...q, order: q.order || [] });
     }
@@ -116,8 +129,14 @@ export class DownloadManager {
       this.queues.set('main', defaultQueues[0]);
     }
 
-    for (const item of this.store.load([])) {
-      if (!item?.id) continue;
+    for (const raw of this.store.load([], Array.isArray)) {
+      const parsed = StoredDownloadItemSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ issue: parsed.error.issues[0] }, 'Dropped an unreadable entry from downloads.json');
+        continue;
+      }
+      const item = parsed.data as unknown as DownloadItem;
+      if (this.items.has(item.id)) continue;
       if (ACTIVE_STATUSES.includes(item.status)) item.status = settings.resumeOnStartup ? 'queued' : 'paused';
       item.speed = 0;
       item.eta = null;
@@ -528,6 +547,7 @@ export class DownloadManager {
       }
     }
     this.queues.delete(id);
+    this.schedules.forget(`queue:${id}`);
     this.persistQueues();
     this.persist();
     this.pump();
@@ -615,7 +635,8 @@ export class DownloadManager {
         queue.enabled = false;
         this.persistQueues();
       } else if (queue.afterQueue && queue.afterQueue !== 'none') {
-        this.deps.onQueueDrained();
+        // Quit / sleep / shut down only once no other queue is still working: see checkDrained()
+        this.pendingAfter = queue.afterQueue;
       }
     }
   }
@@ -652,7 +673,8 @@ export class DownloadManager {
         this.markDirty(item);
         this.persist();
         this.pump();
-        this.checkQueueDrained(item.queueId || 'main');
+        // Pausing or failing the last item is not "the queue finished"
+        if (item.status === 'completed') this.checkQueueDrained(item.queueId || 'main');
         this.checkDrained();
       });
   }
@@ -787,10 +809,16 @@ export class DownloadManager {
 
   private checkDrained(): void {
     if (this.running.size > 0) return;
-    if ([...this.items.values()].some((i) => i.status === 'queued')) return;
+    // Items waiting in a stopped queue are not going to run, so they don't hold this up
+    const waiting = [...this.items.values()].some(
+      (i) => i.status === 'queued' && this.queues.get(i.queueId || 'main')?.enabled !== false
+    );
+    if (waiting) return;
     if (this.finishedSinceIdle === 0) return;
     this.finishedSinceIdle = 0;
-    this.deps.onQueueDrained();
+    const action = this.pendingAfter ?? undefined;
+    this.pendingAfter = null;
+    this.deps.onQueueDrained(action);
   }
 
   // ---------------------------------------------------------------- progress
@@ -839,37 +867,23 @@ export class DownloadManager {
     });
   }
 
-  private checkScheduler(): void {
-    const { scheduler } = this.deps.getSettings();
-    const now = new Date();
-    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const stamp = `${now.toDateString()} ${hhmm}`;
-
-    if (scheduler.enabled) {
-      if (scheduler.startTime === hhmm && this.schedulerFired.start !== stamp) {
-        this.schedulerFired.start = stamp;
-        logger.info('Scheduler: starting the queue');
-        this.resumeAll();
-      }
-      if (scheduler.stopTime && scheduler.stopTime === hhmm && this.schedulerFired.stop !== stamp) {
-        this.schedulerFired.stop = stamp;
-        logger.info('Scheduler: pausing the queue');
-        this.pauseAll();
-      }
+  /** Applies the global and per-queue schedules. `now` is a parameter so tests can move the clock. */
+  public checkScheduler(now = new Date()): void {
+    const global = this.schedules.update('global', this.deps.getSettings().scheduler, now);
+    if (global === 'start') {
+      logger.info('Scheduler: starting the queue');
+      this.resumeAll();
+    } else if (global === 'stop') {
+      logger.info('Scheduler: pausing the queue');
+      this.pauseAll();
     }
 
-    for (const queue of this.queues.values()) {
-      if (!queue.scheduler?.enabled) continue;
-      const fired = this.queueSchedulerFired.get(queue.id) || { start: '', stop: '' };
-      if (queue.scheduler.startTime === hhmm && fired.start !== stamp) {
-        fired.start = stamp;
-        this.queueSchedulerFired.set(queue.id, fired);
+    for (const queue of [...this.queues.values()]) {
+      const action = this.schedules.update(`queue:${queue.id}`, queue.scheduler, now);
+      if (action === 'start') {
         logger.info({ queueId: queue.id, queueName: queue.name }, 'Queue scheduler: starting queue');
         this.startQueue(queue.id);
-      }
-      if (queue.scheduler.stopTime && queue.scheduler.stopTime === hhmm && fired.stop !== stamp) {
-        fired.stop = stamp;
-        this.queueSchedulerFired.set(queue.id, fired);
+      } else if (action === 'stop') {
         logger.info({ queueId: queue.id, queueName: queue.name }, 'Queue scheduler: stopping queue');
         this.stopQueue(queue.id);
       }
