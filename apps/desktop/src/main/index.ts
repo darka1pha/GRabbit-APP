@@ -336,6 +336,7 @@ app.whenReady().then(() => {
     // ignore
   }
 
+  settings.unlockSecrets();
   const s = settings.get();
   applyMediaConfig(s);
   configureHttpProxy(s.proxy);

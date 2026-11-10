@@ -307,7 +307,10 @@ export function SettingsView() {
               <Setting label={t('set.extensionAllowLan')} hint={t('set.extensionAllowLanHint')}>
                 <Switch
                   checked={s.extension.allowLan === true}
-                  onChange={(allowLan) => void save({ extension: { allowLan } })}
+                  onChange={(allowLan) => {
+                    void save({ extension: { allowLan } });
+                    if (allowLan) toast(t('set.extensionAllowLanWarning'), 'info');
+                  }}
                 />
               </Setting>
               {s.extension.allowLan === true && tools?.lanIp && (

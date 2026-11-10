@@ -1,8 +1,9 @@
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { AppSettings, DeepPartial } from '../shared/types';
 import { JsonStore } from './store';
+import { logger } from './logger';
 
 export const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -107,6 +108,45 @@ function sanitize(s: AppSettings): AppSettings {
   };
 }
 
+/** Encrypts the few settings that are credentials before they are written to disk. */
+export interface SecretCodec {
+  available(): boolean;
+  /** Returns text safe to store in JSON. */
+  encrypt(plain: string): string;
+  decrypt(stored: string): string;
+}
+
+/** OS-backed encryption (DPAPI on Windows), tied to the current Windows user. Usable once the app is ready. */
+export const osSecretCodec: SecretCodec = {
+  available: () => {
+    try {
+      return safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
+  },
+  encrypt: (plain) => safeStorage.encryptString(plain).toString('base64'),
+  decrypt: (stored) => safeStorage.decryptString(Buffer.from(stored, 'base64')),
+};
+
+const ENCRYPTED_PREFIX = 'enc:v1:';
+
+/** The settings that are credentials. */
+const SECRETS = [
+  {
+    get: (s: AppSettings) => s.extension.token,
+    set: (s: AppSettings, v: string): AppSettings => ({ ...s, extension: { ...s.extension, token: v } }),
+  },
+  {
+    get: (s: AppSettings) => s.media.spotifyClientSecret,
+    set: (s: AppSettings, v: string): AppSettings => ({ ...s, media: { ...s.media, spotifyClientSecret: v } }),
+  },
+  {
+    get: (s: AppSettings) => s.media.instagramSessionId,
+    set: (s: AppSettings, v: string): AppSettings => ({ ...s, media: { ...s.media, instagramSessionId: v } }),
+  },
+];
+
 type Listener = (settings: AppSettings, previous: AppSettings) => void;
 
 export class SettingsService {
@@ -114,9 +154,51 @@ export class SettingsService {
   private current: AppSettings;
   private listeners: Listener[] = [];
 
-  constructor(dataDir: string) {
+  constructor(
+    dataDir: string,
+    private readonly codec: SecretCodec = osSecretCodec
+  ) {
     this.store = new JsonStore<AppSettings>(join(dataDir, 'settings.json'), 300);
     this.current = sanitize(deepMerge(defaultSettings(), this.store.load(defaultSettings())));
+  }
+
+  /**
+   * Decrypts the stored credentials. Call once the app is ready (OS encryption is not usable
+   * earlier) and before anything reads a credential. Settings files written by older versions
+   * hold them as plain text; those are rewritten encrypted.
+   */
+  public unlockSecrets(): void {
+    let next = this.current;
+    let hadPlainText = false;
+    for (const secret of SECRETS) {
+      const stored = secret.get(next);
+      if (!stored) continue;
+      if (!stored.startsWith(ENCRYPTED_PREFIX)) {
+        hadPlainText = true;
+        continue;
+      }
+      try {
+        next = secret.set(next, this.codec.decrypt(stored.slice(ENCRYPTED_PREFIX.length)));
+      } catch (err) {
+        // Another Windows user or machine wrote this file: the value cannot be recovered
+        logger.warn({ err }, 'A stored credential could not be decrypted and was cleared');
+        next = secret.set(next, '');
+      }
+    }
+    // sanitize() issues a fresh bridge token if the old one was lost
+    this.current = sanitize(next);
+    if (hadPlainText && this.codec.available()) this.store.save(() => this.forDisk());
+  }
+
+  /** The settings as written to disk: credentials encrypted when the OS can do it. */
+  private forDisk(): AppSettings {
+    if (!this.codec.available()) return this.current;
+    let out = this.current;
+    for (const secret of SECRETS) {
+      const value = secret.get(out);
+      if (value && !value.startsWith(ENCRYPTED_PREFIX)) out = secret.set(out, ENCRYPTED_PREFIX + this.codec.encrypt(value));
+    }
+    return out;
   }
 
   public get(): AppSettings {
@@ -126,7 +208,7 @@ export class SettingsService {
   public update(patch: DeepPartial<AppSettings>): AppSettings {
     const previous = this.current;
     this.current = sanitize(deepMerge(previous, patch));
-    this.store.save(() => this.current);
+    this.store.save(() => this.forDisk());
     for (const listener of this.listeners) listener(this.current, previous);
     return this.current;
   }
@@ -136,6 +218,6 @@ export class SettingsService {
   }
 
   public flush(): void {
-    this.store.saveSync(this.current);
+    this.store.saveSync(this.forDisk());
   }
 }

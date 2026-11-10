@@ -1,7 +1,23 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import {
+  AddHttpDownloadRequestSchema,
+  AddMediaDownloadRequestSchema,
+  ChecksumAlgorithmSchema,
+  describeIssue,
+  FileFiltersSchema,
+  HeadersSchema,
+  IdListSchema,
+  IdSchema,
+  MoveDirectionSchema,
+  QueuePatchSchema,
+  SettingsPatchSchema,
+  UrlTextSchema,
+  z,
+  type ZodTypeAny,
+} from '@grabbit/schemas';
 import {
   IPC,
   type AddHttpDownloadRequest,
@@ -9,6 +25,7 @@ import {
   type AppSettings,
   type ChecksumAlgorithm,
   type DeepPartial,
+  type DownloadQueue,
   type ProbeResult,
   type ToolInfo,
 } from '../shared/types';
@@ -49,11 +66,33 @@ export interface IpcDeps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (...args: any[]) => unknown;
 
+/** The renderer sent arguments of the wrong shape. */
+export class InvalidRequestError extends Error {
+  public readonly code = 'INVALID_REQUEST';
+}
+
+/**
+ * Checks a handler's arguments against one schema per parameter. Missing trailing arguments are
+ * read as undefined, extra ones are dropped, and unknown object keys are stripped.
+ */
+export function parseArgs(channel: string, schemas: ZodTypeAny[], args: unknown[]): unknown[] {
+  return schemas.map((schema, index) => {
+    const result = schema.safeParse(args[index]);
+    if (!result.success) {
+      throw new InvalidRequestError(`Invalid argument ${index + 1} for ${channel}: ${describeIssue(result.error)}`);
+    }
+    return result.data;
+  });
+}
+
+const optional = <T extends ZodTypeAny>(schema: T) => schema.nullish().transform((v) => v ?? undefined);
+const pathText = z.string().min(1).max(4096);
+
 /** Every handler answers { ok, data } / { ok: false, error } so error codes survive IPC. */
-function handle(channel: string, fn: Handler): void {
+function handle(channel: string, schemas: ZodTypeAny[], fn: Handler): void {
   ipcMain.handle(channel, async (_event, ...args: unknown[]) => {
     try {
-      return { ok: true, data: await fn(...args) };
+      return { ok: true, data: await fn(...parseArgs(channel, schemas, args)) };
     } catch (err) {
       const code = codeOf(err);
       logger.warn({ channel, code, err }, 'IPC handler failed');
@@ -75,17 +114,17 @@ export function registerIpc(deps: IpcDeps): void {
   const { settings, manager, router, recognizer } = deps;
   const ytdlp = new YtDlpRunner();
 
-  handle(IPC.settingsGet, () => settings.get());
-  handle(IPC.settingsUpdate, (patch: DeepPartial<AppSettings>) => settings.update(patch));
+  handle(IPC.settingsGet, [], () => settings.get());
+  handle(IPC.settingsUpdate, [SettingsPatchSchema], (patch: DeepPartial<AppSettings>) => settings.update(patch));
 
-  handle(IPC.chooseDirectory, async (current?: string) => {
+  handle(IPC.chooseDirectory, [optional(z.string().max(4096))], async (current?: string) => {
     const win = deps.getWindow();
     const options: Electron.OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'], defaultPath: current };
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
   });
 
-  handle(IPC.chooseFile, async (filters?: { name: string; extensions: string[] }[]) => {
+  handle(IPC.chooseFile, [optional(FileFiltersSchema)], async (filters?: { name: string; extensions: string[] }[]) => {
     const win = deps.getWindow();
     const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters };
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
@@ -93,8 +132,8 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ------------------------------------------------------------ downloads
-  handle(IPC.downloadsList, () => manager.list());
-  handle(IPC.downloadsProbe, async (url: string, headers?: Record<string, string>): Promise<ProbeResult> => {
+  handle(IPC.downloadsList, [], () => manager.list());
+  handle(IPC.downloadsProbe, [UrlTextSchema, optional(HeadersSchema)], async (url: string, headers?: Record<string, string>): Promise<ProbeResult> => {
     const parsed = parseHttpUrl(url).toString();
     const info = await probeUrl(parsed, { 'User-Agent': settings.get().userAgent, ...(headers ?? {}) });
     let fileName = sanitizeFilename(info.serverFileName ?? filenameFromUrl(parsed) ?? '', 'download');
@@ -113,35 +152,35 @@ export function registerIpc(deps: IpcDeps): void {
       category: byName !== 'other' ? byName : (categoryForMime(info.mimeType) ?? 'other'),
     };
   });
-  handle(IPC.downloadsAddHttp, (requests: AddHttpDownloadRequest[]) => manager.addHttp(requests));
-  handle(IPC.downloadsAddMedia, (requests: AddMediaDownloadRequest[]) => manager.addMedia(requests));
-  handle(IPC.downloadsPause, (ids: string[]) => manager.pause(ids));
-  handle(IPC.downloadsResume, (ids: string[]) => manager.resume(ids));
-  handle(IPC.downloadsRetry, (ids: string[]) => manager.retry(ids));
-  handle(IPC.downloadsRemove, (ids: string[], deleteFiles: boolean) => manager.remove(ids, deleteFiles));
-  handle(IPC.downloadsClearCompleted, () => manager.clearCompleted());
-  handle(IPC.downloadsPauseAll, () => manager.pauseAll());
-  handle(IPC.downloadsResumeAll, () => manager.resumeAll());
-  handle(IPC.downloadsMove, (id: string, direction: 'up' | 'down' | 'top' | 'bottom') => manager.move(id, direction));
-  handle(IPC.downloadsChangeUrl, (id: string, url: string) => manager.changeUrl(id, url));
-  handle(IPC.downloadsSetSpeedLimit, (id: string, kbps: number) => manager.setSpeedLimit(id, kbps));
-  handle(IPC.downloadsVerify, (id: string, algorithm: ChecksumAlgorithm, expected?: string) =>
+  handle(IPC.downloadsAddHttp, [z.array(AddHttpDownloadRequestSchema).max(5000)], (requests: AddHttpDownloadRequest[]) => manager.addHttp(requests));
+  handle(IPC.downloadsAddMedia, [z.array(AddMediaDownloadRequestSchema).max(5000)], (requests: AddMediaDownloadRequest[]) => manager.addMedia(requests));
+  handle(IPC.downloadsPause, [IdListSchema], (ids: string[]) => manager.pause(ids));
+  handle(IPC.downloadsResume, [IdListSchema], (ids: string[]) => manager.resume(ids));
+  handle(IPC.downloadsRetry, [IdListSchema], (ids: string[]) => manager.retry(ids));
+  handle(IPC.downloadsRemove, [IdListSchema, optional(z.boolean())], (ids: string[], deleteFiles: boolean) => manager.remove(ids, deleteFiles));
+  handle(IPC.downloadsClearCompleted, [], () => manager.clearCompleted());
+  handle(IPC.downloadsPauseAll, [], () => manager.pauseAll());
+  handle(IPC.downloadsResumeAll, [], () => manager.resumeAll());
+  handle(IPC.downloadsMove, [IdSchema, MoveDirectionSchema], (id: string, direction: 'up' | 'down' | 'top' | 'bottom') => manager.move(id, direction));
+  handle(IPC.downloadsChangeUrl, [IdSchema, UrlTextSchema], (id: string, url: string) => manager.changeUrl(id, url));
+  handle(IPC.downloadsSetSpeedLimit, [IdSchema, z.number().finite().nonnegative()], (id: string, kbps: number) => manager.setSpeedLimit(id, kbps));
+  handle(IPC.downloadsVerify, [IdSchema, ChecksumAlgorithmSchema, optional(z.string().max(256))], (id: string, algorithm: ChecksumAlgorithm, expected?: string) =>
     manager.verifyChecksum(id, algorithm, expected)
   );
-  handle(IPC.downloadsOpenFile, async (id: string) => {
+  handle(IPC.downloadsOpenFile, [IdSchema], async (id: string) => {
     const item = manager.get(id);
     if (!item?.filePath || !existsSync(item.filePath)) throw new Error('The file was moved or deleted');
     const error = await shell.openPath(item.filePath);
     if (error) throw new Error(error);
   });
-  handle(IPC.downloadsShowInFolder, async (id: string) => {
+  handle(IPC.downloadsShowInFolder, [IdSchema], async (id: string) => {
     const item = manager.get(id);
     if (!item) return;
     if (item.filePath && existsSync(item.filePath)) shell.showItemInFolder(item.filePath);
     else if (existsSync(item.directory)) await shell.openPath(item.directory);
     else if (existsSync(dirname(item.directory))) await shell.openPath(dirname(item.directory));
   });
-  handle(IPC.downloadsCopyUrl, (id: string) => {
+  handle(IPC.downloadsCopyUrl, [IdSchema], (id: string) => {
     const item = manager.get(id);
     if (!item) return;
     deps.clipboardWatcher.ignore(item.url);
@@ -149,25 +188,25 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ------------------------------------------------------------ queues
-  handle(IPC.queuesList, () => manager.listQueues());
-  handle(IPC.queuesCreate, (name: string, options?: any) => manager.createQueue(name, options));
-  handle(IPC.queuesUpdate, (id: string, patch: any) => manager.updateQueue(id, patch));
-  handle(IPC.queuesDelete, (id: string) => manager.deleteQueue(id));
-  handle(IPC.queuesStart, (id: string) => manager.startQueue(id));
-  handle(IPC.queuesStop, (id: string) => manager.stopQueue(id));
-  handle(IPC.queuesMoveItem, (itemId: string, targetQueueId: string) => manager.moveItemToQueue(itemId, targetQueueId));
-  handle(IPC.queuesReorder, (queueId: string, order: string[]) => manager.reorderQueue(queueId, order));
+  handle(IPC.queuesList, [], () => manager.listQueues());
+  handle(IPC.queuesCreate, [z.string().max(120), optional(QueuePatchSchema)], (name: string, options?: Partial<DownloadQueue>) => manager.createQueue(name, options));
+  handle(IPC.queuesUpdate, [IdSchema, QueuePatchSchema], (id: string, patch: Partial<DownloadQueue>) => manager.updateQueue(id, patch));
+  handle(IPC.queuesDelete, [IdSchema], (id: string) => manager.deleteQueue(id));
+  handle(IPC.queuesStart, [IdSchema], (id: string) => manager.startQueue(id));
+  handle(IPC.queuesStop, [IdSchema], (id: string) => manager.stopQueue(id));
+  handle(IPC.queuesMoveItem, [IdSchema, IdSchema], (itemId: string, targetQueueId: string) => manager.moveItemToQueue(itemId, targetQueueId));
+  handle(IPC.queuesReorder, [IdSchema, IdListSchema], (queueId: string, order: string[]) => manager.reorderQueue(queueId, order));
 
   // ------------------------------------------------------------ media
-  handle(IPC.mediaResolve, (url: string) => router.resolve(url));
-  handle(IPC.mediaSearch, (query: string, limit?: number) => router.search(query, limit ?? 15));
+  handle(IPC.mediaResolve, [z.string().trim().min(1).max(8192)], (url: string) => router.resolve(url));
+  handle(IPC.mediaSearch, [z.string().trim().min(1).max(500), optional(z.number().int().min(1).max(50))], (query: string, limit?: number) => router.search(query, limit ?? 15));
 
   // ------------------------------------------------------------ recognition
-  handle(IPC.recognizeFile, (path: string) => recognizer.identifyFile(path));
-  handle(IPC.recognizeUrl, (url: string) => recognizer.identifyUrl(parseHttpUrl(url).toString()));
+  handle(IPC.recognizeFile, [pathText], (path: string) => recognizer.identifyFile(path));
+  handle(IPC.recognizeUrl, [UrlTextSchema], (url: string) => recognizer.identifyUrl(parseHttpUrl(url).toString()));
 
   // ------------------------------------------------------------ tools
-  handle(IPC.toolsInfo, async (): Promise<ToolInfo> => {
+  handle(IPC.toolsInfo, [], async (): Promise<ToolInfo> => {
     const cfg = getMediaConfig();
     const [y, f, p] = await Promise.all([ytdlp.getVersion(), new FFmpegRunner().getVersion(), new FFprobeRunner().getVersion()]);
     let lanIp: string | undefined;
@@ -194,7 +233,7 @@ export function registerIpc(deps: IpcDeps): void {
       lanIp,
     };
   });
-  handle(IPC.toolsUpdateYtDlp, async () => {
+  handle(IPC.toolsUpdateYtDlp, [], async () => {
     if (!existsSync(getMediaConfig().ytdlpPath)) {
       const path = await installYtDlp();
       deps.refreshBinaries();
@@ -204,22 +243,28 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ------------------------------------------------------------ updater
-  handle(IPC.updaterCheck, () => deps.updater.checkForUpdates());
-  handle(IPC.updaterDownload, () => deps.updater.downloadUpdate());
-  handle(IPC.updaterInstall, () => deps.updater.quitAndInstall());
+  handle(IPC.updaterCheck, [], () => deps.updater.checkForUpdates());
+  handle(IPC.updaterDownload, [], () => deps.updater.downloadUpdate());
+  handle(IPC.updaterInstall, [], () => deps.updater.quitAndInstall());
 
   // ------------------------------------------------------------ grab pill
-  handle(IPC.pillHide, () => deps.grabPill.hide());
-  handle(IPC.pillSubmit, (url: string, action?: 'grab' | 'download') => {
+  handle(IPC.pillHide, [], () => deps.grabPill.hide());
+  handle(IPC.pillSubmit, [z.string().max(8192), optional(z.enum(['grab', 'download']))], (url: string, action?: 'grab' | 'download') => {
     deps.grabPill.submit(url, action);
   });
 
   // ------------------------------------------------------------ shell
-  handle(IPC.openExternal, async (url: string) => {
+  handle(IPC.openExternal, [z.string().min(1).max(8192)], async (url: string) => {
     if (!isHttpUrl(url) && !url.startsWith('spotify:')) throw new Error('Only web links can be opened');
     await shell.openExternal(url);
   });
-  handle(IPC.openPath, async (path: string) => {
+  handle(IPC.openPath, [pathText], async (path: string) => {
+    // Only folders the app itself manages: the download folder, the data folder and item folders
+    const wanted = resolve(path).toLowerCase();
+    const allowed = [settings.get().downloadDir, deps.dataDir, ...manager.list().map((item) => item.directory)];
+    if (!allowed.some((dir) => dir && resolve(dir).toLowerCase() === wanted)) {
+      throw new InvalidRequestError('That folder cannot be opened from here');
+    }
     const error = await shell.openPath(path);
     if (error) throw new Error(error);
   });

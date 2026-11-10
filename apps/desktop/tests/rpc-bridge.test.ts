@@ -27,9 +27,12 @@ describe('DesktopRpcBridge', () => {
   let addedItemCallback: DownloadItem | null = null;
   const TEST_PORT = 31589;
   const TEST_TOKEN = 'secret-test-token-123';
+  /** Stand-in for DNS: public by default, overridden per test. */
+  let lookupHost: (hostname: string) => Promise<string[]>;
 
   beforeEach(() => {
     addedItemCallback = null;
+    lookupHost = async () => ['93.184.216.34'];
     currentSettings = {
       language: 'en',
       theme: 'system',
@@ -112,6 +115,7 @@ describe('DesktopRpcBridge', () => {
       router: mockRouter as PlatformRouter,
       settings: mockSettings as SettingsService,
       version: '1.0.0-test',
+      lookupHost: (hostname) => lookupHost(hostname),
       onDownloadAdded: (item) => {
         addedItemCallback = item;
       },
@@ -362,6 +366,46 @@ describe('DesktopRpcBridge', () => {
         }
       }
       expect(mockRouter.resolve).not.toHaveBeenCalled();
+    });
+
+    it('refuses a public-looking name that resolves to a private address', async () => {
+      lookupHost = async (hostname) => (hostname === 'rebind.example' ? ['93.184.216.34', '10.0.0.5'] : ['93.184.216.34']);
+      expect((await post('/media/resolve', { url: 'https://rebind.example/video' })).status).toBe(400);
+      expect(mockRouter.resolve).not.toHaveBeenCalled();
+    });
+
+    it('answers malformed bodies with 400', async () => {
+      expect((await post('/downloads/add', { url: 42 })).status).toBe(400);
+      expect((await post('/downloads/add', { url: 'https://example.com/a', headers: 'nope' })).status).toBe(400);
+      expect((await post('/downloads/batch', { items: 'nope' })).status).toBe(400);
+      const raw = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+        body: '{not json',
+      });
+      expect(raw.status).toBe(400);
+      expect(mockManager.addHttp).not.toHaveBeenCalled();
+    });
+
+    it('skips malformed entries in a batch but adds the rest', async () => {
+      const res = await post('/downloads/batch', { items: [{ url: 'https://example.com/ok.zip' }, { nope: true }, null] });
+      expect(((await res.json()) as any).count).toBe(1);
+    });
+
+    it('locks an address out after repeated wrong tokens, even with the right one', async () => {
+      const get = (token: string) => fetch(`http://127.0.0.1:${TEST_PORT}/status`, { headers: { 'X-GRabbit-Token': token } });
+      for (let i = 0; i < 20; i++) expect((await get(`guess-${i}`)).status).toBe(401);
+      const locked = await get(TEST_TOKEN);
+      expect(locked.status).toBe(429);
+      expect(Number(locked.headers.get('retry-after'))).toBeGreaterThan(0);
+    });
+
+    it('limits how many requests one address may make per minute', async () => {
+      const get = () => fetch(`http://127.0.0.1:${TEST_PORT}/ping`);
+      const statuses: number[] = [];
+      for (let i = 0; i < 301; i++) statuses.push((await get()).status);
+      expect(statuses.slice(0, 300).every((s) => s === 200)).toBe(true);
+      expect(statuses[300]).toBe(429);
     });
 
     it("only installs extension updates from this project's GitHub releases", async () => {
