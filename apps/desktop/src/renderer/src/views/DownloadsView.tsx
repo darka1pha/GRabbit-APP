@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
   ArrowDown,
@@ -21,6 +22,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  X,
 } from 'lucide-react';
 import type { Category, ChecksumAlgorithm, DownloadItem, DownloadQueue, DownloadStatus } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
@@ -83,11 +85,22 @@ export function DownloadsView({
   const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'added' | 'name' | 'size' | 'progress' | 'speed'>('added');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; item: DownloadItem } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const tableRef = useRef<HTMLDivElement>(null);
+
+  const toggleSort = (col: 'added' | 'name' | 'size' | 'progress' | 'speed') => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(col);
+      setSortDir(col === 'name' ? 'asc' : 'desc');
+    }
+  };
 
   const inCategory = useMemo(
     () => downloads.filter((d) => category === 'all' || d.category === category),
@@ -99,12 +112,28 @@ export function DownloadsView({
   );
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return inQueue.filter(
+    const filtered = inQueue.filter(
       (d) =>
         matchesStatus(d, filter) &&
         (!q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q) || d.media?.title.toLowerCase().includes(q))
     );
-  }, [inQueue, filter, query]);
+    const mult = sortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'name':
+          return a.fileName.localeCompare(b.fileName) * mult;
+        case 'size':
+          return ((a.totalBytes ?? a.receivedBytes) - (b.totalBytes ?? b.receivedBytes)) * mult;
+        case 'progress':
+          return (fraction(a) - fraction(b)) * mult;
+        case 'speed':
+          return ((a.speed || 0) - (b.speed || 0)) * mult;
+        case 'added':
+        default:
+          return (a.createdAt - b.createdAt) * mult;
+      }
+    });
+  }, [inQueue, filter, query, sortBy, sortDir]);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilter, number> = { all: 0, active: 0, queued: 0, completed: 0, failed: 0 };
@@ -270,7 +299,23 @@ export function DownloadsView({
           <div style={{ flex: 1 }} />
           <div className="input-with-icon" style={{ width: 260 }}>
             <Search size={15} />
-            <input className="input" value={query} placeholder={t('dl.searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} />
+            <input
+              className="input"
+              value={query}
+              placeholder={t('dl.searchPlaceholder')}
+              onChange={(e) => setQuery(e.target.value)}
+              style={query ? { paddingInlineEnd: 28 } : undefined}
+            />
+            {query && (
+              <button
+                type="button"
+                className="input-clear-btn"
+                title={t('common.clear')}
+                onClick={() => setQuery('')}
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
         </div>
         <div className="queue-bar">
@@ -392,16 +437,26 @@ export function DownloadsView({
               <col style={{ width: 104 }} />
               <col style={{ width: 92 }} />
               <col style={{ width: 96 }} className="hide-narrow" />
-              <col style={{ width: 92 }} />
+              <col style={{ width: 112 }} />
             </colgroup>
             <thead>
               <tr>
-                <th>{t('dl.col.name')}</th>
-                <th>{t('dl.col.size')}</th>
-                <th>{t('dl.col.progress')}</th>
-                <th>{t('dl.col.speed')}</th>
+                <th className="sortable" onClick={() => toggleSort('name')}>
+                  {t('dl.col.name')} {sortBy === 'name' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
+                <th className="sortable" onClick={() => toggleSort('size')}>
+                  {t('dl.col.size')} {sortBy === 'size' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
+                <th className="sortable" onClick={() => toggleSort('progress')}>
+                  {t('dl.col.progress')} {sortBy === 'progress' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
+                <th className="sortable" onClick={() => toggleSort('speed')}>
+                  {t('dl.col.speed')} {sortBy === 'speed' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
                 <th>{t('dl.col.eta')}</th>
-                <th className="hide-narrow">{t('dl.col.added')}</th>
+                <th className="hide-narrow sortable" onClick={() => toggleSort('added')}>
+                  {t('dl.col.added')} {sortBy === 'added' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                </th>
                 <th />
               </tr>
             </thead>
@@ -422,7 +477,9 @@ export function DownloadsView({
                   onToggle={() =>
                     void run(() => (canResume(item) ? api.downloads.resume([item.id]) : api.downloads.pause([item.id])))
                   }
+                  onOpenFile={() => void run(() => api.downloads.openFile(item.id))}
                   onOpenFolder={() => void run(() => api.downloads.showInFolder(item.id))}
+                  onRemove={() => setDialog({ kind: 'remove', ids: [item.id], deleteFiles: false })}
                 />
               ))}
             </tbody>
@@ -430,7 +487,24 @@ export function DownloadsView({
         )}
       </div>
 
-      {single && <DetailsPanel item={single} onInspectSegments={(item) => setDialog({ kind: 'segments', item })} />}
+      <AnimatePresence>
+        {single && (
+          <DetailsPanel
+            key={single.id}
+            item={single}
+            onClose={() => setSelected(new Set())}
+            onCopyUrl={() =>
+              void run(async () => {
+                await api.downloads.copyUrl(single.id);
+                toast(t('dl.copied'), 'success');
+              })
+            }
+            onOpenFile={() => void run(() => api.downloads.openFile(single.id))}
+            onOpenFolder={() => void run(() => api.downloads.showInFolder(single.id))}
+            onInspectSegments={(item) => setDialog({ kind: 'segments', item })}
+          />
+        )}
+      </AnimatePresence>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.item)} onClose={() => setMenu(null)} />}
 
@@ -477,7 +551,9 @@ function DownloadRow({
   onDoubleClick,
   onContextMenu,
   onToggle,
+  onOpenFile,
   onOpenFolder,
+  onRemove,
 }: {
   item: DownloadItem;
   selected: boolean;
@@ -486,7 +562,9 @@ function DownloadRow({
   onDoubleClick(): void;
   onContextMenu(e: React.MouseEvent): void;
   onToggle(): void;
+  onOpenFile(): void;
   onOpenFolder(): void;
+  onRemove(): void;
 }) {
   const { t, language } = useI18n();
   const f = fraction(item);
@@ -559,18 +637,30 @@ function DownloadRow({
       <td className="small muted hide-narrow">{formatDate(item.createdAt, language)}</td>
       <td>
         <div className="row-actions">
-          {item.status !== 'completed' && (
+          {item.status === 'completed' ? (
+            <button
+              className="btn ghost sm icon"
+              title={t('dl.open')}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={onOpenFile}
+            >
+              <ExternalLink size={15} />
+            </button>
+          ) : (
             <button
               className="btn ghost sm icon"
               title={canResume(item) ? t('dl.resume') : t('dl.pause')}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={onToggle}
             >
-              {canResume(item) ? <Play size={15} /> : <Pause size={15} />}
+              {item.status === 'error' ? <RotateCw size={15} /> : canResume(item) ? <Play size={15} /> : <Pause size={15} />}
             </button>
           )}
           <button className="btn ghost sm icon" title={t('dl.showInFolder')} onMouseDown={(e) => e.stopPropagation()} onClick={onOpenFolder}>
             <FolderOpen size={15} />
+          </button>
+          <button className="btn ghost sm icon" title={t('dl.remove')} onMouseDown={(e) => e.stopPropagation()} onClick={onRemove}>
+            <Trash2 size={14} />
           </button>
         </div>
       </td>
@@ -580,16 +670,53 @@ function DownloadRow({
 
 function DetailsPanel({
   item,
+  onClose,
+  onCopyUrl,
+  onOpenFile,
+  onOpenFolder,
   onInspectSegments,
 }: {
   item: DownloadItem;
+  onClose(): void;
+  onCopyUrl(): void;
+  onOpenFile(): void;
+  onOpenFolder(): void;
   onInspectSegments(item: DownloadItem): void;
 }) {
   const { t, language } = useI18n();
   const total = item.totalBytes ?? 0;
   const where = item.filePath ?? `${item.directory}\\${item.fileName}`;
   return (
-    <div className="details">
+    <motion.div
+      className="details"
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 16 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="details-header full">
+        <FileIcon item={item} />
+        <div className="grow" style={{ minWidth: 0 }}>
+          <b className="ellipsis" style={{ display: 'block', fontSize: 13.5 }}>
+            {item.fileName}
+          </b>
+          <span className="small muted">{t(`status.${item.status}` as MessageKey)}</span>
+        </div>
+        <button className="btn sm" onClick={onCopyUrl} title={t('dl.copyLink')}>
+          <Copy size={13} /> {t('dl.copyLink')}
+        </button>
+        {item.status === 'completed' && (
+          <button className="btn sm primary" onClick={onOpenFile}>
+            <ExternalLink size={13} /> {t('dl.open')}
+          </button>
+        )}
+        <button className="btn sm" onClick={onOpenFolder}>
+          <FolderOpen size={13} /> {t('dl.showInFolder')}
+        </button>
+        <button className="btn ghost sm icon" onClick={onClose} title={t('common.close')}>
+          <X size={15} />
+        </button>
+      </div>
       <dl className="kv full">
         <dt>{t('dl.url')}</dt>
         <dd className="mono small" title={item.url}>
@@ -677,7 +804,7 @@ function DetailsPanel({
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 

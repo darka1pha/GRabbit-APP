@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   AudioLines,
   CircleAlert,
   Clipboard,
+  Clock,
   Download,
   Film,
   FolderOpen,
@@ -12,6 +14,7 @@ import {
   Search,
   Sparkles,
   Music,
+  X,
   Zap,
 } from 'lucide-react';
 import type { AddMediaDownloadRequest, ClipboardLink, MediaItem, MediaOption, PlatformMetadata } from '../../../shared/types';
@@ -21,6 +24,34 @@ import { formatBytes, formatDuration, isHttpUrl, looksLikeDirectFile } from '../
 import { Thumb } from '../components/ui';
 
 const PLATFORM_LABELS = ['YouTube', 'YouTube Music', 'Spotify', 'Instagram', 'SoundCloud', 'TikTok', 'X', 'Reddit', 'Vimeo', 'Facebook', 'Twitch', '+1000'];
+
+const GRAB_HISTORY_KEY = 'grabbit.grab.history';
+const GRAB_HISTORY_MAX = 6;
+
+interface RecentGrabItem {
+  url: string;
+  title: string;
+  uploader?: string;
+  thumbnailUrl?: string;
+  platform: string;
+}
+
+function loadGrabHistory(): RecentGrabItem[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRAB_HISTORY_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveGrabHistory(items: RecentGrabItem[]): void {
+  try {
+    localStorage.setItem(GRAB_HISTORY_KEY, JSON.stringify(items.slice(0, GRAB_HISTORY_MAX)));
+  } catch {
+    // ignore
+  }
+}
 
 type ViewState =
   | { kind: 'idle' }
@@ -63,6 +94,7 @@ export function GrabView({
   const [input, setInput] = useState('');
   const [state, setState] = useState<ViewState>({ kind: 'idle' });
   const [directory, setDirectory] = useState<string | undefined>();
+  const [recentGrabs, setRecentGrabs] = useState<RecentGrabItem[]>(loadGrabHistory);
 
   async function submit(value = input) {
     const text = value.trim();
@@ -76,8 +108,24 @@ export function GrabView({
       setState({ kind: 'loading', text: t('grab.resolving') });
       try {
         const meta = await api.media.resolve(text);
-        if (meta.items.length === 0) setState({ kind: 'error', message: t('grab.notMedia'), url: text });
-        else setState({ kind: 'media', meta });
+        if (meta.items.length === 0) {
+          setState({ kind: 'error', message: t('grab.notMedia'), url: text });
+        } else {
+          setState({ kind: 'media', meta });
+          const first = meta.items[0];
+          if (first) {
+            const entry: RecentGrabItem = {
+              url: text,
+              title: meta.isCollection ? meta.title || first.title : first.title,
+              uploader: meta.artistOrAuthor || first.uploader,
+              thumbnailUrl: meta.thumbnailUrl || first.thumbnailUrl,
+              platform: first.platform,
+            };
+            const next = [entry, ...recentGrabs.filter((r) => r.url !== text)].slice(0, GRAB_HISTORY_MAX);
+            setRecentGrabs(next);
+            saveGrabHistory(next);
+          }
+        }
       } catch (err) {
         setState({ kind: 'error', message: errorText(t, err), url: text });
       }
@@ -136,6 +184,19 @@ export function GrabView({
               <Clipboard size={17} />
             </button>
             <input value={input} placeholder={t('grab.placeholder')} onChange={(e) => setInput(e.target.value)} autoFocus spellCheck={false} />
+            {input && (
+              <button
+                type="button"
+                className="btn ghost icon"
+                title={t('common.clear')}
+                onClick={() => {
+                  setInput('');
+                  if (state.kind !== 'idle') setState({ kind: 'idle' });
+                }}
+              >
+                <X size={16} />
+              </button>
+            )}
             <button className="btn primary lg" type="submit" disabled={!input.trim() || state.kind === 'loading'}>
               {isHttpUrl(input) || !input.trim() ? <Download size={17} /> : <Search size={17} />}
               {isHttpUrl(input) || !input.trim() ? t('grab.button') : t('grab.search')}
@@ -148,32 +209,63 @@ export function GrabView({
               </span>
             ))}
           </div>
-          {showClipboard && (
-            <div className="banner">
-              <Sparkles size={17} color="var(--accent)" />
-              <div className="grow">
-                <b>{t('grab.clipboardDetected')}</b>
-                <div className="small ellipsis mono">{clipboardLink.url}</div>
-              </div>
-              <button
-                className="btn sm primary"
-                onClick={() => (clipboardLink.kind === 'file' ? onOpenAddDialog(clipboardLink.url) : void submit(clipboardLink.url))}
+          <AnimatePresence>
+            {showClipboard && (
+              <motion.div
+                className="banner"
+                initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               >
-                {t('grab.useIt')}
-              </button>
-            </div>
-          )}
+                <Sparkles size={17} color="var(--accent)" />
+                <div className="grow">
+                  <b>{t('grab.clipboardDetected')}</b>
+                  <div className="small ellipsis mono">{clipboardLink.url}</div>
+                </div>
+                <button
+                  className="btn sm primary"
+                  onClick={() => (clipboardLink.kind === 'file' ? onOpenAddDialog(clipboardLink.url) : void submit(clipboardLink.url))}
+                >
+                  {t('grab.useIt')}
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {state.kind === 'loading' && (
-          <div className="empty">
-            <LoaderCircle size={30} className="spin" color="var(--accent)" />
-            <p>{state.text}</p>
-          </div>
+          <motion.div
+            className="card media-card skeleton-card"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22 }}
+          >
+            <div className="skeleton-box" style={{ aspectRatio: '16 / 9', borderRadius: 10 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, justifyContent: 'center' }}>
+              <div className="row" style={{ gap: 10 }}>
+                <LoaderCircle size={20} className="spin" color="var(--accent)" />
+                <b style={{ color: 'var(--accent)' }}>{state.text}</b>
+              </div>
+              <div className="skeleton-box" style={{ height: 22, width: '78%' }} />
+              <div className="skeleton-box" style={{ height: 14, width: '42%' }} />
+              <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                <div className="skeleton-box" style={{ height: 46, width: 130 }} />
+                <div className="skeleton-box" style={{ height: 46, width: 130 }} />
+                <div className="skeleton-box" style={{ height: 46, width: 130 }} />
+              </div>
+            </div>
+          </motion.div>
         )}
 
         {state.kind === 'error' && (
-          <div className="banner error" style={{ marginTop: 18 }}>
+          <motion.div
+            className="banner error"
+            style={{ marginTop: 18 }}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+          >
             <CircleAlert size={18} />
             <div className="grow">{state.message}</div>
             {state.url && (
@@ -181,7 +273,7 @@ export function GrabView({
                 <Download size={14} /> {t('grab.asFile')}
               </button>
             )}
-          </div>
+          </motion.div>
         )}
 
         {state.kind === 'media' && !state.meta.isCollection && (
@@ -207,16 +299,62 @@ export function GrabView({
         )}
 
         {state.kind === 'idle' && (
-          <div className="tips">
-            <div className="card tip">
-              <Clipboard size={18} />
-              <span>{t('grab.hint1')}</span>
+          <>
+            <div className="tips">
+              <div className="card tip">
+                <Clipboard size={18} />
+                <span>{t('grab.hint1')}</span>
+              </div>
+              <div className="card tip">
+                <Music size={18} />
+                <span>{t('grab.hint2')}</span>
+              </div>
             </div>
-            <div className="card tip">
-              <Music size={18} />
-              <span>{t('grab.hint2')}</span>
-            </div>
-          </div>
+
+            {recentGrabs.length > 0 && (
+              <div className="recent-grabs">
+                <div className="row" style={{ marginBottom: 10 }}>
+                  <Clock size={14} className="muted" />
+                  <b className="small muted" style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Recent Grabs
+                  </b>
+                  <div className="grow" />
+                  <button
+                    className="btn ghost sm"
+                    onClick={() => {
+                      setRecentGrabs([]);
+                      saveGrabHistory([]);
+                    }}
+                  >
+                    {t('common.clear')}
+                  </button>
+                </div>
+                <div className="recent-grid">
+                  {recentGrabs.map((r, i) => (
+                    <motion.div
+                      key={r.url}
+                      className="card recent-card"
+                      onClick={() => void submit(r.url)}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      whileHover={{ y: -2, scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.2, delay: i * 0.03 }}
+                    >
+                      <Thumb src={r.thumbnailUrl} className="recent-thumb" />
+                      <div className="recent-info">
+                        <div className="ellipsis" style={{ fontWeight: 600, fontSize: 13 }}>
+                          {r.title}
+                        </div>
+                        <div className="small muted ellipsis">{r.uploader || r.platform}</div>
+                      </div>
+                      <span className="badge">{r.platform}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -235,13 +373,20 @@ export function GrabView({
 function OptionTile({ option, selected, onSelect }: { option: MediaOption; selected: boolean; onSelect(): void }) {
   const { t, language } = useI18n();
   return (
-    <button className={`option ${selected ? 'selected' : ''}`} onClick={onSelect} onDoubleClick={onSelect}>
+    <motion.button
+      className={`option ${selected ? 'selected' : ''}`}
+      onClick={onSelect}
+      onDoubleClick={onSelect}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ type: 'spring', stiffness: 450, damping: 30 }}
+    >
       <b>
         {option.label}
         {option.isOriginalQuality && <span className="badge accent">{t('grab.originalQuality')}</span>}
       </b>
       <span>{option.estimatedSizeBytes ? `~${formatBytes(option.estimatedSizeBytes, language)}` : option.extension.toUpperCase()}</span>
-    </button>
+    </motion.button>
   );
 }
 
@@ -276,7 +421,12 @@ function SingleMedia({
   useEffect(() => setChoice(preferred), [preferred]);
 
   return (
-    <div className="card media-card">
+    <motion.div
+      className="card media-card"
+      initial={{ opacity: 0, y: 12, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+    >
       <div className="thumb-wrap">
         <Thumb src={item.thumbnailUrl} square={item.platform === 'spotify' || item.platform === 'soundcloud'} />
         {item.durationSeconds ? <span className="duration">{formatDuration(item.durationSeconds, language)}</span> : null}
@@ -336,7 +486,7 @@ function SingleMedia({
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -369,7 +519,13 @@ function Collection({ meta, onDownload }: { meta: PlatformMetadata; onDownload(r
   }
 
   return (
-    <div className="card card-pad" style={{ marginTop: 18 }}>
+    <motion.div
+      className="card card-pad"
+      style={{ marginTop: 18 }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+    >
       <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
         <div style={{ width: 96, flexShrink: 0 }}>
           <Thumb src={meta.thumbnailUrl ?? meta.items[0]?.thumbnailUrl} square />
@@ -445,7 +601,7 @@ function Collection({ meta, onDownload }: { meta: PlatformMetadata; onDownload(r
           </label>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -473,8 +629,14 @@ function SearchResults({
     <div style={{ marginTop: 20 }}>
       <div className="small muted">{t('grab.results', { query })}</div>
       <div className="result-list">
-        {items.map((item) => (
-          <div key={item.id} className="result">
+        {items.map((item, i) => (
+          <motion.div
+            key={item.id}
+            className="result"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, delay: Math.min(i * 0.025, 0.25) }}
+          >
             <div className="thumb-wrap">
               <Thumb src={item.thumbnailUrl} />
               {item.durationSeconds ? <span className="duration">{formatDuration(item.durationSeconds, language)}</span> : null}
@@ -494,7 +656,7 @@ function SearchResults({
                 <Zap size={14} /> {t('grab.more')}
               </button>
             </div>
-          </div>
+          </motion.div>
         ))}
       </div>
     </div>

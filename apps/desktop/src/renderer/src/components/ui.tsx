@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Archive, CircleAlert, CircleCheck, FileText, Film, File, Image, Info, Music, Package, X } from 'lucide-react';
 import type { Category, DownloadItem } from '../../../shared/types';
 import { useApp } from '../state';
@@ -25,8 +26,24 @@ export function Modal({
   }, [onClose]);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${size ?? ''}`} role="dialog" aria-modal="true" aria-label={title}>
+    <motion.div
+      className="modal-backdrop"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.16 }}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <motion.div
+        className={`modal ${size ?? ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        initial={{ opacity: 0, scale: 0.94, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 8 }}
+        transition={{ type: 'spring', damping: 24, stiffness: 320 }}
+      >
         <div className="modal-head">
           {icon}
           <h2>{title}</h2>
@@ -36,8 +53,8 @@ export function Modal({
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -80,7 +97,15 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   }, [onClose]);
 
   return (
-    <div className="context-menu" ref={ref} style={{ left: pos.x, top: pos.y }} onMouseDown={(e) => e.stopPropagation()}>
+    <motion.div
+      className="context-menu"
+      ref={ref}
+      style={{ left: pos.x, top: pos.y }}
+      initial={{ opacity: 0, scale: 0.94, y: -4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ type: 'spring', damping: 24, stiffness: 380 }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {items.map((item, i) =>
         item.separator ? (
           <hr key={i} />
@@ -99,7 +124,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
           </button>
         )
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -107,32 +132,42 @@ export function Toasts() {
   const { toasts, dismissToast } = useApp();
   return (
     <div className="toasts" aria-live="polite">
-      {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`}>
-          {t.kind === 'success' ? (
-            <CircleCheck className="kind" size={18} />
-          ) : t.kind === 'error' ? (
-            <CircleAlert className="kind" size={18} />
-          ) : (
-            <Info className="kind" size={18} />
-          )}
-          <div className="grow">{t.text}</div>
-          {t.action && (
-            <button
-              className="btn sm"
-              onClick={() => {
-                t.action?.run();
-                dismissToast(t.id);
-              }}
-            >
-              {t.action.label}
+      <AnimatePresence initial={false}>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            layout
+            initial={{ opacity: 0, y: 18, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 40, scale: 0.9 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+            className={`toast ${t.kind}`}
+          >
+            {t.kind === 'success' ? (
+              <CircleCheck className="kind" size={18} />
+            ) : t.kind === 'error' ? (
+              <CircleAlert className="kind" size={18} />
+            ) : (
+              <Info className="kind" size={18} />
+            )}
+            <div className="grow">{t.text}</div>
+            {t.action && (
+              <button
+                className="btn sm"
+                onClick={() => {
+                  t.action?.run();
+                  dismissToast(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
+            <button className="btn ghost sm icon" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
+              <X size={14} />
             </button>
-          )}
-          <button className="btn ghost sm icon" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
-            <X size={14} />
-          </button>
-        </div>
-      ))}
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -175,9 +210,18 @@ export function ProgressBar({
   state?: 'paused' | 'done' | 'error';
   indeterminate?: boolean;
 }) {
+  const pct = Math.max(0, Math.min(100, value));
   return (
     <div className={`progress ${state ?? ''} ${indeterminate ? 'indeterminate' : ''}`}>
-      <div style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      {indeterminate ? (
+        <div style={{ width: `${pct}%` }} />
+      ) : (
+        <motion.div
+          initial={false}
+          animate={{ width: `${pct}%` }}
+          transition={{ type: 'spring', damping: 26, stiffness: 200 }}
+        />
+      )}
     </div>
   );
 }

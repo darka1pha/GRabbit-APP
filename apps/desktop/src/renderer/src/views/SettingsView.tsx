@@ -5,9 +5,9 @@ import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { Switch } from '../components/ui';
 
-function Section({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+function Section({ id, title, icon, children }: { id?: string; title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="settings-section">
+    <div id={id} className="settings-section">
       <h3>
         {icon} {title}
       </h3>
@@ -93,11 +93,30 @@ export function SettingsView() {
   return (
     <div className="page">
       <div className="page-narrow">
-        <div className="page-header">
+        <div className="page-header" style={{ flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1>{t('set.title')}</h1>
+          <div className="settings-jumpbar">
+            {[
+              { id: 'sec-general', label: t('set.general') },
+              { id: 'sec-downloads', label: t('set.downloads') },
+              { id: 'sec-media', label: t('set.media') },
+              { id: 'sec-extension', label: 'RPC Bridge' },
+              { id: 'sec-tools', label: t('set.tools') },
+              { id: 'sec-updates', label: t('set.appUpdates') },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="settings-jump-pill"
+                onClick={() => document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <Section title={t('set.general')} icon={<Settings size={15} />}>
+        <Section id="sec-general" title={t('set.general')} icon={<Settings size={15} />}>
           <Setting label={t('set.language')}>
             <div className="segmented">
               {(['en', 'fa'] as Language[]).map((l) => (
@@ -145,7 +164,7 @@ export function SettingsView() {
           </Setting>
         </Section>
 
-        <Section title={t('set.downloads')} icon={<Download size={15} />}>
+        <Section id="sec-downloads" title={t('set.downloads')} icon={<Download size={15} />}>
           <Setting label={t('set.folder')} hint={s.downloadDir}>
             <button
               className="btn"
@@ -205,7 +224,7 @@ export function SettingsView() {
           </Setting>
         </Section>
 
-        <Section title={t('set.media')} icon={<Music size={15} />}>
+        <Section id="sec-media" title={t('set.media')} icon={<Music size={15} />}>
           <Setting label={t('set.audioFormat')}>
             <div className="segmented">
               {(['mp3', 'm4a'] as const).map((f) => (
@@ -271,7 +290,7 @@ export function SettingsView() {
           </Setting>
         </Section>
 
-        <Section title={t('set.extension')} icon={<Radio size={15} />}>
+        <Section id="sec-extension" title={t('set.extension')} icon={<Radio size={15} />}>
           <Setting label={t('set.extensionEnable')}>
             <Switch
               checked={s.extension.enabled}
@@ -349,7 +368,7 @@ export function SettingsView() {
           )}
         </Section>
 
-        <Section title={t('set.tools')} icon={<Wrench size={15} />}>
+        <Section id="sec-tools" title={t('set.tools')} icon={<Wrench size={15} />}>
           {(['ytdlp', 'ffmpeg', 'ffprobe'] as const).map((key) => {
             const info = tools?.[key];
             return (
@@ -396,7 +415,7 @@ export function SettingsView() {
           </Setting>
         </Section>
 
-        <Section title={t('set.appUpdates')} icon={<ArrowUpCircle size={15} />}>
+        <Section id="sec-updates" title={t('set.appUpdates')} icon={<ArrowUpCircle size={15} />}>
           <Setting label={`GRabbit ${tools?.appVersion ? `v${tools.appVersion}` : ''}`}>
             {checkingUpdates ? (
               <span className="badge info">

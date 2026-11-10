@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { formatBytes, formatSpeed, formatEta } from '@grabbit/utils';
 import { MobileDownloadTask } from '../services/download-manager';
 import { PLATFORM_COLORS, PLATFORM_NAMES } from '../services/bridge';
+import { MotionView } from './motion';
 
 const CATEGORY_COLORS: Record<string, string> = {
   video: '#ec4899',
@@ -58,7 +59,12 @@ export function MediaCard({
   };
 
   return (
-    <View style={styles.card}>
+    <MotionView
+      style={styles.card}
+      initial={{ opacity: 0, translateY: 10, scale: 0.98 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{ duration: 220 }}
+    >
       {/* Top Media Info */}
       <View style={styles.topRow}>
         {task.thumbnailUrl ? (
@@ -309,7 +315,7 @@ export function MediaCard({
           </>
         )}
       </View>
-    </View>
+    </MotionView>
   );
 }
 

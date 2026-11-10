@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { AudioLines, CircleAlert, Download, ExternalLink, FileAudio, Link, LoaderCircle } from 'lucide-react';
 import type { RecognizedTrack } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
@@ -134,14 +135,25 @@ export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: 
           </button>
         </form>
 
-        {error && (
-          <div className="banner error" style={{ marginTop: 16 }}>
-            <CircleAlert size={17} />
-            <span className="grow">{error}</span>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              className="banner error"
+              style={{ marginTop: 16 }}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
+            >
+              <CircleAlert size={17} />
+              <span className="grow">{error}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {result && <SongCard track={result} onFindAndDownload={onFindAndDownload} />}
+        <AnimatePresence mode="wait">
+          {result && <SongCard key={`${result.artist}-${result.title}`} track={result} onFindAndDownload={onFindAndDownload} />}
+        </AnimatePresence>
 
         {history.length > 0 && (
           <div className="history">
@@ -158,7 +170,15 @@ export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: 
               </button>
             </div>
             {history.map((h, i) => (
-              <div key={`${h.title}-${i}`} className="history-item" onClick={() => setResult(h)}>
+              <motion.div
+                key={`${h.title}-${i}`}
+                className="history-item"
+                onClick={() => setResult(h)}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                whileHover={{ x: 2 }}
+                transition={{ duration: 0.18, delay: Math.min(i * 0.03, 0.2) }}
+              >
                 {h.coverArtUrl ? <img src={h.coverArtUrl} alt="" referrerPolicy="no-referrer" /> : <div className="ph" />}
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="ellipsis" style={{ fontWeight: 600 }}>
@@ -176,7 +196,7 @@ export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: 
                 >
                   <Download size={15} />
                 </button>
-              </div>
+              </motion.div>
             ))}
           </div>
         )}
@@ -195,7 +215,13 @@ function SongCard({ track, onFindAndDownload }: { track: RecognizedTrack; onFind
     [t('rec.label'), track.label],
   ];
   return (
-    <div className="card song-card">
+    <motion.div
+      className="card song-card"
+      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.98 }}
+      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+    >
       <Thumb src={track.coverArtUrl} square />
       <div>
         <h2>{track.title}</h2>
@@ -229,6 +255,6 @@ function SongCard({ track, onFindAndDownload }: { track: RecognizedTrack; onFind
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

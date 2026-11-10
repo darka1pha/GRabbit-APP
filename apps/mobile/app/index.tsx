@@ -19,6 +19,7 @@ import {
   MediaPlayerModal,
   MediaPlayerSource,
   AddDownloadModal,
+  MotionView,
 } from '../components';
 
 type AppTab = 'grab' | 'downloads' | 'recognize' | 'settings';
@@ -82,7 +83,13 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* View Content Stage */}
-      <View style={styles.stage}>
+      <MotionView
+        key={activeTab}
+        style={styles.stage}
+        initial={{ opacity: 0, translateY: 8 }}
+        animate={{ opacity: 1, translateY: 0 }}
+        transition={{ duration: 200 }}
+      >
         {activeTab === 'grab' && (
           <GrabView
             initialUrl={initialGrabUrl}
@@ -109,7 +116,7 @@ export default function HomeScreen() {
         )}
 
         {activeTab === 'settings' && <SettingsView />}
-      </View>
+      </MotionView>
 
       {/* Sleek Bottom Navigation Bar */}
       <View style={styles.navBar}>

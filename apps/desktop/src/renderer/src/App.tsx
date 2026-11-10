@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AudioLines, Download, Gauge, Link, LoaderCircle, RotateCw, Settings, Sparkles } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  AudioLines,
+  Download,
+  Gauge,
+  Link,
+  LoaderCircle,
+  Moon,
+  Plus,
+  RotateCw,
+  Settings,
+  Sparkles,
+  Sun,
+} from 'lucide-react';
 import { CATEGORIES, type Category, type ClipboardLink, type UpdateStatusInfo } from '../../shared/types';
 import { createTranslator, I18nContext, type MessageKey } from './i18n';
 import { api, AppProvider, useApp } from './state';
 import { formatSpeed, isHttpUrl, looksLikeDirectFile } from './format';
-import { CategoryIcon, Toasts } from './components/ui';
+import { CategoryIcon, ProgressBar, Toasts } from './components/ui';
 import { AddDownloadDialog } from './components/AddDownloadDialog';
 import { GrabView } from './views/GrabView';
 import { DownloadsView } from './views/DownloadsView';
@@ -26,7 +39,7 @@ function useSystemDark(): boolean {
 }
 
 function Shell() {
-  const { settings, downloads, toast } = useApp();
+  const { settings, updateSettings, downloads, toast } = useApp();
   const language = settings?.language ?? 'en';
   const i18n = useMemo(
     () => ({ t: createTranslator(language), language, dir: language === 'fa' ? ('rtl' as const) : ('ltr' as const) }),
@@ -42,6 +55,7 @@ function Shell() {
   const [grabInput, setGrabInput] = useState<string | null>(null);
   const [clipboardLink, setClipboardLink] = useState<ClipboardLink | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
+  const [draggingOverWindow, setDraggingOverWindow] = useState(false);
 
   useEffect(() => {
     const unsub = api.updater.onStatus((status) => {
@@ -110,6 +124,16 @@ function Shell() {
   const active = downloads.filter((d) => d.status === 'downloading' || d.status === 'starting' || d.status === 'processing');
   const totalSpeed = active.reduce((s, d) => s + d.speed, 0);
   const unfinished = downloads.filter((d) => d.status !== 'completed').length;
+  const activeProgress = useMemo(() => {
+    if (active.length === 0) return 0;
+    let sum = 0;
+    for (const d of active) {
+      if (d.totalBytes && d.totalBytes > 0) sum += Math.min(100, (d.receivedBytes / d.totalBytes) * 100);
+      else if (d.percent !== undefined) sum += d.percent;
+    }
+    return Math.round(sum / active.length);
+  }, [active]);
+
   const categoryCounts = useMemo(() => {
     const counts = new Map<Category, number>();
     for (const d of downloads) counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
@@ -118,23 +142,54 @@ function Shell() {
 
   if (!settings) return null;
 
-  const navItem = (id: View, icon: React.ReactNode, label: string, count?: number) => (
-    <button
-      className={`nav-item ${view === id && (id !== 'downloads' || category === 'all') ? 'active' : ''}`}
-      onClick={() => {
-        setView(id);
-        if (id === 'downloads') setCategory('all');
-      }}
-    >
-      {icon}
-      {label}
-      {count ? <span className="count">{count}</span> : null}
-    </button>
-  );
+  const navItem = (id: View, icon: React.ReactNode, label: string, count?: number) => {
+    const isActive = view === id && (id !== 'downloads' || category === 'all');
+    return (
+      <button
+        className={`nav-item ${isActive ? 'active' : ''}`}
+        onClick={() => {
+          setView(id);
+          if (id === 'downloads') setCategory('all');
+        }}
+      >
+        {isActive && (
+          <motion.span
+            layoutId="sidebar-active-indicator"
+            className="nav-active-pill"
+            transition={{ type: 'spring', damping: 24, stiffness: 320 }}
+          />
+        )}
+        {icon}
+        {label}
+        {count ? <span className="count">{count}</span> : null}
+      </button>
+    );
+  };
 
   return (
     <I18nContext.Provider value={i18n}>
-      <div className="app">
+      <div
+        className="app"
+        onDragOver={(e) => {
+          if (view === 'recognize') return;
+          if (e.dataTransfer.types.includes('text/uri-list') || e.dataTransfer.types.includes('text/plain')) {
+            e.preventDefault();
+            setDraggingOverWindow(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDraggingOverWindow(false);
+        }}
+        onDrop={(e) => {
+          if (view === 'recognize') return;
+          setDraggingOverWindow(false);
+          const text = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').trim();
+          if (text && isHttpUrl(text)) {
+            e.preventDefault();
+            handleLink(text);
+          }
+        }}
+      >
         <header className="titlebar">
           <div className="brand">
             <img src={iconUrl} alt="" />
@@ -142,6 +197,14 @@ function Shell() {
           </div>
           <div className="spacer" />
           <div className="titlebar-actions">
+            <button
+              className="quick-pill btn ghost accent-pill"
+              onClick={() => setAddDialog({})}
+              title={`${t('dl.add')} (Ctrl+N)`}
+            >
+              <Plus size={13} />
+              <span>{t('dl.add')}</span>
+            </button>
             <button
               className="quick-pill btn ghost"
               disabled={updateStatus?.state === 'checking' || updateStatus?.state === 'downloading'}
@@ -185,11 +248,28 @@ function Shell() {
               <Sparkles size={13} />
               <span className="kbd">Ctrl+Alt+G</span>
             </button>
-            {active.length > 0 && (
-              <button className="speed-pill btn ghost" onClick={() => setView('downloads')} title={t('nav.speed')}>
-                <Gauge size={13} /> {formatSpeed(totalSpeed, language) || '…'} · {active.length}
-              </button>
-            )}
+            <button
+              className="quick-pill btn ghost icon-pill"
+              onClick={() => void updateSettings({ theme: theme === 'dark' ? 'light' : 'dark' })}
+              title={theme === 'dark' ? t('set.theme.light') : t('set.theme.dark')}
+            >
+              {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
+            </button>
+            <AnimatePresence initial={false}>
+              {active.length > 0 && (
+                <motion.button
+                  initial={{ opacity: 0, scale: 0.9, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: -4 }}
+                  transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+                  className="speed-pill btn ghost"
+                  onClick={() => setView('downloads')}
+                  title={t('nav.speed')}
+                >
+                  <Gauge size={13} /> {formatSpeed(totalSpeed, language) || '…'} · {active.length}
+                </motion.button>
+              )}
+            </AnimatePresence>
           </div>
         </header>
 
@@ -199,44 +279,113 @@ function Shell() {
           {navItem('recognize', <AudioLines size={17} />, t('nav.recognize'))}
 
           <div className="nav-section">{t('nav.categories')}</div>
-          {CATEGORIES.map((c) => (
-            <button
-              key={c}
-              className={`nav-item sub ${view === 'downloads' && category === c ? 'active' : ''}`}
-              onClick={() => {
-                setCategory(c);
-                setView('downloads');
-              }}
-            >
-              <CategoryIcon category={c} size={15} />
-              {t(`cat.${c}` as MessageKey)}
-              {categoryCounts.get(c) ? <span className="count">{categoryCounts.get(c)}</span> : null}
-            </button>
-          ))}
+          {CATEGORIES.map((c) => {
+            const isCatActive = view === 'downloads' && category === c;
+            return (
+              <button
+                key={c}
+                className={`nav-item sub ${isCatActive ? 'active' : ''}`}
+                onClick={() => {
+                  setCategory(c);
+                  setView('downloads');
+                }}
+              >
+                {isCatActive && (
+                  <motion.span
+                    layoutId="sidebar-active-indicator"
+                    className="nav-active-pill"
+                    transition={{ type: 'spring', damping: 24, stiffness: 320 }}
+                  />
+                )}
+                <span className={`cat-dot ${c}`}>
+                  <CategoryIcon category={c} size={14} />
+                </span>
+                {t(`cat.${c}` as MessageKey)}
+                {categoryCounts.get(c) ? <span className="count">{categoryCounts.get(c)}</span> : null}
+              </button>
+            );
+          })}
 
           <div className="grow" />
+
+          <div className="sidebar-status-card" onClick={() => setView(active.length > 0 ? 'downloads' : 'settings')}>
+            <div className="sidebar-status-row">
+              <span className="sidebar-status-label">
+                <Gauge size={13} />
+                {active.length > 0 ? `${active.length} Active` : 'Engine Ready'}
+              </span>
+              <b className="sidebar-status-speed">
+                {active.length > 0 ? formatSpeed(totalSpeed, language) || '0 B/s' : 'Idle'}
+              </b>
+            </div>
+            {active.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <ProgressBar value={activeProgress} indeterminate={activeProgress === 0} />
+              </div>
+            )}
+            <div className="sidebar-status-meta">
+              <span className={`rpc-dot ${settings.extension.enabled ? 'on' : 'off'}`} />
+              <span>
+                {settings.extension.enabled
+                  ? `RPC Bridge :${settings.extension.port}`
+                  : t('set.extensionDisabled')}
+              </span>
+            </div>
+          </div>
+
           {navItem('settings', <Settings size={17} />, t('nav.settings'))}
         </nav>
 
         <main className="main">
-          <div key={view === 'downloads' ? `${view}-${category}` : view} className="view-stage">
-            {view === 'grab' && (
-              <GrabView
-                pendingInput={grabInput}
-                clipboardLink={clipboardLink}
-                onConsumePending={() => setGrabInput(null)}
-                onOpenAddDialog={(url) => setAddDialog({ url })}
-                onAdded={() => {
-                  setCategory('all');
-                  setView('downloads');
-                }}
-              />
-            )}
-            {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
-            {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
-            {view === 'settings' && <SettingsView />}
-          </div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={view === 'downloads' ? `${view}-${category}` : view}
+              className="view-stage"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.16, ease: 'easeOut' }}
+            >
+              {view === 'grab' && (
+                <GrabView
+                  pendingInput={grabInput}
+                  clipboardLink={clipboardLink}
+                  onConsumePending={() => setGrabInput(null)}
+                  onOpenAddDialog={(url) => setAddDialog({ url })}
+                  onAdded={() => {
+                    setCategory('all');
+                    setView('downloads');
+                  }}
+                />
+              )}
+              {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
+              {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
+              {view === 'settings' && <SettingsView />}
+            </motion.div>
+          </AnimatePresence>
         </main>
+        <AnimatePresence>
+          {draggingOverWindow && (
+            <motion.div
+              className="window-drop-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onDragLeave={() => setDraggingOverWindow(false)}
+            >
+              <motion.div
+                className="window-drop-card"
+                initial={{ scale: 0.9, y: 10 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 10 }}
+                transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+              >
+                <Download size={32} />
+                <b>Drop link to grab or download</b>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {addDialog && (

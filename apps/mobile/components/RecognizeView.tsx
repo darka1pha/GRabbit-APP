@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { RecognizedTrack } from '@grabbit/types';
 import { mobileRecognizer, RecognitionHistoryItem } from '../services/recognizer';
+import { MotionView, PulseMotion } from './motion';
 
 interface RecognizeViewProps {
   onFindAndDownload: (query: string) => void;
@@ -70,9 +71,9 @@ export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.iconCircle}>
+        <PulseMotion active={busy} style={styles.iconCircle}>
           <Ionicons name="musical-notes" size={32} color="#38bdf8" />
-        </View>
+        </PulseMotion>
         <Text style={styles.title}>Music & Audio Recognizer</Text>
         <Text style={styles.subtitle}>
           Paste an audio link, YouTube clip, or TikTok to identify songs with Shazam & find downloadable media!
@@ -117,15 +118,25 @@ export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
 
       {/* Error Banner */}
       {error && (
-        <View style={styles.errorBanner}>
+        <MotionView
+          style={styles.errorBanner}
+          initial={{ opacity: 0, translateY: 6 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ duration: 180 }}
+        >
           <Ionicons name="alert-circle" size={18} color="#ef4444" />
           <Text style={styles.errorBannerText}>{error}</Text>
-        </View>
+        </MotionView>
       )}
 
       {/* Song Card Result */}
       {result && (
-        <View style={styles.songCard}>
+        <MotionView
+          style={styles.songCard}
+          initial={{ opacity: 0, translateY: 12, scale: 0.98 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ duration: 240 }}
+        >
           <View style={styles.songMainRow}>
             {result.coverArtUrl ? (
               <Image source={{ uri: result.coverArtUrl }} style={styles.songCover} />
@@ -186,7 +197,7 @@ export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
               </TouchableOpacity>
             )}
           </View>
-        </View>
+        </MotionView>
       )}
 
       {/* History */}
@@ -200,36 +211,42 @@ export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
           </View>
 
           <View style={styles.historyList}>
-            {history.map((item) => (
-              <TouchableOpacity
+            {history.map((item, idx) => (
+              <MotionView
                 key={item.id}
-                style={styles.historyItem}
-                onPress={() => setResult(item)}
+                initial={{ opacity: 0, translateY: 6 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                transition={{ duration: 180, delay: Math.min(idx * 30, 180) }}
               >
-                {item.coverArtUrl ? (
-                  <Image source={{ uri: item.coverArtUrl }} style={styles.historyThumb} />
-                ) : (
-                  <View style={styles.historyThumbPlaceholder}>
-                    <Ionicons name="musical-note" size={18} color="#94a3b8" />
-                  </View>
-                )}
-
-                <View style={styles.historyInfo}>
-                  <Text style={styles.historyItemTitle} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text style={styles.historyItemArtist} numberOfLines={1}>
-                    {item.artist}
-                  </Text>
-                </View>
-
                 <TouchableOpacity
-                  style={styles.historyGrabBtn}
-                  onPress={() => onFindAndDownload(`${item.artist} - ${item.title}`)}
+                  style={styles.historyItem}
+                  onPress={() => setResult(item)}
                 >
-                  <Ionicons name="download-outline" size={18} color="#38bdf8" />
+                  {item.coverArtUrl ? (
+                    <Image source={{ uri: item.coverArtUrl }} style={styles.historyThumb} />
+                  ) : (
+                    <View style={styles.historyThumbPlaceholder}>
+                      <Ionicons name="musical-note" size={18} color="#94a3b8" />
+                    </View>
+                  )}
+
+                  <View style={styles.historyInfo}>
+                    <Text style={styles.historyItemTitle} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.historyItemArtist} numberOfLines={1}>
+                      {item.artist}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.historyGrabBtn}
+                    onPress={() => onFindAndDownload(`${item.artist} - ${item.title}`)}
+                  >
+                    <Ionicons name="download-outline" size={18} color="#38bdf8" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
+              </MotionView>
             ))}
           </View>
         </View>

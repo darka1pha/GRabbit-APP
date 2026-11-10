@@ -22,6 +22,7 @@ import { formatBytes, formatDuration, isHttpUrl, looksLikeDirectFile } from '@gr
 import { mobileBridge, PLATFORM_COLORS, PLATFORM_NAMES } from '../services/bridge';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { useDownloads } from '../hooks/useDownloads';
+import { MotionView, MotionPressable } from './motion';
 
 const PLATFORM_CHIPS = [
   'YouTube',
@@ -186,7 +187,12 @@ export function GrabView({
 
       {/* Share Target Banner */}
       {sharedUrl && (
-        <View style={styles.shareBanner}>
+        <MotionView
+          style={styles.shareBanner}
+          initial={{ opacity: 0, translateY: -8, scale: 0.98 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ duration: 200 }}
+        >
           <View style={styles.shareBannerLeft}>
             <Ionicons name="share-social" size={18} color="#38bdf8" />
             <View style={{ flex: 1 }}>
@@ -211,11 +217,16 @@ export function GrabView({
               <Ionicons name="close" size={18} color="#94a3b8" />
             </TouchableOpacity>
           </View>
-        </View>
+        </MotionView>
       )}
 
       {/* Input Box */}
-      <View style={styles.inputCard}>
+      <MotionView
+        style={styles.inputCard}
+        initial={{ opacity: 0, translateY: 6 }}
+        animate={{ opacity: 1, translateY: 0 }}
+        transition={{ duration: 200 }}
+      >
         <View style={styles.inputWrapper}>
           <TextInput
             style={styles.input}
@@ -237,11 +248,11 @@ export function GrabView({
           )}
         </View>
 
-        <TouchableOpacity
+        <MotionPressable
           style={[styles.grabBtn, isResolving && styles.grabBtnDisabled]}
           onPress={() => handleGrab()}
           disabled={isResolving}
-          activeOpacity={0.8}
+          scaleOnPress={0.97}
         >
           {isResolving ? (
             <ActivityIndicator size="small" color="#ffffff" />
@@ -251,12 +262,17 @@ export function GrabView({
               <Text style={styles.grabBtnText}>Grab Media</Text>
             </>
           )}
-        </TouchableOpacity>
-      </View>
+        </MotionPressable>
+      </MotionView>
 
       {/* Direct file detected prompt */}
       {looksDirect && onOpenDirectDownload && (
-        <View style={styles.directFileCard}>
+        <MotionView
+          style={styles.directFileCard}
+          initial={{ opacity: 0, translateY: 8 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ duration: 180 }}
+        >
           <Ionicons name="document-attach-outline" size={20} color="#38bdf8" />
           <View style={{ flex: 1 }}>
             <Text style={styles.directFileTitle}>Direct File Download Detected</Text>
@@ -270,7 +286,7 @@ export function GrabView({
           >
             <Text style={styles.directFileBtnText}>Open</Text>
           </TouchableOpacity>
-        </View>
+        </MotionView>
       )}
 
       {/* Platform Chips */}
@@ -286,15 +302,25 @@ export function GrabView({
 
       {/* Error Banner */}
       {errorMessage && (
-        <View style={styles.errorBanner}>
+        <MotionView
+          style={styles.errorBanner}
+          initial={{ opacity: 0, translateY: 6 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ duration: 180 }}
+        >
           <Ionicons name="alert-circle" size={18} color="#ef4444" />
           <Text style={styles.errorBannerText}>{errorMessage}</Text>
-        </View>
+        </MotionView>
       )}
 
       {/* Single Media Resolved Card */}
       {resolvedMeta && !resolvedMeta.isCollection && resolvedMeta.items[0] && (
-        <View style={styles.mediaResolvedCard}>
+        <MotionView
+          style={styles.mediaResolvedCard}
+          initial={{ opacity: 0, translateY: 12, scale: 0.98 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ duration: 240 }}
+        >
           <View style={styles.mediaTop}>
             {resolvedMeta.items[0].thumbnailUrl ? (
               <Image source={{ uri: resolvedMeta.items[0].thumbnailUrl }} style={styles.mediaThumb} />
@@ -406,12 +432,17 @@ export function GrabView({
               </TouchableOpacity>
             )}
           </View>
-        </View>
+        </MotionView>
       )}
 
       {/* Collection / Playlist Resolved Card */}
       {resolvedMeta && resolvedMeta.isCollection && (
-        <View style={styles.collectionCard}>
+        <MotionView
+          style={styles.collectionCard}
+          initial={{ opacity: 0, translateY: 12, scale: 0.98 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ duration: 240 }}
+        >
           <View style={styles.collectionHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.collectionTitle}>{resolvedMeta.title}</Text>
@@ -508,7 +539,7 @@ export function GrabView({
               Download Selected ({selectedTrackIds.size})
             </Text>
           </TouchableOpacity>
-        </View>
+        </MotionView>
       )}
     </ScrollView>
   );
