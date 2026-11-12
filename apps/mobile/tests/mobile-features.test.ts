@@ -16,6 +16,24 @@ vi.mock('react-native', () => ({
   },
 }));
 
+vi.mock('expo-notifications', () => ({
+  setNotificationHandler: vi.fn(),
+  getPermissionsAsync: vi.fn().mockResolvedValue({ status: 'granted' }),
+  requestPermissionsAsync: vi.fn().mockResolvedValue({ status: 'granted' }),
+  setNotificationChannelAsync: vi.fn().mockResolvedValue(undefined),
+  scheduleNotificationAsync: vi.fn().mockResolvedValue('notif-id'),
+  addNotificationResponseReceivedListener: vi.fn().mockReturnValue({ remove: vi.fn() }),
+  AndroidImportance: { HIGH: 4 },
+}));
+
+vi.mock('expo-haptics', () => ({
+  impactAsync: vi.fn().mockResolvedValue(undefined),
+  notificationAsync: vi.fn().mockResolvedValue(undefined),
+  selectionAsync: vi.fn().mockResolvedValue(undefined),
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
+  NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
+}));
+
 vi.mock('expo-file-system', () => ({
   documentDirectory: '/mock/grabbit/',
   cacheDirectory: '/mock/cache/',

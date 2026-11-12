@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,109 +10,259 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { mobileSettingsManager, MobileSettings } from '../services/settings-manager';
 import { useDownloads } from '../hooks/useDownloads';
 import { mobileRecognizer } from '../services/recognizer';
 import { mobileUpdater, MobileUpdateStatus } from '../services/updater';
+import { useI18n } from '../hooks/useI18n';
+import { PairingModal } from './PairingModal';
+import { hapticLight, hapticSuccess } from '../services/haptics';
 
 export function SettingsView() {
+  const { t, isRtl, formatBytes } = useI18n();
   const [settings, setSettings] = useState<MobileSettings>(mobileSettingsManager.getSettings());
   const [updateStatus, setUpdateStatus] = useState<MobileUpdateStatus>(mobileUpdater.getStatus());
-  const { clearCompleted } = useDownloads();
+  const [showPairingModal, setShowPairingModal] = useState(false);
+  const [storage, setStorage] = useState<{ freeBytes: number; usedBytes: number; itemCount: number }>({
+    freeBytes: 0,
+    usedBytes: 0,
+    itemCount: 0,
+  });
+
+  const { clearCompleted, getStorageUsage, cleanStorage } = useDownloads();
+
+  const refreshStorage = useCallback(async () => {
+    try {
+      const info = await getStorageUsage();
+      setStorage(info);
+    } catch {
+      // Ignored
+    }
+  }, [getStorageUsage]);
 
   useEffect(() => {
     mobileSettingsManager.loadSettings().then(setSettings);
     const unsubSettings = mobileSettingsManager.subscribe(setSettings);
     const unsubUpdater = mobileUpdater.subscribe(setUpdateStatus);
+    void refreshStorage();
     return () => {
       unsubSettings();
       unsubUpdater();
     };
-  }, []);
+  }, [refreshStorage]);
 
   const handleCheckAndUpdate = async () => {
+    void hapticLight();
     const res = await mobileUpdater.checkAndInstallUpdate();
     if (res.state === 'up-to-date') {
-      Alert.alert('Up to Date', `GRabbit Mobile v${res.currentVersion} is already on the latest version.`);
+      Alert.alert(t('set.upToDate'), `GRabbit Mobile v${res.currentVersion} is already up to date.`);
     } else if (res.state === 'error' && res.error) {
-      Alert.alert('Update Error', res.error);
+      Alert.alert(t('dl.error'), res.error);
     }
   };
 
   const update = (patch: Partial<MobileSettings>) => {
+    void hapticLight();
     mobileSettingsManager.updateSettings(patch);
   };
 
-  const handleTestDesktopRpc = async () => {
-    const { host, port, token } = settings.desktopBridge;
-    if (!host) {
-      Alert.alert('Required', 'Please enter desktop IP address');
-      return;
-    }
-    try {
-      const url = `http://${host}:${port}/ping`;
-      const res = await fetch(url, {
-        headers: { 'X-GRabbit-Token': token },
-      });
-      if (res.ok) {
-        Alert.alert('Success', 'Successfully connected to GRabbit Desktop RPC Bridge!');
-      } else {
-        Alert.alert('Connection Failed', `Desktop returned status ${res.status}`);
-      }
-    } catch (err: any) {
-      Alert.alert('Connection Error', `Could not reach ${host}:${port}. Ensure desktop app is running and on the same WiFi network.`);
-    }
-  };
-
-  const handlePastePairingUri = async () => {
-    try {
-      const raw = (await Clipboard.getStringAsync()).trim();
-      if (!raw) {
-        Alert.alert('Clipboard Empty', 'Copy the Mobile Pairing URI from GRabbit Desktop Settings first.');
-        return;
-      }
-      if (raw.startsWith('grabbit://pair')) {
-        const u = new URL(raw.replace('grabbit://pair', 'http://localhost/pair'));
-        const host = u.searchParams.get('host') || settings.desktopBridge.host;
-        const port = Number(u.searchParams.get('port')) || 31542;
-        const token = u.searchParams.get('token') || '';
-        await mobileSettingsManager.updateSettings({
-          desktopBridge: { enabled: true, host, port, token },
-        });
-        Alert.alert('Paired!', `Configured Desktop Bridge at ${host}:${port}`);
-        return;
-      }
-      Alert.alert('Invalid Pairing Code', 'Clipboard does not contain a grabbit://pair URI.');
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to parse pairing URI from clipboard.');
-    }
+  const handleCleanStorage = async () => {
+    void hapticLight();
+    Alert.alert(
+      t('mobile.cleanStorage'),
+      'Are you sure you want to clean up finished files and temporary cache to free up storage?',
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.clear'),
+          style: 'destructive',
+          onPress: async () => {
+            const res = await cleanStorage();
+            void hapticSuccess();
+            void refreshStorage();
+            if (res.cleanedCount > 0) {
+              Alert.alert(
+                t('common.ok'),
+                t('mobile.cleanedUp', {
+                  count: res.cleanedCount,
+                  size: formatBytes(res.freedBytes),
+                })
+              );
+            } else {
+              Alert.alert(t('common.ok'), t('mobile.nothingToClean'));
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>Customize downloads, media preferences & desktop pairing</Text>
+      <View style={[styles.header, { alignItems: isRtl ? 'flex-end' : 'flex-start' }]}>
+        <Text style={styles.title}>{t('set.title')}</Text>
+        <Text style={styles.subtitle}>{t('onboarding.subtitle')}</Text>
+      </View>
+
+      {/* General & Localization */}
+      <View style={styles.section}>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="globe-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>{t('set.general')}</Text>
+        </View>
+        <View style={styles.card}>
+          {/* Language */}
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('set.language')}</Text>
+              <Text style={styles.settingHint}>Language / زبان برنامه</Text>
+            </View>
+            <View style={styles.segmentedRow}>
+              {(['en', 'fa'] as const).map((lang) => (
+                <TouchableOpacity
+                  key={lang}
+                  style={[styles.segBtn, settings.language === lang && styles.segBtnActive]}
+                  onPress={() => update({ language: lang })}
+                  accessibilityRole="button"
+                  accessibilityLabel={lang === 'fa' ? 'فارسی' : 'English'}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.segBtnText, settings.language === lang && styles.segBtnTextActive]}>
+                    {lang === 'fa' ? 'فارسی' : 'English'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Notifications */}
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('mobile.notifications')}</Text>
+              <Text style={styles.settingHint}>{t('set.notifications')}</Text>
+            </View>
+            <Switch
+              value={settings.notificationsEnabled}
+              onValueChange={(notificationsEnabled) => update({ notificationsEnabled })}
+              thumbColor={settings.notificationsEnabled ? '#6366f1' : '#64748b'}
+              trackColor={{ false: '#334155', true: '#4338ca' }}
+              accessibilityRole="switch"
+              accessibilityLabel={t('mobile.notifications')}
+            />
+          </View>
+
+          {/* Haptic Feedback */}
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('mobile.haptics')}</Text>
+              <Text style={styles.settingHint}>Touch vibrations on gestures & button taps</Text>
+            </View>
+            <Switch
+              value={settings.hapticsEnabled}
+              onValueChange={(hapticsEnabled) => update({ hapticsEnabled })}
+              thumbColor={settings.hapticsEnabled ? '#6366f1' : '#64748b'}
+              trackColor={{ false: '#334155', true: '#4338ca' }}
+              accessibilityRole="switch"
+              accessibilityLabel={t('mobile.haptics')}
+            />
+          </View>
+        </View>
+      </View>
+
+      {/* Storage Visibility & Management (Item 6.8) */}
+      <View style={styles.section}>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="pie-chart-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>Storage & Disk</Text>
+        </View>
+        <View style={styles.card}>
+          <View style={styles.storageSummaryBox}>
+            <View style={styles.storageStat}>
+              <Text style={styles.storageStatLabel}>GRabbit Used</Text>
+              <Text style={styles.storageStatVal}>{formatBytes(storage.usedBytes)}</Text>
+            </View>
+            <View style={styles.storageDivider} />
+            <View style={styles.storageStat}>
+              <Text style={styles.storageStatLabel}>Device Free</Text>
+              <Text style={styles.storageStatVal}>
+                {storage.freeBytes > 0 ? formatBytes(storage.freeBytes) : 'Available'}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.cleanStorageBtn}
+            onPress={handleCleanStorage}
+            accessibilityRole="button"
+            accessibilityLabel={t('mobile.cleanStorage')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="sparkles-outline" size={18} color="#ffffff" />
+            <Text style={styles.cleanStorageBtnText}>{t('mobile.cleanStorage')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Desktop Pairing & RPC Bridge (Item 6.6) */}
+      <View style={styles.section}>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="desktop-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>{t('set.extension')}</Text>
+        </View>
+        <View style={styles.card}>
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('set.extensionEnable')}</Text>
+              <Text style={styles.settingHint}>
+                {settings.desktopBridge.enabled && settings.desktopBridge.host
+                  ? `Connected to ${settings.desktopBridge.host}:${settings.desktopBridge.port}`
+                  : 'Pair with Desktop over WiFi'}
+              </Text>
+            </View>
+            <Switch
+              value={settings.desktopBridge.enabled}
+              onValueChange={(enabled) =>
+                update({ desktopBridge: { ...settings.desktopBridge, enabled } })
+              }
+              thumbColor={settings.desktopBridge.enabled ? '#6366f1' : '#64748b'}
+              trackColor={{ false: '#334155', true: '#4338ca' }}
+              accessibilityRole="switch"
+              accessibilityLabel={t('set.extensionEnable')}
+            />
+          </View>
+
+          <TouchableOpacity
+            style={styles.qrPairBtn}
+            onPress={() => setShowPairingModal(true)}
+            accessibilityRole="button"
+            accessibilityLabel={t('mobile.scanQr')}
+          >
+            <Ionicons name="qr-code-outline" size={18} color="#ffffff" />
+            <Text style={styles.qrPairBtnText}>{t('mobile.scanQr')} / Pairing Code</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Downloads Section */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="download-outline" size={18} color="#38bdf8" />
-          <Text style={styles.sectionTitle}>Downloads Engine</Text>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="download-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>{t('set.downloads')}</Text>
         </View>
         <View style={styles.card}>
           {/* Max Concurrent */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Max Concurrent Downloads</Text>
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('set.maxConcurrent')}</Text>
               <Text style={styles.settingHint}>Active downloads at the same time</Text>
             </View>
             <View style={styles.stepperRow}>
               <TouchableOpacity
                 style={styles.stepperBtn}
                 onPress={() => update({ maxConcurrent: Math.max(1, settings.maxConcurrent - 1) })}
+                accessibilityRole="button"
+                accessibilityLabel="Decrease concurrent downloads"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="remove" size={16} color="#ffffff" />
               </TouchableOpacity>
@@ -120,45 +270,19 @@ export function SettingsView() {
               <TouchableOpacity
                 style={styles.stepperBtn}
                 onPress={() => update({ maxConcurrent: Math.min(8, settings.maxConcurrent + 1) })}
+                accessibilityRole="button"
+                accessibilityLabel="Increase concurrent downloads"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="add" size={16} color="#ffffff" />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Connection Threads */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Parallel Connection Threads</Text>
-              <Text style={styles.settingHint}>Multi-part download segment chunks (1-16)</Text>
-            </View>
-            <View style={styles.segmentedRow}>
-              {[1, 2, 4, 8, 16].map((threads) => (
-                <TouchableOpacity
-                  key={threads}
-                  style={[
-                    styles.segBtn,
-                    settings.defaultConnections === threads && styles.segBtnActive,
-                  ]}
-                  onPress={() => update({ defaultConnections: threads })}
-                >
-                  <Text
-                    style={[
-                      styles.segBtnText,
-                      settings.defaultConnections === threads && styles.segBtnTextActive,
-                    ]}
-                  >
-                    {threads}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Global Speed Limit */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Speed Throttle (KB/s)</Text>
+          {/* Speed Throttle */}
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.settingLabel}>{t('set.speedLimit')}</Text>
               <Text style={styles.settingHint}>0 = Unlimited maximum speed</Text>
             </View>
             <TextInput
@@ -168,206 +292,63 @@ export function SettingsView() {
               placeholder="0"
               placeholderTextColor="#64748b"
               keyboardType="numeric"
+              accessibilityLabel={t('set.speedLimit')}
             />
           </View>
 
           {/* Auto Save to Gallery */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
               <Text style={styles.settingLabel}>Auto-Save to Media Library</Text>
               <Text style={styles.settingHint}>Automatically save videos & photos to Camera Roll</Text>
             </View>
             <Switch
               value={settings.autoSaveToLibrary}
               onValueChange={(v) => update({ autoSaveToLibrary: v })}
-              thumbColor={settings.autoSaveToLibrary ? '#38bdf8' : '#64748b'}
-              trackColor={{ false: '#334155', true: '#0284c7' }}
+              thumbColor={settings.autoSaveToLibrary ? '#6366f1' : '#64748b'}
+              trackColor={{ false: '#334155', true: '#4338ca' }}
+              accessibilityRole="switch"
+              accessibilityLabel="Auto-Save to Media Library"
             />
           </View>
         </View>
       </View>
 
-      {/* Media Quality Preferences */}
+      {/* Clear History Buttons */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="musical-notes-outline" size={18} color="#38bdf8" />
-          <Text style={styles.sectionTitle}>Default Media Quality</Text>
-        </View>
-        <View style={styles.card}>
-          {/* Audio Format */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Preferred Audio Format</Text>
-            </View>
-            <View style={styles.segmentedRow}>
-              {(['mp3', 'm4a', 'flac'] as const).map((fmt) => (
-                <TouchableOpacity
-                  key={fmt}
-                  style={[
-                    styles.segBtn,
-                    settings.defaultAudioFormat === fmt && styles.segBtnActive,
-                  ]}
-                  onPress={() => update({ defaultAudioFormat: fmt })}
-                >
-                  <Text
-                    style={[
-                      styles.segBtnText,
-                      settings.defaultAudioFormat === fmt && styles.segBtnTextActive,
-                    ]}
-                  >
-                    {fmt.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Video Quality */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Preferred Video Resolution</Text>
-            </View>
-            <View style={styles.segmentedRow}>
-              {['1080p', '720p', '480p'].map((q) => (
-                <TouchableOpacity
-                  key={q}
-                  style={[
-                    styles.segBtn,
-                    settings.defaultVideoQuality === q && styles.segBtnActive,
-                  ]}
-                  onPress={() => update({ defaultVideoQuality: q })}
-                >
-                  <Text
-                    style={[
-                      styles.segBtnText,
-                      settings.defaultVideoQuality === q && styles.segBtnTextActive,
-                    ]}
-                  >
-                    {q}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Desktop Pairing & RPC Bridge */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="desktop-outline" size={18} color="#38bdf8" />
-          <Text style={styles.sectionTitle}>Desktop App RPC Bridge</Text>
-        </View>
-        <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingLabel}>Connect to Desktop Engine</Text>
-              <Text style={styles.settingHint}>
-                Pair with GRabbit Desktop over local WiFi to utilize yt-dlp & FFmpeg extraction
-              </Text>
-            </View>
-            <Switch
-              value={settings.desktopBridge.enabled}
-              onValueChange={(enabled) =>
-                update({ desktopBridge: { ...settings.desktopBridge, enabled } })
-              }
-              thumbColor={settings.desktopBridge.enabled ? '#38bdf8' : '#64748b'}
-              trackColor={{ false: '#334155', true: '#0284c7' }}
-            />
-          </View>
-
-          {settings.desktopBridge.enabled && (
-            <View style={styles.rpcForm}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Desktop Local IP Address</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={settings.desktopBridge.host}
-                  onChangeText={(host) =>
-                    update({ desktopBridge: { ...settings.desktopBridge, host } })
-                  }
-                  placeholder="192.168.1.100"
-                  placeholderTextColor="#64748b"
-                  keyboardType="numeric"
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>RPC Port</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={String(settings.desktopBridge.port)}
-                  onChangeText={(port) =>
-                    update({ desktopBridge: { ...settings.desktopBridge, port: Number(port) || 31542 } })
-                  }
-                  placeholder="31542"
-                  placeholderTextColor="#64748b"
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Extension / RPC Auth Token</Text>
-                <TextInput
-                  style={styles.fieldInput}
-                  value={settings.desktopBridge.token}
-                  onChangeText={(token) =>
-                    update({ desktopBridge: { ...settings.desktopBridge, token: token.trim() } })
-                  }
-                  placeholder="Token from Desktop Settings > Extension"
-                  placeholderTextColor="#64748b"
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TouchableOpacity style={[styles.testRpcBtn, { flex: 1 }]} onPress={handleTestDesktopRpc}>
-                  <Ionicons name="wifi-outline" size={16} color="#ffffff" />
-                  <Text style={styles.testRpcBtnText}>Test Connection</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.testRpcBtn, { flex: 1, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155' }]}
-                  onPress={handlePastePairingUri}
-                >
-                  <Ionicons name="clipboard-outline" size={16} color="#38bdf8" />
-                  <Text style={[styles.testRpcBtnText, { color: '#38bdf8' }]}>Paste Pairing URI</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Storage & Clear Cache */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="trash-bin-outline" size={18} color="#38bdf8" />
-          <Text style={styles.sectionTitle}>Data & Storage</Text>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="trash-bin-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>History</Text>
         </View>
         <View style={styles.card}>
           <TouchableOpacity
-            style={styles.clearBtnRow}
+            style={[styles.clearBtnRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
             onPress={() => {
+              void hapticLight();
               clearCompleted();
-              Alert.alert('Completed', 'Cleared completed downloads history');
+              Alert.alert(t('common.ok'), t('dl.clearedCompleted'));
             }}
+            accessibilityRole="button"
+            accessibilityLabel={t('dl.clearCompleted')}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.clearBtnTitle}>Clear Completed Downloads</Text>
-              <Text style={styles.clearBtnHint}>Remove finished items from history</Text>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={styles.clearBtnTitle}>{t('dl.clearCompleted')}</Text>
+              <Text style={styles.clearBtnHint}>Remove finished items from list</Text>
             </View>
             <Ionicons name="trash-outline" size={18} color="#ef4444" />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.clearBtnRow}
+            style={[styles.clearBtnRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
             onPress={() => {
+              void hapticLight();
               mobileRecognizer.clearHistory();
-              Alert.alert('Completed', 'Cleared song recognition history');
+              Alert.alert(t('common.ok'), 'Song recognition history cleared');
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Clear Song Recognition History"
           >
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
               <Text style={styles.clearBtnTitle}>Clear Song Recognition History</Text>
               <Text style={styles.clearBtnHint}>Reset identified songs list</Text>
             </View>
@@ -378,44 +359,45 @@ export function SettingsView() {
 
       {/* App Updates */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Ionicons name="cloud-download-outline" size={18} color="#38bdf8" />
-          <Text style={styles.sectionTitle}>App Updates</Text>
+        <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <Ionicons name="cloud-download-outline" size={18} color="#6366f1" />
+          <Text style={styles.sectionTitle}>{t('set.appUpdates')}</Text>
         </View>
         <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
               <Text style={styles.settingLabel}>GRabbit Mobile v{updateStatus.currentVersion}</Text>
               <Text style={styles.settingHint}>
                 {updateStatus.state === 'checking'
-                  ? 'Checking GitHub Releases for latest APK…'
+                  ? t('set.checkingUpdates')
                   : updateStatus.state === 'downloading'
-                  ? `Downloading v${updateStatus.latestVersion} (${updateStatus.progressPercent ?? 0}%)…`
+                  ? t('set.downloadingUpdate', { percent: updateStatus.progressPercent ?? 0 })
                   : updateStatus.state === 'installing'
-                  ? `Launching Android installer for v${updateStatus.latestVersion}…`
+                  ? 'Launching installer…'
                   : updateStatus.state === 'up-to-date'
-                  ? `Up to date (v${updateStatus.currentVersion})`
+                  ? t('set.upToDate')
                   : updateStatus.state === 'error'
-                  ? updateStatus.error || 'Could not check for updates'
-                  : 'Check & automatically download + install latest version if outdated'}
+                  ? updateStatus.error || t('err.UNKNOWN')
+                  : t('set.checkForUpdates')}
               </Text>
             </View>
             <TouchableOpacity
               style={[
-                styles.testRpcBtn,
-                { paddingHorizontal: 14, marginTop: 0 },
+                styles.updateBtn,
                 (updateStatus.state === 'checking' || updateStatus.state === 'downloading') && { opacity: 0.6 },
               ]}
               disabled={updateStatus.state === 'checking' || updateStatus.state === 'downloading'}
               onPress={handleCheckAndUpdate}
+              accessibilityRole="button"
+              accessibilityLabel={t('set.checkForUpdates')}
             >
               <Ionicons name="refresh-outline" size={15} color="#ffffff" />
-              <Text style={styles.testRpcBtnText}>
+              <Text style={styles.updateBtnText}>
                 {updateStatus.state === 'checking'
                   ? 'Checking…'
                   : updateStatus.state === 'downloading'
                   ? `${updateStatus.progressPercent ?? 0}%`
-                  : 'Update'}
+                  : t('app.update')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -425,11 +407,17 @@ export function SettingsView() {
       {/* About */}
       <View style={styles.aboutCard}>
         <Text style={styles.aboutTitle}>🐰 GRabbit Mobile</Text>
-        <Text style={styles.aboutVersion}>v{updateStatus.currentVersion} Monorepo Edition</Text>
+        <Text style={styles.aboutVersion}>v{updateStatus.currentVersion} • Phase 6 UI/UX</Text>
         <Text style={styles.aboutDesc}>
-          Cross-platform segmented download manager & media grabber powered by Expo & @grabbit core engines.
+          Cross-platform download manager & media grabber powered by Expo & @grabbit core engines.
         </Text>
       </View>
+
+      <PairingModal
+        visible={showPairingModal}
+        onClose={() => setShowPairingModal(false)}
+        onSuccess={() => void refreshStorage()}
+      />
     </ScrollView>
   );
 }
@@ -437,7 +425,7 @@ export function SettingsView() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617',
+    backgroundColor: '#0b0f19',
   },
   content: {
     padding: 16,
@@ -461,7 +449,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sectionHeader: {
-    flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 4,
@@ -469,18 +456,17 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#6366f1',
   },
   card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: '#131b2e',
+    borderRadius: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     gap: 16,
   },
   settingRow: {
-    flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
@@ -491,7 +477,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   settingHint: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#94a3b8',
     marginTop: 2,
   },
@@ -501,10 +487,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stepperBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    backgroundColor: '#0f172a',
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#1e2b48',
     borderWidth: 1,
     borderColor: '#334155',
     alignItems: 'center',
@@ -513,28 +499,31 @@ const styles = StyleSheet.create({
   stepperVal: {
     fontSize: 15,
     fontWeight: 'bold',
-    color: '#38bdf8',
-    minWidth: 18,
+    color: '#6366f1',
+    minWidth: 20,
     textAlign: 'center',
   },
   segmentedRow: {
     flexDirection: 'row',
-    gap: 4,
+    backgroundColor: '#0b0f19',
+    borderRadius: 8,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#233253',
   },
   segBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#334155',
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   segBtnActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
+    backgroundColor: '#6366f1',
   },
   segBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#94a3b8',
   },
@@ -542,96 +531,134 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   numberInput: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0b0f19',
     borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    color: '#ffffff',
-    fontSize: 13,
-    fontFamily: 'monospace',
-    minWidth: 70,
-    textAlign: 'center',
-  },
-  rpcForm: {
-    gap: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  field: {
-    gap: 4,
-  },
-  fieldLabel: {
-    fontSize: 11,
-    color: '#94a3b8',
-  },
-  fieldInput: {
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 6,
-    paddingHorizontal: 10,
+    borderColor: '#233253',
+    borderRadius: 8,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    color: '#ffffff',
-    fontSize: 13,
-    fontFamily: 'monospace',
+    color: '#f8fafc',
+    fontSize: 14,
+    width: 90,
+    textAlign: 'center',
+    minHeight: 40,
   },
-  testRpcBtn: {
-    backgroundColor: '#0284c7',
+  storageSummaryBox: {
+    flexDirection: 'row',
+    backgroundColor: '#0b0f19',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#233253',
+  },
+  storageStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  storageStatLabel: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginBottom: 4,
+  },
+  storageStatVal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6366f1',
+  },
+  storageDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: '#233253',
+  },
+  cleanStorageBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginTop: 4,
+    gap: 8,
+    backgroundColor: '#6366f1',
+    borderRadius: 10,
+    paddingVertical: 12,
+    minHeight: 44,
   },
-  testRpcBtnText: {
+  cleanStorageBtnText: {
     color: '#ffffff',
-    fontSize: 13,
     fontWeight: 'bold',
+    fontSize: 14,
   },
-  clearBtnRow: {
+  qrPairBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1e2b48',
+    borderWidth: 1,
+    borderColor: '#6366f1',
+    borderRadius: 10,
+    paddingVertical: 12,
+    minHeight: 44,
+  },
+  qrPairBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  clearBtnRow: {
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    alignItems: 'center',
+    paddingVertical: 8,
+    minHeight: 44,
   },
   clearBtnTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#f8fafc',
   },
   clearBtnHint: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#94a3b8',
+    marginTop: 2,
+  },
+  updateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#6366f1',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minHeight: 40,
+  },
+  updateBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 13,
   },
   aboutCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
+    backgroundColor: '#131b2e',
+    borderRadius: 14,
     padding: 16,
-    borderWidth: 1,
-    borderColor: '#1e293b',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#233253',
     gap: 4,
+    marginTop: 8,
   },
   aboutTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#38bdf8',
+    color: '#ffffff',
   },
   aboutVersion: {
     fontSize: 12,
-    color: '#64748b',
+    color: '#6366f1',
     fontWeight: '600',
   },
   aboutDesc: {
-    fontSize: 11,
+    fontSize: 12,
     color: '#94a3b8',
     textAlign: 'center',
-    marginTop: 4,
+    marginTop: 6,
+    lineHeight: 16,
   },
 });
-

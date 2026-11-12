@@ -23,17 +23,10 @@ import { mobileBridge, PLATFORM_COLORS, PLATFORM_NAMES } from '../services/bridg
 import { mobileSettingsManager } from '../services/settings-manager';
 import { useDownloads } from '../hooks/useDownloads';
 import { MotionView, MotionPressable } from './motion';
-
-const PLATFORM_CHIPS = [
-  'YouTube',
-  'Spotify',
-  'Instagram',
-  'TikTok',
-  'SoundCloud',
-  'X / Twitter',
-  'Reddit',
-  '+1000 Direct',
-];
+import { PlatformChips } from './grab/PlatformChips';
+import { TrackRow } from './grab/TrackRow';
+import { useI18n } from '../hooks/useI18n';
+import { hapticLight, hapticSuccess, hapticError } from '../services/haptics';
 
 interface GrabViewProps {
   initialUrl?: string;
@@ -44,42 +37,6 @@ interface GrabViewProps {
   onPreviewMedia?: (item: MediaItem, option: MediaOption) => void;
 }
 
-interface TrackRowProps {
-  item: MediaItem;
-  index: number;
-  isChecked: boolean;
-  onToggle: (id: string) => void;
-}
-
-const TrackRow = React.memo(function TrackRow({ item, index, isChecked, onToggle }: TrackRowProps) {
-  return (
-    <TouchableOpacity
-      style={[styles.trackRow, isChecked && styles.trackRowChecked]}
-      onPress={() => onToggle(item.id)}
-    >
-      <Ionicons
-        name={isChecked ? 'checkbox' : 'square-outline'}
-        size={18}
-        color={isChecked ? '#38bdf8' : '#64748b'}
-      />
-      <Text style={styles.trackIndex}>{index + 1}</Text>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.trackTitle} numberOfLines={1}>
-          {item.title}
-        </Text>
-        {item.uploader ? (
-          <Text style={styles.trackAuthor} numberOfLines={1}>
-            {item.uploader}
-          </Text>
-        ) : null}
-      </View>
-      {item.durationSeconds ? (
-        <Text style={styles.trackDuration}>{formatDuration(item.durationSeconds)}</Text>
-      ) : null}
-    </TouchableOpacity>
-  );
-});
-
 export function GrabView({
   initialUrl = '',
   sharedUrl,
@@ -88,6 +45,7 @@ export function GrabView({
   onDownloadStarted,
   onPreviewMedia,
 }: GrabViewProps) {
+  const { t, isRtl, formatBytes } = useI18n();
   const { queues, startDownload } = useDownloads();
 
   const [input, setInput] = useState(initialUrl);
@@ -335,15 +293,7 @@ export function GrabView({
       )}
 
       {/* Platform Chips */}
-      <View style={styles.platformScrollWrapper}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.platformScroll}>
-          {PLATFORM_CHIPS.map((p) => (
-            <View key={p} style={styles.platformChip}>
-              <Text style={styles.platformChipText}>{p}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      </View>
+      <PlatformChips />
 
       {/* Error Banner */}
       {errorMessage && (

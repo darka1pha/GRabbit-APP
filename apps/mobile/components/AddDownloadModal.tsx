@@ -14,6 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Category, DownloadQueue, ProbeResult, CATEGORIES } from '@grabbit/types';
 import { formatBytes, isHttpUrl, looksLikeMediaPage } from '@grabbit/utils';
 import { useDownloads } from '../hooks/useDownloads';
+import { AdvancedOptionsSection } from './download/AdvancedOptionsSection';
+import { useI18n } from '../hooks/useI18n';
 
 interface AddDownloadModalProps {
   visible: boolean;
@@ -316,57 +318,23 @@ export function AddDownloadModal({
             </TouchableOpacity>
 
             {advanced && (
-              <View style={styles.advancedContainer}>
-                {/* Mobile Single Stream Engine */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Connection Mode</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#1e293b' }}>
-                    <Ionicons name="flash-outline" size={16} color="#38bdf8" style={{ marginRight: 8 }} />
-                    <Text style={{ fontSize: 13, color: '#f8fafc', fontWeight: '500' }}>Single Stream (Mobile Native)</Text>
-                  </View>
-                </View>
-
-                {/* Speed Limit */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Speed Limit (KB/s, 0 = unlimited)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={speedLimitKBps ? String(speedLimitKBps) : ''}
-                    onChangeText={(v) => setSpeedLimitKBps(Number(v) || 0)}
-                    placeholder="0"
-                    placeholderTextColor="#64748b"
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Referrer */}
-                <View style={styles.field}>
-                  <Text style={styles.label}>Custom Referrer</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={referrer}
-                    onChangeText={setReferrer}
-                    placeholder="https://"
-                    placeholderTextColor="#64748b"
-                    autoCapitalize="none"
-                  />
-                </View>
-
-                {/* Checksum */}
-                {singleUrl && (
-                  <View style={styles.field}>
-                    <Text style={styles.label}>Expected Checksum (SHA-256 / MD5)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={checksum}
-                      onChangeText={setChecksum}
-                      placeholder="Optional checksum hash..."
-                      placeholderTextColor="#64748b"
-                      autoCapitalize="none"
-                    />
-                  </View>
-                )}
-              </View>
+              <AdvancedOptionsSection
+                category={category}
+                onCategoryChange={setCategory}
+                queueId={queueId}
+                onQueueChange={setQueueId}
+                queues={queues}
+                connections={connections}
+                onConnectionsChange={setConnections}
+                referrer={referrer}
+                onReferrerChange={setReferrer}
+                headersText={headersText}
+                onHeadersChange={setHeadersText}
+                speedLimitKBps={speedLimitKBps}
+                onSpeedLimitChange={setSpeedLimitKBps}
+                checksum={checksum}
+                onChecksumChange={setChecksum}
+              />
             )}
           </ScrollView>
 

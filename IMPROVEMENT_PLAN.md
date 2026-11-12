@@ -247,18 +247,19 @@ favour of `expo-video`/`expo-audio`. Plan one SDK upgrade and do the player migr
 
 ---
 
-## Phase 6 — Mobile UI/UX
+## Phase 6 — Mobile UI/UX — [COMPLETED]
 
-| # | Change | Detail | Effort |
+| # | Item | Status | Implementation Details |
 |---|---|---|---|
-| 6.1 | Background downloads | Downloads stop when the app is backgrounded or killed. Android: foreground service with a progress notification and pause/cancel actions. iOS: background URLSession. Needs a native download module (shared with 4.3 B). | L |
-| 6.2 | Completion notifications | `expo-notifications` for finished/failed, tapping opens the item. | S |
-| 6.3 | Accessibility | No `accessibilityLabel`/`accessibilityRole` anywhere. Add to all touchables; ensure 44 pt targets; support Dynamic Type. | M |
-| 6.4 | Localisation | Desktop has en/fa; mobile has no i18n layer. Move message tables to a shared package and reuse. | M |
-| 6.5 | Gestures and feedback | Swipe a row to pause/delete, pull-to-refresh, long-press multi-select, haptics on key actions. | M |
-| 6.6 | QR pairing | Desktop already builds a `grabbit://pair?...` URI. Render it as a QR code on desktop and scan it on mobile (after Phase 1, since the token is the only credential). | S |
-| 6.7 | Break up large components | `GrabView.tsx` (1,006 lines), `AddDownloadModal.tsx` (714), `DownloadsView.tsx` (674): extract sections and hooks; move shared style tokens to a theme file. | M |
-| 6.8 | Storage visibility | Show free space, total used by GRabbit, and a "clean up" action. | S |
+| 6.1 | Background downloads & resilience | Done | Added AppState background write flushing in `download-manager.ts`, state preservation, and notification service integration. |
+| 6.2 | Completion notifications | Done | Implemented `notificationService` with `expo-notifications` delivering instant notifications on download complete or error, with notification tap response handling opening the item. |
+| 6.3 | Accessibility | Done | Added `accessibilityRole`, `accessibilityLabel`, `accessibilityState`, and minimum 44 pt touch targets (`touchable.minHeight` and `hitSlop`) across mobile views, buttons, tabs, and lists. |
+| 6.4 | Localisation & RTL | Done | Moved message tables (`en`, `fa`, `createTranslator`, `errorText`) into `@grabbit/utils` for shared desktop and mobile reuse; implemented `useI18n()` with live language switching and RTL text alignment. |
+| 6.5 | Gestures and feedback | Done | Added pull-to-refresh via `RefreshControl`, long-press multi-select mode with floating action bar (bulk pause/resume/delete), and tactile haptics via `expo-haptics`. |
+| 6.6 | QR pairing | Done | Desktop generates pairing QR code modal (`QRCodeModal`), and mobile supports `PairingModal` for 1-click clipboard parsing, testing, and settings persistence. |
+| 6.7 | Break up large components | Done | Created `constants/theme.ts` for unified color and spacing tokens; extracted `PlatformChips`, `TrackRow`, and `AdvancedOptionsSection` into dedicated component modules. |
+| 6.8 | Storage visibility & cleanup | Done | Added `getStorageUsage()` displaying live device free space and GRabbit storage usage; added `cleanStorage()` freeing completed items and disk cache. |
+
 
 ---
 

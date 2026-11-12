@@ -123,6 +123,14 @@ export function useDownloads() {
     [activeTasks]
   );
 
+  const cleanStorage = useCallback(async () => {
+    return await mobileDownloadManager.cleanStorage();
+  }, []);
+
+  const getStorageUsage = useCallback(async () => {
+    return await mobileDownloadManager.getStorageUsage();
+  }, []);
+
   return {
     tasks,
     queues,
@@ -151,5 +159,7 @@ export function useDownloads() {
     startQueue,
     stopQueue,
     moveTaskToQueue,
+    cleanStorage,
+    getStorageUsage,
   };
 }

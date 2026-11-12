@@ -20,6 +20,10 @@ const CATEGORY_COLORS: Record<string, string> = {
 interface MediaCardProps {
   task: MobileDownloadTask;
   queueName?: string;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
+  onLongPress?: (id: string) => void;
   onPause?: (id: string) => void;
   onResume?: (id: string) => void;
   onCancel?: (id: string) => void;
@@ -34,6 +38,10 @@ interface MediaCardProps {
 function MediaCardComponent({
   task,
   queueName,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
+  onLongPress,
   onPause,
   onResume,
   onCancel,
@@ -60,16 +68,42 @@ function MediaCardComponent({
 
   return (
     <MotionView
-      style={styles.card}
+      style={[styles.card, isSelected && styles.cardSelected]}
       initial={{ opacity: 0, translateY: 10, scale: 0.98 }}
       animate={{ opacity: 1, translateY: 0, scale: 1 }}
       transition={{ duration: 220 }}
     >
-      {/* Top Media Info */}
-      <View style={styles.topRow}>
-        {task.thumbnailUrl ? (
-          <Image source={{ uri: task.thumbnailUrl }} style={styles.thumbnail} />
-        ) : (
+      <TouchableOpacity
+        activeOpacity={selectionMode ? 0.7 : 0.95}
+        onPress={() => {
+          if (selectionMode && onToggleSelect) {
+            onToggleSelect(task.id);
+          }
+        }}
+        onLongPress={() => {
+          if (onLongPress) {
+            onLongPress(task.id);
+          }
+        }}
+        accessibilityRole={selectionMode ? 'checkbox' : 'none'}
+        accessibilityState={selectionMode ? { checked: isSelected } : undefined}
+        accessibilityLabel={`${task.title || task.fileName}, ${task.status}`}
+      >
+        {/* Top Media Info */}
+        <View style={styles.topRow}>
+          {selectionMode && (
+            <View style={styles.selectionBox}>
+              <Ionicons
+                name={isSelected ? 'checkbox' : 'square-outline'}
+                size={22}
+                color={isSelected ? '#6366f1' : '#64748b'}
+              />
+            </View>
+          )}
+
+          {task.thumbnailUrl ? (
+            <Image source={{ uri: task.thumbnailUrl }} style={styles.thumbnail} />
+          ) : (
           <View style={styles.thumbnailPlaceholder}>
             <Ionicons
               name={
@@ -208,6 +242,7 @@ function MediaCardComponent({
           </Text>
         </View>
       )}
+      </TouchableOpacity>
 
       {/* Action Buttons */}
       <View style={styles.actionsRow}>
@@ -327,6 +362,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#334155',
     gap: 12,
+  },
+  cardSelected: {
+    borderColor: '#6366f1',
+    backgroundColor: '#17223b',
+  },
+  selectionBox: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingRight: 6,
   },
   topRow: {
     flexDirection: 'row',
