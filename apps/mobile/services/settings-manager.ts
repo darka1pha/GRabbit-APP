@@ -9,6 +9,8 @@ export interface MobileSettings {
   globalSpeedLimitKBps: number;
   categorySubfolders: boolean;
   autoSaveToLibrary: boolean;
+  notificationsEnabled: boolean;
+  hapticsEnabled: boolean;
   defaultAudioFormat: 'mp3' | 'm4a' | 'flac';
   defaultVideoQuality: string;
   desktopBridge: {
@@ -32,6 +34,8 @@ const DEFAULT_SETTINGS: MobileSettings = {
   globalSpeedLimitKBps: 0,
   categorySubfolders: true,
   autoSaveToLibrary: false,
+  notificationsEnabled: true,
+  hapticsEnabled: true,
   defaultAudioFormat: 'mp3',
   defaultVideoQuality: '1080p',
   desktopBridge: {
@@ -69,6 +73,8 @@ class MobileSettingsManager {
         this.settings = {
           ...DEFAULT_SETTINGS,
           ...parsed,
+          notificationsEnabled: parsed.notificationsEnabled ?? DEFAULT_SETTINGS.notificationsEnabled,
+          hapticsEnabled: parsed.hapticsEnabled ?? DEFAULT_SETTINGS.hapticsEnabled,
           desktopBridge: { ...DEFAULT_SETTINGS.desktopBridge, ...(parsed.desktopBridge || {}) },
           scheduler: { ...DEFAULT_SETTINGS.scheduler, ...(parsed.scheduler || {}) },
         };

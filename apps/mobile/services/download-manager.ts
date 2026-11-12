@@ -16,6 +16,7 @@ import {
 import { base64ToBytes, createIncrementalHasher } from '@grabbit/utils';
 import { mobileSettingsManager } from './settings-manager';
 import { mobileBridge } from './bridge';
+import { notificationService } from './notification-service';
 
 export interface MobileDownloadTask {
   id: string;
@@ -787,6 +788,7 @@ class MobileDownloadManager {
 
         this.notifyTasks();
         this.persistTasksImmediately();
+        notificationService.notifyDownloadCompleted(task).catch(() => {});
         this.pumpQueues();
       }
     } catch (err: any) {
@@ -800,6 +802,7 @@ class MobileDownloadManager {
         this.lastProgressNotifyTime.delete(task.id);
         this.notifyTasks();
         this.persistTasksImmediately();
+        notificationService.notifyDownloadFailed(task, task.error || 'Download failed').catch(() => {});
         this.pumpQueues();
       }
     }
@@ -913,6 +916,69 @@ class MobileDownloadManager {
     this.notifyTasks();
     this.persistTasksImmediately();
     this.pumpQueues();
+  }
+
+  // -------------------------------------------------------------------------
+  // Storage Usage & Cleanup
+  // -------------------------------------------------------------------------
+
+  async getStorageUsage(): Promise<{ freeBytes: number; usedBytes: number; totalDiskBytes: number; itemCount: number }> {
+    let freeBytes = 0;
+    let totalDiskBytes = 0;
+    try {
+      if (typeof (FileSystem as any).getFreeDiskStorageAsync === 'function') {
+        freeBytes = await (FileSystem as any).getFreeDiskStorageAsync();
+      }
+      if (typeof (FileSystem as any).getTotalDiskCapacityAsync === 'function') {
+        totalDiskBytes = await (FileSystem as any).getTotalDiskCapacityAsync();
+      }
+    } catch {
+      // Not supported in test or non-native environment
+    }
+
+    let usedBytes = 0;
+    let itemCount = 0;
+    for (const task of this.tasks.values()) {
+      if (task.receivedBytes > 0) {
+        usedBytes += task.receivedBytes;
+        itemCount++;
+      }
+    }
+
+    return { freeBytes, usedBytes, totalDiskBytes, itemCount };
+  }
+
+  async cleanStorage(): Promise<{ cleanedCount: number; freedBytes: number }> {
+    let cleanedCount = 0;
+    let freedBytes = 0;
+
+    const toRemove: string[] = [];
+    for (const [id, task] of this.tasks.entries()) {
+      if (task.status === 'completed' || task.status === 'error') {
+        toRemove.push(id);
+        freedBytes += task.receivedBytes || 0;
+        try {
+          const info = await FileSystem.getInfoAsync(task.localUri);
+          if (info.exists) {
+            await FileSystem.deleteAsync(task.localUri);
+          }
+        } catch {}
+      }
+    }
+
+    for (const id of toRemove) {
+      this.tasks.delete(id);
+      this.speedTracking.delete(id);
+      this.lastProgressNotifyTime.delete(id);
+      cleanedCount++;
+    }
+
+    if (cleanedCount > 0) {
+      this.notifyTasks();
+      this.persistTasksImmediately();
+    }
+
+    return { cleanedCount, freedBytes };
   }
 
   // -------------------------------------------------------------------------

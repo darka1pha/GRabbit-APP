@@ -8,10 +8,11 @@ import {
   ScrollView,
   FlatList,
   Platform,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Category, CATEGORIES, DownloadQueue } from '@grabbit/types';
-import { formatSpeed } from '@grabbit/utils';
 import { useDownloads } from '../hooks/useDownloads';
 import { MobileDownloadTask } from '../services/download-manager';
 import { MediaCard } from './MediaCard';
@@ -20,6 +21,8 @@ import { QueueConfigModal } from './QueueConfigModal';
 import { MoveQueueModal } from './MoveQueueModal';
 import { ChecksumModal } from './ChecksumModal';
 import { AddDownloadModal } from './AddDownloadModal';
+import { useI18n } from '../hooks/useI18n';
+import { hapticLight, hapticMedium, hapticSuccess } from '../services/haptics';
 
 type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
 
@@ -29,6 +32,7 @@ interface DownloadsViewProps {
 }
 
 export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps) {
+  const { t, isRtl, formatSpeed } = useI18n();
   const {
     tasks,
     queues,
@@ -54,6 +58,11 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
   const [selectedCategory, setSelectedCategory] = useState<Category | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Selection mode for long-press multi-select (Item 6.5)
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Modals
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -135,6 +144,89 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     return map;
   }, [tasks]);
 
+  // Pull-to-refresh
+  const handleRefresh = useCallback(async () => {
+    void hapticLight();
+    setIsRefreshing(true);
+    try {
+      await new Promise((r) => setTimeout(r, 500));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // Multi-select actions
+  const handleLongPress = useCallback((id: string) => {
+    void hapticMedium();
+    setSelectionMode(true);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleToggleSelect = useCallback((id: string) => {
+    void hapticLight();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    void hapticLight();
+    setSelectedIds(new Set(filteredTasks.map((t) => t.id)));
+  }, [filteredTasks]);
+
+  const handleDeselectAll = useCallback(() => {
+    void hapticLight();
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }, []);
+
+  const handleBulkPause = useCallback(async () => {
+    void hapticLight();
+    for (const id of selectedIds) {
+      await pauseDownload(id);
+    }
+    void hapticSuccess();
+  }, [selectedIds, pauseDownload]);
+
+  const handleBulkResume = useCallback(async () => {
+    void hapticLight();
+    for (const id of selectedIds) {
+      await resumeDownload(id);
+    }
+    void hapticSuccess();
+  }, [selectedIds, resumeDownload]);
+
+  const handleBulkDelete = useCallback(() => {
+    void hapticLight();
+    Alert.alert(
+      t('mobile.deleteConfirm'),
+      t('dl.confirmRemove', { count: selectedIds.size }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.ok'),
+          style: 'destructive',
+          onPress: async () => {
+            for (const id of selectedIds) {
+              await deleteDownload(id);
+            }
+            setSelectedIds(new Set());
+            setSelectionMode(false);
+            void hapticSuccess();
+          },
+        },
+      ]
+    );
+  }, [selectedIds, deleteDownload, t]);
+
   const keyExtractor = useCallback((item: MobileDownloadTask) => item.id, []);
 
   const renderItem = useCallback(
@@ -144,6 +236,10 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
         <MediaCard
           task={item}
           queueName={selectedQueueId === 'all' ? queue?.name : undefined}
+          selectionMode={selectionMode}
+          isSelected={selectedIds.has(item.id)}
+          onToggleSelect={handleToggleSelect}
+          onLongPress={handleLongPress}
           onPause={pauseDownload}
           onResume={resumeDownload}
           onCancel={cancelDownload}
@@ -159,6 +255,10 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     [
       queues,
       selectedQueueId,
+      selectionMode,
+      selectedIds,
+      handleToggleSelect,
+      handleLongPress,
       pauseDownload,
       resumeDownload,
       cancelDownload,
@@ -168,38 +268,62 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     ]
   );
 
+  const getCategoryLabel = useCallback(
+    (cat: Category | 'all'): string => {
+      if (cat === 'all') return t('cat.all');
+      const key = `cat.${cat}` as any;
+      return t(key) || cat;
+    },
+    [t]
+  );
+
+  const getStatusLabel = useCallback(
+    (st: StatusFilter): string => {
+      const key = `filter.${st}` as any;
+      return t(key) || st;
+    },
+    [t]
+  );
+
   const renderHeader = useMemo(() => {
     return (
       <View style={{ gap: 14 }}>
         {/* Header with Title & Speed */}
-        <View style={styles.topHeader}>
-          <View>
-            <Text style={styles.viewTitle}>Downloads Manager</Text>
+        <View style={[styles.topHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <View style={{ alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+            <Text style={styles.viewTitle}>{t('dl.title')}</Text>
             <Text style={styles.viewSubtitle}>
-              {counts.all} tasks • {counts.active} downloading
+              {counts.all} {t('queue.items', { count: counts.all })} • {counts.active} {t('dl.statusActive')}
             </Text>
           </View>
 
           {counts.active > 0 && (
             <View style={styles.speedBadge}>
-              <Ionicons name="speedometer-outline" size={14} color="#38bdf8" />
+              <Ionicons name="speedometer-outline" size={14} color="#6366f1" />
               <Text style={styles.speedText}>{formatSpeed(totalSpeed) || '0 B/s'}</Text>
             </View>
           )}
         </View>
 
         {/* Search Input */}
-        <View style={styles.searchRow}>
+        <View style={[styles.searchRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
           <Ionicons name="search" size={16} color="#64748b" />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { textAlign: isRtl ? 'right' : 'left' }]}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search downloads by name, link, or author..."
+            placeholder={t('dl.searchPlaceholder')}
             placeholderTextColor="#64748b"
+            accessibilityLabel={t('dl.searchPlaceholder')}
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClearBtn}>
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              style={styles.searchClearBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.clear')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Ionicons name="close-circle" size={16} color="#94a3b8" />
             </TouchableOpacity>
           )}
@@ -207,18 +331,24 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
 
         {/* Multiple Queues Bar */}
         <View style={styles.sectionBlock}>
-          <View style={styles.sectionRow}>
-            <Text style={styles.sectionLabel}>Download Queues</Text>
+          <View style={[styles.sectionRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <Text style={styles.sectionLabel}>{t('queue.title')}</Text>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
             {/* All Queues Pill */}
             <TouchableOpacity
               style={[styles.queueTab, selectedQueueId === 'all' && styles.queueTabActive]}
-              onPress={() => setSelectedQueueId('all')}
+              onPress={() => {
+                void hapticLight();
+                setSelectedQueueId('all');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('queue.all')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="layers-outline" size={14} color={selectedQueueId === 'all' ? '#ffffff' : '#94a3b8'} />
               <Text style={[styles.queueTabText, selectedQueueId === 'all' && styles.queueTabTextActive]}>
-                All
+                {t('queue.all')}
               </Text>
               <View style={styles.badgeCount}>
                 <Text style={styles.badgeCountText}>{queueCounts['all'] || 0}</Text>
@@ -232,7 +362,13 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
                 <View key={q.id} style={[styles.queueTabGroup, isSelected && styles.queueTabGroupActive]}>
                   <TouchableOpacity
                     style={styles.queueTabMain}
-                    onPress={() => setSelectedQueueId(q.id)}
+                    onPress={() => {
+                      void hapticLight();
+                      setSelectedQueueId(q.id);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={q.name}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <View
                       style={[
@@ -251,19 +387,31 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
                   {/* Queue Start/Stop Button */}
                   <TouchableOpacity
                     style={styles.queueActionBtn}
-                    onPress={() => (q.enabled ? stopQueue(q.id) : startQueue(q.id))}
+                    onPress={() => {
+                      void hapticLight();
+                      q.enabled ? stopQueue(q.id) : startQueue(q.id);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={q.enabled ? t('queue.stop') : t('queue.start')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Ionicons
                       name={q.enabled ? 'pause' : 'play'}
                       size={12}
-                      color={q.enabled ? '#eab308' : '#38bdf8'}
+                      color={q.enabled ? '#eab308' : '#6366f1'}
                     />
                   </TouchableOpacity>
 
                   {/* Queue Settings Trigger */}
                   <TouchableOpacity
                     style={styles.queueActionBtn}
-                    onPress={() => setQueueModalConfig({ visible: true, queue: q })}
+                    onPress={() => {
+                      void hapticLight();
+                      setQueueModalConfig({ visible: true, queue: q });
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('queue.edit')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Ionicons name="settings-outline" size={12} color="#94a3b8" />
                   </TouchableOpacity>
@@ -274,10 +422,16 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
             {/* New Queue Button */}
             <TouchableOpacity
               style={styles.addQueueBtn}
-              onPress={() => setQueueModalConfig({ visible: true, queue: null })}
+              onPress={() => {
+                void hapticLight();
+                setQueueModalConfig({ visible: true, queue: null });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('queue.new')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name="add" size={15} color="#38bdf8" />
-              <Text style={styles.addQueueText}>New Queue</Text>
+              <Ionicons name="add" size={15} color="#6366f1" />
+              <Text style={styles.addQueueText}>{t('queue.new')}</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -287,20 +441,32 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
             <TouchableOpacity
               style={[styles.categoryChip, selectedCategory === 'all' && styles.categoryChipActive]}
-              onPress={() => setSelectedCategory('all')}
+              onPress={() => {
+                void hapticLight();
+                setSelectedCategory('all');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('cat.all')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={[styles.categoryChipText, selectedCategory === 'all' && styles.categoryChipTextActive]}>
-                All ({categoryCounts['all'] || 0})
+                {getCategoryLabel('all')} ({categoryCounts['all'] || 0})
               </Text>
             </TouchableOpacity>
             {CATEGORIES.map((cat) => (
               <TouchableOpacity
                 key={cat}
                 style={[styles.categoryChip, selectedCategory === cat && styles.categoryChipActive]}
-                onPress={() => setSelectedCategory(cat)}
+                onPress={() => {
+                  void hapticLight();
+                  setSelectedCategory(cat);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={getCategoryLabel(cat)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Text style={[styles.categoryChipText, selectedCategory === cat && styles.categoryChipTextActive]}>
-                  {cat[0].toUpperCase() + cat.slice(1)} ({categoryCounts[cat] || 0})
+                  {getCategoryLabel(cat)} ({categoryCounts[cat] || 0})
                 </Text>
               </TouchableOpacity>
             ))}
@@ -308,35 +474,75 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
         </View>
 
         {/* Action Toolbar */}
-        <View style={styles.toolbar}>
-          <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalVisible(true)}>
+        <View style={[styles.toolbar, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => {
+              void hapticLight();
+              setAddModalVisible(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('dl.add')}
+          >
             <Ionicons name="add" size={16} color="#ffffff" />
-            <Text style={styles.addBtnText}>Add Download</Text>
+            <Text style={styles.addBtnText}>{t('dl.add')}</Text>
           </TouchableOpacity>
 
           <View style={styles.toolbarDivider} />
 
-          <TouchableOpacity style={styles.toolBtn} onPress={resumeAll}>
-            <Ionicons name="play" size={14} color="#38bdf8" />
-            <Text style={styles.toolBtnText}>Resume All</Text>
+          <TouchableOpacity
+            style={styles.toolBtn}
+            onPress={() => {
+              void hapticLight();
+              void resumeAll();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('dl.resumeAll')}
+          >
+            <Ionicons name="play" size={14} color="#6366f1" />
+            <Text style={styles.toolBtnText}>{t('dl.resumeAll')}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.toolBtn} onPress={pauseAll}>
+          <TouchableOpacity
+            style={styles.toolBtn}
+            onPress={() => {
+              void hapticLight();
+              void pauseAll();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('dl.pauseAll')}
+          >
             <Ionicons name="pause" size={14} color="#eab308" />
-            <Text style={styles.toolBtnText}>Pause All</Text>
+            <Text style={styles.toolBtnText}>{t('dl.pauseAll')}</Text>
           </TouchableOpacity>
 
           {counts.failed > 0 && (
-            <TouchableOpacity style={styles.toolBtn} onPress={retryFailed}>
+            <TouchableOpacity
+              style={styles.toolBtn}
+              onPress={() => {
+                void hapticLight();
+                void retryFailed();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('dl.retry')}
+            >
               <Ionicons name="refresh" size={14} color="#ef4444" />
-              <Text style={styles.toolBtnText}>Retry</Text>
+              <Text style={styles.toolBtnText}>{t('dl.retry')}</Text>
             </TouchableOpacity>
           )}
 
           {counts.completed > 0 && (
-            <TouchableOpacity style={styles.toolBtn} onPress={clearCompleted}>
+            <TouchableOpacity
+              style={styles.toolBtn}
+              onPress={() => {
+                void hapticLight();
+                void clearCompleted();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('dl.clearCompleted')}
+            >
               <Ionicons name="trash-outline" size={14} color="#94a3b8" />
-              <Text style={styles.toolBtnText}>Clear Done</Text>
+              <Text style={styles.toolBtnText}>{t('dl.clearCompleted')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -347,10 +553,16 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
             <TouchableOpacity
               key={f}
               style={[styles.statusBtn, statusFilter === f && styles.statusBtnActive]}
-              onPress={() => setStatusFilter(f)}
+              onPress={() => {
+                void hapticLight();
+                setStatusFilter(f);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={getStatusLabel(f)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={[styles.statusBtnText, statusFilter === f && styles.statusBtnTextActive]}>
-                {f[0].toUpperCase() + f.slice(1)} ({counts[f]})
+                {getStatusLabel(f)} ({counts[f]})
               </Text>
             </TouchableOpacity>
           ))}
@@ -373,19 +585,22 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     statusFilter,
     stopQueue,
     startQueue,
+    t,
+    isRtl,
+    formatSpeed,
+    getCategoryLabel,
+    getStatusLabel,
   ]);
 
   const renderEmpty = useCallback(() => {
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="cloud-download-outline" size={48} color="#334155" />
-        <Text style={styles.emptyTitle}>No downloads found</Text>
-        <Text style={styles.emptySubtitle}>
-          Tap "Add Download" above or grab links from YouTube, Spotify, and direct URLs!
-        </Text>
+        <Ionicons name="cloud-download-outline" size={48} color="#233253" />
+        <Text style={styles.emptyTitle}>{t('dl.empty')}</Text>
+        <Text style={styles.emptySubtitle}>{t('dl.emptyHint')}</Text>
       </View>
     );
-  }, []);
+  }, [t]);
 
   return (
     <View style={styles.container}>
@@ -400,7 +615,74 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={Platform.OS === 'android'}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="#6366f1"
+            colors={['#6366f1']}
+          />
+        }
       />
+
+      {/* Floating Multi-Select Bar (Item 6.5) */}
+      {selectionMode && (
+        <View style={[styles.selectionBar, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={styles.selectionCount}>
+              {t('mobile.selectedCount', { count: selectedIds.size })}
+            </Text>
+            <TouchableOpacity
+              onPress={selectedIds.size === filteredTasks.length ? handleDeselectAll : handleSelectAll}
+              style={styles.selectionSubBtn}
+              accessibilityRole="button"
+              accessibilityLabel={selectedIds.size === filteredTasks.length ? t('grab.selectNone') : t('grab.selectAll')}
+            >
+              <Text style={styles.selectionSubText}>
+                {selectedIds.size === filteredTasks.length ? t('grab.selectNone') : t('grab.selectAll')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              onPress={handleBulkResume}
+              style={styles.selectionActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('dl.resume')}
+            >
+              <Ionicons name="play" size={16} color="#6366f1" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBulkPause}
+              style={styles.selectionActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('dl.pause')}
+            >
+              <Ionicons name="pause" size={16} color="#eab308" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBulkDelete}
+              style={styles.selectionActionBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('dl.remove')}
+            >
+              <Ionicons name="trash-outline" size={16} color="#ef4444" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleDeselectAll}
+              style={[styles.selectionActionBtn, { backgroundColor: '#233253' }]}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.close')}
+            >
+              <Ionicons name="close" size={16} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Add Direct Download Modal */}
       <AddDownloadModal
@@ -453,15 +735,14 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617',
+    backgroundColor: '#0b0f19',
   },
   content: {
     padding: 16,
     gap: 14,
-    paddingBottom: 40,
+    paddingBottom: 70,
   },
   topHeader: {
-    flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 4,
@@ -480,9 +761,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#0369a126',
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
     borderWidth: 1,
-    borderColor: '#38bdf866',
+    borderColor: '#6366f1',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 16,
@@ -490,17 +771,17 @@ const styles = StyleSheet.create({
   speedText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#6366f1',
   },
   searchRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     borderRadius: 8,
     paddingHorizontal: 12,
     gap: 8,
+    minHeight: 44,
   },
   searchInput: {
     flex: 1,
@@ -510,12 +791,15 @@ const styles = StyleSheet.create({
   },
   searchClearBtn: {
     padding: 4,
+    minHeight: 36,
+    minWidth: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sectionBlock: {
     gap: 6,
   },
   sectionRow: {
-    flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 2,
@@ -532,31 +816,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
+    minHeight: 36,
   },
   queueTabActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
+    backgroundColor: '#6366f1',
+    borderColor: '#818cf8',
   },
   queueTabGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     borderRadius: 16,
     marginRight: 8,
     paddingRight: 4,
+    minHeight: 36,
   },
   queueTabGroupActive: {
-    borderColor: '#38bdf8',
-    backgroundColor: '#0369a133',
+    borderColor: '#6366f1',
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
   },
   queueTabMain: {
     flexDirection: 'row',
@@ -564,6 +850,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    minHeight: 36,
   },
   queueDot: {
     width: 7,
@@ -580,9 +867,13 @@ const styles = StyleSheet.create({
   },
   queueActionBtn: {
     padding: 4,
+    minHeight: 32,
+    minWidth: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   badgeCount: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0b0f19',
     borderRadius: 8,
     paddingHorizontal: 6,
     paddingVertical: 1,
@@ -598,29 +889,32 @@ const styles = StyleSheet.create({
     gap: 4,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: '#38bdf8',
+    borderColor: '#6366f1',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
+    minHeight: 36,
   },
   addQueueText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#38bdf8',
+    color: '#6366f1',
   },
   categoryChip: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 14,
     marginRight: 6,
+    minHeight: 32,
+    justifyContent: 'center',
   },
   categoryChipActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
+    backgroundColor: '#6366f1',
+    borderColor: '#818cf8',
   },
   categoryChipText: {
     fontSize: 11,
@@ -631,13 +925,12 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   toolbar: {
-    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     padding: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
     gap: 8,
     flexWrap: 'wrap',
   },
@@ -645,10 +938,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#0284c7',
+    backgroundColor: '#6366f1',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
+    minHeight: 36,
   },
   addBtnText: {
     color: '#ffffff',
@@ -658,7 +952,7 @@ const styles = StyleSheet.create({
   toolbarDivider: {
     width: 1,
     height: 18,
-    backgroundColor: '#334155',
+    backgroundColor: '#233253',
   },
   toolBtn: {
     flexDirection: 'row',
@@ -667,7 +961,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0b0f19',
+    minHeight: 34,
   },
   toolBtnText: {
     color: '#cbd5e1',
@@ -676,20 +971,22 @@ const styles = StyleSheet.create({
   },
   statusSegment: {
     flexDirection: 'row',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#131b2e',
     borderRadius: 8,
     padding: 3,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#233253',
   },
   statusBtn: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: 6,
     borderRadius: 6,
+    minHeight: 32,
+    justifyContent: 'center',
   },
   statusBtnActive: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#6366f1',
   },
   statusBtnText: {
     fontSize: 10,
@@ -699,9 +996,6 @@ const styles = StyleSheet.create({
   statusBtnTextActive: {
     color: '#ffffff',
   },
-  tasksList: {
-    gap: 12,
-  },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -710,14 +1004,57 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyTitle: {
-    color: '#64748b',
+    color: '#94a3b8',
     fontSize: 16,
     fontWeight: '600',
   },
   emptySubtitle: {
-    color: '#475569',
+    color: '#64748b',
     fontSize: 13,
     textAlign: 'center',
     marginTop: 4,
+  },
+  selectionBar: {
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: '#131b2e',
+    borderWidth: 1,
+    borderColor: '#6366f1',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  selectionCount: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#f8fafc',
+  },
+  selectionSubBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#1e2b48',
+    borderRadius: 6,
+  },
+  selectionSubText: {
+    fontSize: 11,
+    color: '#6366f1',
+    fontWeight: '600',
+  },
+  selectionActionBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: '#1e2b48',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

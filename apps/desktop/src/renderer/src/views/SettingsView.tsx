@@ -1,9 +1,10 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, Radio, RotateCw, Search, Settings, Sun, Wrench, X } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Wrench, X } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { DayPicker, Switch } from '../components/ui';
+import { QRCodeModal } from '../components/QRCodeModal';
 
 function Section({ id, title, icon, children }: { id?: string; title: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -72,6 +73,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showQrModal, setShowQrModal] = useState(false);
 
   useEffect(() => {
     if (initialSection) {
@@ -353,16 +355,24 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
               {s.extension.allowLan === true && tools?.lanIp && (
                 <Setting label={t('set.extensionLanIp')} hint={`http://${tools.lanIp}:${s.extension.port}`}>
                   <span className="badge mono">{tools.lanIp}:{s.extension.port}</span>
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      const uri = `grabbit://pair?host=${encodeURIComponent(tools.lanIp!)}&port=${s.extension.port}&token=${encodeURIComponent(s.extension.token)}`;
-                      void navigator.clipboard.writeText(uri);
-                      toast(t('set.pairingCopied'), 'success');
-                    }}
-                  >
-                    <Copy size={14} /> {t('set.copyPairingCode')}
-                  </button>
+                  <div style={{ display: 'inline-flex', gap: 6 }}>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        const uri = `grabbit://pair?host=${encodeURIComponent(tools.lanIp!)}&port=${s.extension.port}&token=${encodeURIComponent(s.extension.token)}`;
+                        void navigator.clipboard.writeText(uri);
+                        toast(t('set.pairingCopied'), 'success');
+                      }}
+                    >
+                      <Copy size={14} /> {t('set.copyPairingCode')}
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => setShowQrModal(true)}
+                    >
+                      <QrCode size={14} /> {t('mobile.scanQr')}
+                    </button>
+                  </div>
                 </Setting>
               )}
               <Setting label={t('set.extensionPort')}>
@@ -532,6 +542,15 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             <span />
           </Setting>
         </Section>
+
+        {showQrModal && tools?.lanIp && (
+          <QRCodeModal
+            value={`grabbit://pair?host=${encodeURIComponent(tools.lanIp)}&port=${s.extension.port}&token=${encodeURIComponent(s.extension.token)}`}
+            title={t('mobile.scanQr')}
+            subtitle={t('mobile.qrInstruction')}
+            onClose={() => setShowQrModal(false)}
+          />
+        )}
       </div>
     </div>
   );

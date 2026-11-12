@@ -586,3 +586,5 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+export * from './i18n';
+

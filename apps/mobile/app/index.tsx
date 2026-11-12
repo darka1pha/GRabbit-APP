@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,9 @@ import { MediaItem, MediaOption } from '@grabbit/types';
 import { useShareIntent } from '../hooks/useShareIntent';
 import { useDownloads } from '../hooks/useDownloads';
 import { MobileDownloadTask } from '../services/download-manager';
+import { notificationService } from '../services/notification-service';
+import { useI18n } from '../hooks/useI18n';
+import { hapticLight } from '../services/haptics';
 import {
   GrabView,
   DownloadsView,
@@ -25,6 +28,7 @@ import {
 type AppTab = 'grab' | 'downloads' | 'recognize' | 'settings';
 
 export default function HomeScreen() {
+  const { t, isRtl } = useI18n();
   const [activeTab, setActiveTab] = useState<AppTab>('grab');
   const [initialGrabUrl, setInitialGrabUrl] = useState('');
   const [addDirectUrl, setAddDirectUrl] = useState<string | null>(null);
@@ -33,7 +37,24 @@ export default function HomeScreen() {
   const [playerVisible, setPlayerVisible] = useState(false);
   const [playerSource, setPlayerSource] = useState<MediaPlayerSource | null>(null);
 
-  const { activeTasks, totalSpeed, saveToLibrary } = useDownloads();
+  const { tasks, activeTasks } = useDownloads();
+
+  // Handle incoming notification tap (Item 6.2)
+  useEffect(() => {
+    const sub = notificationService.onNotificationTap((data) => {
+      setActiveTab('downloads');
+      if (data?.taskId) {
+        const matchingTask = tasks.find((t) => t.id === data.taskId);
+        if (matchingTask && matchingTask.status === 'completed') {
+          handlePlayDownloaded(matchingTask);
+        }
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [tasks]);
 
   // Share Intent
   const handleIncomingShareUrl = useCallback((incomingUrl: string) => {
@@ -42,6 +63,11 @@ export default function HomeScreen() {
   }, []);
 
   const { sharedUrl, clearSharedUrl } = useShareIntent(handleIncomingShareUrl);
+
+  const switchTab = (tab: AppTab) => {
+    void hapticLight();
+    setActiveTab(tab);
+  };
 
   // Stream preview from Grab view
   const handlePreviewStream = (item: MediaItem, option: MediaOption) => {
@@ -119,32 +145,43 @@ export default function HomeScreen() {
       </MotionView>
 
       {/* Sleek Bottom Navigation Bar */}
-      <View style={styles.navBar}>
+      <View
+        style={[styles.navBar, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
+        accessibilityRole="tablist"
+      >
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => setActiveTab('grab')}
+          onPress={() => switchTab('grab')}
           activeOpacity={0.7}
+          accessibilityRole="tab"
+          accessibilityLabel={t('nav.grab')}
+          accessibilityState={{ selected: activeTab === 'grab' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name={activeTab === 'grab' ? 'flash' : 'flash-outline'}
             size={22}
-            color={activeTab === 'grab' ? '#38bdf8' : '#94a3b8'}
+            color={activeTab === 'grab' ? '#6366f1' : '#94a3b8'}
           />
           <Text style={[styles.navLabel, activeTab === 'grab' && styles.navLabelActive]}>
-            Grab
+            {t('nav.grab')}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => setActiveTab('downloads')}
+          onPress={() => switchTab('downloads')}
           activeOpacity={0.7}
+          accessibilityRole="tab"
+          accessibilityLabel={t('nav.downloads')}
+          accessibilityState={{ selected: activeTab === 'downloads' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <View>
             <Ionicons
               name={activeTab === 'downloads' ? 'download' : 'download-outline'}
               size={22}
-              color={activeTab === 'downloads' ? '#38bdf8' : '#94a3b8'}
+              color={activeTab === 'downloads' ? '#6366f1' : '#94a3b8'}
             />
             {activeTasks.length > 0 && (
               <View style={styles.navBadge}>
@@ -153,37 +190,45 @@ export default function HomeScreen() {
             )}
           </View>
           <Text style={[styles.navLabel, activeTab === 'downloads' && styles.navLabelActive]}>
-            Downloads
+            {t('nav.downloads')}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => setActiveTab('recognize')}
+          onPress={() => switchTab('recognize')}
           activeOpacity={0.7}
+          accessibilityRole="tab"
+          accessibilityLabel={t('nav.recognize')}
+          accessibilityState={{ selected: activeTab === 'recognize' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name={activeTab === 'recognize' ? 'musical-notes' : 'musical-notes-outline'}
             size={22}
-            color={activeTab === 'recognize' ? '#38bdf8' : '#94a3b8'}
+            color={activeTab === 'recognize' ? '#6366f1' : '#94a3b8'}
           />
           <Text style={[styles.navLabel, activeTab === 'recognize' && styles.navLabelActive]}>
-            Recognize
+            {t('nav.recognize')}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => setActiveTab('settings')}
+          onPress={() => switchTab('settings')}
           activeOpacity={0.7}
+          accessibilityRole="tab"
+          accessibilityLabel={t('nav.settings')}
+          accessibilityState={{ selected: activeTab === 'settings' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name={activeTab === 'settings' ? 'settings' : 'settings-outline'}
             size={22}
-            color={activeTab === 'settings' ? '#38bdf8' : '#94a3b8'}
+            color={activeTab === 'settings' ? '#6366f1' : '#94a3b8'}
           />
           <Text style={[styles.navLabel, activeTab === 'settings' && styles.navLabelActive]}>
-            Settings
+            {t('nav.settings')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -196,9 +241,7 @@ export default function HomeScreen() {
           setPlayerVisible(false);
           setPlayerSource(null);
         }}
-        onSaveToLibrary={() => {
-          // If task matches, trigger save
-        }}
+        onSaveToLibrary={() => {}}
       />
 
       {/* Direct Download Dialog when triggered from Grab or elsewhere */}
@@ -219,18 +262,17 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617',
+    backgroundColor: '#0b0f19',
   },
   stage: {
     flex: 1,
   },
   navBar: {
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    backgroundColor: '#0f172a',
+    backgroundColor: '#131b2e',
     borderTopWidth: 1,
-    borderTopColor: '#1e293b',
+    borderTopColor: '#233253',
     paddingVertical: 8,
     paddingBottom: 12,
   },
@@ -239,6 +281,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 3,
     minWidth: 64,
+    minHeight: 44,
   },
   navLabel: {
     fontSize: 11,
@@ -246,19 +289,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   navLabelActive: {
-    color: '#38bdf8',
+    color: '#6366f1',
     fontWeight: '700',
   },
   navBadge: {
     position: 'absolute',
     top: -4,
     right: -8,
-    backgroundColor: '#0284c7',
+    backgroundColor: '#6366f1',
     borderRadius: 8,
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderWidth: 1,
-    borderColor: '#0f172a',
+    borderColor: '#131b2e',
   },
   navBadgeText: {
     color: '#ffffff',
