@@ -263,21 +263,39 @@ favour of `expo-video`/`expo-audio`. Plan one SDK upgrade and do the player migr
 
 ---
 
-## Phase 7 — Browser extension
+## Phase 7 — Browser extension — [COMPLETED]
 
-- **7.1 Shrink the footprint — M.** The content script runs on `<all_urls>` at `document_idle` with a
-  `MutationObserver` on every page. Debounce the observer, observe only added `video/audio` nodes,
-  and disconnect when the tab is hidden. Consider injecting on demand via `scripting` + `activeTab`
-  and making broad host access an optional permission the user grants (also eases store review).
-- **7.2 Cookie forwarding — S.** Cookies are sent to the desktop over plain HTTP. After Phase 1 this
-  is loopback-only by default; when the bridge host is not loopback, do not forward cookies unless
-  the user opts in.
-- **7.3 Connection status — S.** Badge on the toolbar icon: connected / not paired / desktop not
-  running, with a "launch GRabbit" link via the `grabbit://` scheme.
-- **7.4 Capture rules UX — S.** Per-site toggle from the popup ("never capture on this site"),
-  a minimum-size threshold, and a hold-key (e.g. Alt) to bypass capture once.
-- **7.5 HLS/DASH detection — M.** Detect `.m3u8`/`.mpd` requests and hand the manifest URL to the
-  desktop media engine (yt-dlp handles them) rather than only direct media URLs.
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 7.1 | Shrink the footprint | Done | Debounced DOM scans to 250ms; filtered `MutationObserver` to only trigger on added `video`, `audio`, and `source` elements; automatically disconnected observer on background tabs (`document.visibilityState === 'hidden'`) and reconnected on focus; skipped scans entirely on excluded domains. |
+| 7.2 | Cookie forwarding security | Done | Restrict cookie forwarding to loopback (`127.0.0.1` / `localhost` / `::1`) by default over plain HTTP; enforced `allowRemoteCookies: false` default, suppressing cookie headers on remote bridge connections unless explicitly opted in via Options with security warning. |
+| 7.3 | Connection status & protocol launch | Done | Added dynamic toolbar action badge: empty/clear with green tint when connected and authenticated, amber `"PAIR"` when desktop is running with invalid token, red `"OFF"` when desktop is unreachable; added "Launch GRabbit" button triggering `grabbit://launch` in popup when offline. |
+| 7.4 | Capture rules UX | Done | Added 1-click "Never capture on this site" toggle in popup reading current tab's hostname and updating `excludedDomains`; added minimum file size dropdown (0, 5, 20, 50, 100 MB); implemented hold-<kbd>Alt</kbd> click bypass to download directly with the browser. |
+| 7.5 | HLS/DASH manifest detection | Done | Added manifest detection (`.m3u8` / `.mpd`) in content script sniffer, background interceptor, and desktop RPC bridge; manifests are resolved and handed directly to desktop media engine (`yt-dlp`) for multi-stream downloading and remuxing. |
+
+### 7.1 Shrink the footprint — M (Done)
+The content script runs on `<all_urls>` at `document_idle` with a debounced `MutationObserver` (250ms)
+that triggers only when media tags (`video`, `audio`, `source`) are added to the DOM. Disconnects
+when the tab is hidden (`document.visibilityState === 'hidden'`) and reconnects on visibility to conserve
+CPU and battery. Immediately aborts DOM query operations if the site is excluded in settings.
+
+### 7.2 Cookie forwarding — S (Done)
+Cookies are sent to desktop RPC over plain HTTP strictly on loopback (`127.0.0.1`/`localhost`/`::1`) by
+default. When connecting to a remote or LAN host, cookies are stripped unless the user explicitly
+enables `allowRemoteCookies` in Options.
+
+### 7.3 Connection status — S (Done)
+Dynamic toolbar icon badge reflects live bridge status: clear on connected (`""`), `"PAIR"` on token
+mismatch, and `"OFF"` when offline. Popup includes a prominent "Launch GRabbit" button linking to
+the `grabbit://launch` protocol handler when disconnected.
+
+### 7.4 Capture rules UX — S (Done)
+Added per-site toggle in popup ("Never capture on this site"), quick minimum file size selector,
+and hold-<kbd>Alt</kbd> key bypass to ignore GRabbit capture for single clicks.
+
+### 7.5 HLS/DASH detection — M (Done)
+Detects `.m3u8` and `.mpd` streaming requests and manifests, routing them directly through desktop
+RPC media resolution where yt-dlp fetches and remuxes the complete stream.
 
 ---
 

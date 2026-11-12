@@ -41,6 +41,14 @@
           <span class="hint">The security token protects your desktop queue from unauthorized local requests.</span>
         </div>
 
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="allowRemoteCookies" />
+          <label for="allowRemoteCookies">Allow forwarding cookies when connecting to a remote RPC host</label>
+        </div>
+        <span class="hint" style="color: #f59e0b; margin-top: -6px; margin-bottom: 10px; display: block;">
+          ⚠️ Forwarding cookies over unencrypted LAN HTTP can expose your web sessions. Leave disabled unless using a secure private tunnel.
+        </span>
+
         <div class="test-connection-row">
           <button id="testBtn" class="btn secondary">Test Connection</button>
           <div id="testResult" class="test-result" style="display: none;"></div>

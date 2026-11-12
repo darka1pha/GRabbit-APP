@@ -12,7 +12,13 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   excludedDomains: ['localhost', '127.0.0.1'],
   enableVideoSniffer: true,
   minFileSizeMB: 0,
+  allowRemoteCookies: false,
 };
+
+export function isLoopbackHost(host: string): boolean {
+  const h = (host || '').trim().toLowerCase();
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+}
 
 const STREAMING_HOSTS = [
   'youtube.com',
@@ -61,6 +67,12 @@ export function isStreamingMediaUrl(urlStr: string): boolean {
 export function isDirectMediaFileUrl(urlStr: string): boolean {
   const ext = extractFileExtension(urlStr);
   return Boolean(ext && DIRECT_MEDIA_EXTENSIONS.has(ext));
+}
+
+export function isHlsOrDashUrl(urlStr: string): boolean {
+  if (!urlStr) return false;
+  const clean = urlStr.toLowerCase().split('?')[0];
+  return clean.endsWith('.m3u8') || clean.endsWith('.mpd');
 }
 
 export async function loadExtensionConfig(): Promise<ExtensionConfig> {
@@ -226,6 +238,11 @@ export function shouldInterceptDownload(
 
   const allowed = new Set(config.interceptExtensions.map((e) => e.trim().toLowerCase().replace(/^\./, '')));
 
+  // HLS and DASH manifests (.m3u8, .mpd) are always interceptable for desktop yt-dlp remuxing
+  if (isHlsOrDashUrl(url) || (originalUrl && isHlsOrDashUrl(originalUrl))) {
+    return true;
+  }
+
   const candidates = [
     extractFileExtension(filename),
     extractFileExtension(url),
@@ -233,7 +250,7 @@ export function shouldInterceptDownload(
   ].filter(Boolean);
 
   for (const ext of candidates) {
-    if (allowed.has(ext)) {
+    if (allowed.has(ext) || ext === 'm3u8' || ext === 'mpd') {
       return true;
     }
   }

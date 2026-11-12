@@ -5,6 +5,7 @@ import type { ExtensionConfig, ExtensionUpdateInfo } from '../types/extension';
 const bridgeHostEl = document.getElementById('bridgeHost') as HTMLInputElement;
 const bridgePortEl = document.getElementById('bridgePort') as HTMLInputElement;
 const bridgeTokenEl = document.getElementById('bridgeToken') as HTMLInputElement;
+const allowRemoteCookiesEl = document.getElementById('allowRemoteCookies') as HTMLInputElement;
 const testBtnEl = document.getElementById('testBtn') as HTMLButtonElement;
 const testResultEl = document.getElementById('testResult')!;
 
@@ -26,6 +27,9 @@ function populateForm(cfg: ExtensionConfig): void {
   bridgeHostEl.value = cfg.bridgeHost || '127.0.0.1';
   bridgePortEl.value = String(cfg.bridgePort || 31542);
   bridgeTokenEl.value = cfg.bridgeToken || '';
+  if (allowRemoteCookiesEl) {
+    allowRemoteCookiesEl.checked = Boolean(cfg.allowRemoteCookies);
+  }
 
   interceptDownloadsEl.checked = cfg.interceptDownloads;
   interceptExtensionsEl.value = (cfg.interceptExtensions || []).join(', ');
@@ -50,6 +54,7 @@ function gatherConfigFromForm(): ExtensionConfig {
     bridgeHost: bridgeHostEl.value.trim() || '127.0.0.1',
     bridgePort: parseInt(bridgePortEl.value, 10) || 31542,
     bridgeToken: bridgeTokenEl.value.trim(),
+    allowRemoteCookies: allowRemoteCookiesEl ? allowRemoteCookiesEl.checked : false,
     interceptDownloads: interceptDownloadsEl.checked,
     interceptExtensions: exts,
     excludedDomains: domains,

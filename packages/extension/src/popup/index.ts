@@ -8,6 +8,12 @@ const addBtnEl = document.getElementById('addBtn') as HTMLButtonElement;
 const quickAddMsgEl = document.getElementById('quickAddMessage')!;
 const interceptToggleEl = document.getElementById('interceptToggle') as HTMLInputElement;
 const snifferToggleEl = document.getElementById('snifferToggle') as HTMLInputElement;
+const offlinePromptEl = document.getElementById('offlinePrompt')!;
+const launchDesktopBtnEl = document.getElementById('launchDesktopBtn') as HTMLButtonElement;
+const siteExcludeRowEl = document.getElementById('siteExcludeRow')!;
+const currentSiteDomainEl = document.getElementById('currentSiteDomain')!;
+const siteExcludeToggleEl = document.getElementById('siteExcludeToggle') as HTMLInputElement;
+const minSizeSelectEl = document.getElementById('minSizeSelect') as HTMLSelectElement;
 const mediaListEl = document.getElementById('mediaList')!;
 const mediaCountEl = document.getElementById('mediaCount')!;
 const optionsBtnEl = document.getElementById('optionsBtn')!;
@@ -17,6 +23,8 @@ const updateBannerEl = document.getElementById('updateBanner')!;
 const updateTextEl = document.getElementById('updateText')!;
 const downloadUpdateBtnEl = document.getElementById('downloadUpdateBtn') as HTMLButtonElement;
 const reloadExtBtnEl = document.getElementById('reloadExtBtn') as HTMLButtonElement;
+
+let currentTabHost = '';
 
 function showQuickMessage(text: string, type: 'success' | 'error'): void {
   quickAddMsgEl.textContent = text;
@@ -39,15 +47,18 @@ function updateConnectionPill(
     const activeText = status?.activeDownloads ? ` (${status.activeDownloads} active)` : '';
     connectionStatusEl.querySelector('.status-text')!.textContent = `Connected${activeText}`;
     connectionStatusEl.title = `GRabbit Desktop RPC is online. Total downloads: ${status?.queueLength ?? 0}`;
+    if (offlinePromptEl) offlinePromptEl.style.display = 'none';
   } else if (connected && !authenticated) {
     connectionStatusEl.classList.add('status-disconnected');
     connectionStatusEl.querySelector('.status-text')!.textContent = 'Not paired';
     connectionStatusEl.title =
       'GRabbit Desktop is running but the security token is missing or wrong. Copy it from GRabbit Desktop → Settings → Browser Integration and paste it into this extension\'s Options.';
+    if (offlinePromptEl) offlinePromptEl.style.display = 'none';
   } else {
     connectionStatusEl.classList.add('status-disconnected');
     connectionStatusEl.querySelector('.status-text')!.textContent = 'Offline';
     connectionStatusEl.title = error || 'GRabbit Desktop is not running or RPC is disabled.';
+    if (offlinePromptEl) offlinePromptEl.style.display = 'flex';
   }
 }
 
@@ -61,12 +72,39 @@ async function checkConnection(): Promise<void> {
   });
 }
 
+async function initSiteSettings(config: ExtensionConfig): Promise<void> {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const activeTab = tabs[0];
+      if (activeTab?.url && (activeTab.url.startsWith('http://') || activeTab.url.startsWith('https://'))) {
+        const u = new URL(activeTab.url);
+        currentTabHost = u.hostname.toLowerCase();
+        if (currentSiteDomainEl) currentSiteDomainEl.textContent = currentTabHost;
+        if (siteExcludeRowEl) siteExcludeRowEl.style.display = 'flex';
+
+        const isExcluded = (config.excludedDomains || []).some((d) => {
+          const target = d.trim().toLowerCase();
+          return Boolean(target && (currentTabHost === target || currentTabHost.endsWith('.' + target)));
+        });
+        if (siteExcludeToggleEl) siteExcludeToggleEl.checked = isExcluded;
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function initToggles(): void {
   chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
     if (res && res.config) {
       const config = res.config as ExtensionConfig;
       interceptToggleEl.checked = config.interceptDownloads;
       snifferToggleEl.checked = config.enableVideoSniffer;
+      if (minSizeSelectEl) {
+        minSizeSelectEl.value = String(config.minFileSizeMB || 0);
+      }
+      void initSiteSettings(config);
     }
   });
 
@@ -83,6 +121,55 @@ function initToggles(): void {
       payload: { enableVideoSniffer: snifferToggleEl.checked },
     });
   });
+
+  if (siteExcludeToggleEl) {
+    siteExcludeToggleEl.addEventListener('change', () => {
+      if (!currentTabHost) return;
+      chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (res) => {
+        if (res && res.config) {
+          const config = res.config as ExtensionConfig;
+          let domains = [...(config.excludedDomains || [])];
+          if (siteExcludeToggleEl.checked) {
+            if (!domains.some((d) => d.toLowerCase() === currentTabHost)) {
+              domains.push(currentTabHost);
+            }
+          } else {
+            domains = domains.filter(
+              (d) => d.toLowerCase() !== currentTabHost && !currentTabHost.endsWith('.' + d.toLowerCase())
+            );
+          }
+          chrome.runtime.sendMessage({
+            type: 'SAVE_CONFIG',
+            payload: { excludedDomains: domains },
+          });
+        }
+      });
+    });
+  }
+
+  if (minSizeSelectEl) {
+    minSizeSelectEl.addEventListener('change', () => {
+      const val = parseFloat(minSizeSelectEl.value) || 0;
+      chrome.runtime.sendMessage({
+        type: 'SAVE_CONFIG',
+        payload: { minFileSizeMB: val },
+      });
+    });
+  }
+
+  if (launchDesktopBtnEl) {
+    launchDesktopBtnEl.addEventListener('click', () => {
+      try {
+        if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
+          void chrome.tabs.create({ url: 'grabbit://launch' });
+        } else {
+          window.open('grabbit://launch');
+        }
+      } catch {
+        // ignore
+      }
+    });
+  }
 }
 
 function renderMediaList(mediaList: DetectedMediaStream[], activeTabUrl?: string): void {

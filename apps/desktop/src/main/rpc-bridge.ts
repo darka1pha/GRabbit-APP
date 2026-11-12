@@ -561,9 +561,10 @@ export class DesktopRpcBridge {
     try {
       const parsed = parseHttpUrl(rawUrl);
       const platform = detectPlatform(parsed.hostname);
+      const isManifest = /\.(m3u8|mpd)(\?.*)?$/i.test(rawUrl);
 
-      // If recognized streaming media platform, try media resolve first
-      if (platform !== 'generic') {
+      // If recognized streaming media platform or HLS/DASH manifest URL, try media resolve first
+      if (platform !== 'generic' || isManifest) {
         try {
           const meta = await this.deps.router.resolve(rawUrl);
           const first = meta.items[0];

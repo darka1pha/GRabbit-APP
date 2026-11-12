@@ -9,6 +9,7 @@ export interface ExtensionConfig {
   excludedDomains: string[];
   enableVideoSniffer: boolean;
   minFileSizeMB: number;
+  allowRemoteCookies?: boolean;
 }
 
 export type ExtensionMessageType =
@@ -92,6 +93,30 @@ declare global {
       };
       const onInstalled: {
         addListener(callback: (details: { reason: string }) => void): void;
+      };
+      const onStartup: {
+        addListener(callback: () => void): void;
+      };
+    }
+
+    namespace action {
+      function setBadgeText(details: { text: string; tabId?: number }): Promise<void>;
+      function setBadgeBackgroundColor(details: { color: string | [number, number, number, number]; tabId?: number }): Promise<void>;
+      function setTitle(details: { title: string; tabId?: number }): Promise<void>;
+    }
+
+    namespace alarms {
+      interface Alarm {
+        name: string;
+        scheduledTime: number;
+        periodInMinutes?: number;
+      }
+      function create(
+        name: string,
+        alarmInfo: { delayInMinutes?: number; periodInMinutes?: number; when?: number }
+      ): void;
+      const onAlarm: {
+        addListener(callback: (alarm: Alarm) => void): void;
       };
     }
 

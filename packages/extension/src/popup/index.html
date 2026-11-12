@@ -22,6 +22,11 @@
       </div>
     </header>
 
+    <div id="offlinePrompt" class="offline-prompt" style="display: none;">
+      <span>GRabbit Desktop is offline.</span>
+      <button id="launchDesktopBtn" class="btn primary sm">Launch GRabbit</button>
+    </div>
+
     <div class="quick-add">
       <div class="input-group">
         <input type="text" id="urlInput" placeholder="Paste link to download…" spellcheck="false" />
@@ -39,6 +44,23 @@
         <span>Video sniffer button</span>
         <input type="checkbox" id="snifferToggle" />
       </label>
+      <label class="toggle-row" id="siteExcludeRow" style="display: none;">
+        <span>Never capture on this site (<b id="currentSiteDomain"></b>)</span>
+        <input type="checkbox" id="siteExcludeToggle" />
+      </label>
+      <div class="setting-row">
+        <span>Min file size</span>
+        <select id="minSizeSelect" class="select-sm">
+          <option value="0">All files (0 MB)</option>
+          <option value="5">5 MB</option>
+          <option value="20">20 MB</option>
+          <option value="50">50 MB</option>
+          <option value="100">100 MB</option>
+        </select>
+      </div>
+      <div class="bypass-hint">
+        💡 Tip: Hold <kbd>Alt</kbd> while clicking a link to bypass GRabbit.
+      </div>
     </div>
 
     <div class="media-section">
