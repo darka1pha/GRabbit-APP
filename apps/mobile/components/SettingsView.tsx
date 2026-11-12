@@ -58,6 +58,11 @@ export function SettingsView() {
       Alert.alert(t('set.upToDate'), `GRabbit Mobile v${res.currentVersion} is already up to date.`);
     } else if (res.state === 'error' && res.error) {
       Alert.alert(t('dl.error'), res.error);
+    } else if (res.state === 'installing') {
+      Alert.alert(
+        t('set.updateReady'),
+        'The update package installer has been launched. If prompted, please allow "Install unknown apps" for GRabbit in Android Settings.'
+      );
     }
   };
 
@@ -373,7 +378,7 @@ export function SettingsView() {
                   : updateStatus.state === 'downloading'
                   ? t('set.downloadingUpdate', { percent: updateStatus.progressPercent ?? 0 })
                   : updateStatus.state === 'installing'
-                  ? 'Launching installer…'
+                  ? (updateStatus.localUri ? 'Update ready. Tap Install to open package installer.' : 'Launching installer…')
                   : updateStatus.state === 'up-to-date'
                   ? t('set.upToDate')
                   : updateStatus.state === 'error'
@@ -397,6 +402,8 @@ export function SettingsView() {
                   ? 'Checking…'
                   : updateStatus.state === 'downloading'
                   ? `${updateStatus.progressPercent ?? 0}%`
+                  : updateStatus.state === 'installing'
+                  ? 'Install'
                   : t('app.update')}
               </Text>
             </TouchableOpacity>
