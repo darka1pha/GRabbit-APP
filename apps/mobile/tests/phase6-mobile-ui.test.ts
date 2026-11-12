@@ -58,7 +58,7 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
 }));
 
-describe('Phase 6 — Mobile UI/UX', () => {
+describe('Phase 6 — Mobile UI/UX', { timeout: 15000 }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

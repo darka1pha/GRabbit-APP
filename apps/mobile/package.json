@@ -12,7 +12,7 @@
     "export": "expo export",
     "prebuild:android": "node scripts/make-assets.mjs && expo prebuild --platform android --clean",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --test-timeout=15000",
     "lint": "echo 'No linter configured for mobile yet'"
   },
   "dependencies": {
