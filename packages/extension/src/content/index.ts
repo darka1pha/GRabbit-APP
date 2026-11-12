@@ -5,6 +5,7 @@ import {
   extractFilenameFromUrl,
   isDirectMediaFileUrl,
   isStreamingMediaUrl,
+  isHlsOrDashUrl,
   shouldInterceptDownload,
 } from '../shared/config';
 import type { ExtensionConfig, ExtractedLink } from '../types/extension';
@@ -252,7 +253,18 @@ function attachFloatingDownloadButton(mediaEl: HTMLMediaElement, streamUrl: stri
   parent.appendChild(container);
 }
 
+function isCurrentSiteExcluded(): boolean {
+  const host = window.location.hostname.toLowerCase();
+  return (currentConfig.excludedDomains || []).some((d) => {
+    const target = d.trim().toLowerCase();
+    if (!target) return false;
+    return host === target || host.endsWith('.' + target);
+  });
+}
+
 function inspectMediaElement(el: HTMLMediaElement): void {
+  if (isCurrentSiteExcluded() || !snifferEnabled) return;
+
   let rawSrc = el.currentSrc || el.src;
   if (!rawSrc) {
     const source = el.querySelector<HTMLSourceElement>('source');
@@ -263,11 +275,12 @@ function inspectMediaElement(el: HTMLMediaElement): void {
 
   const pageUrl = window.location.href;
   const isStreamingSite = isStreamingMediaUrl(pageUrl);
+  const isHlsDash = isHlsOrDashUrl(rawSrc);
 
-  // For MSE blob: streams (YouTube, Instagram, TikTok, X, Twitch, Vimeo, etc.)
-  // or streaming platform video elements, use the page URL so yt-dlp resolves it.
+  // For HLS/DASH manifest URLs (.m3u8/.mpd), pass the manifest directly (yt-dlp handles them).
+  // For MSE blob: streams or streaming platform pages, use the page URL.
   let targetUrl = '';
-  if (rawSrc && rawSrc.startsWith('http') && !isStreamingSite) {
+  if (rawSrc && (isHlsDash || (rawSrc.startsWith('http') && !isStreamingSite))) {
     targetUrl = rawSrc;
   } else if ((rawSrc && rawSrc.startsWith('blob:')) || isStreamingSite) {
     targetUrl = pageUrl;
@@ -275,12 +288,16 @@ function inspectMediaElement(el: HTMLMediaElement): void {
 
   if (targetUrl && targetUrl.startsWith('http')) {
     const isVideo = el instanceof HTMLVideoElement;
-    const height = isVideo && el.videoHeight ? `${el.videoHeight}p` : isVideo ? 'HD Video' : 'Audio';
+    let quality = isVideo && el.videoHeight ? `${el.videoHeight}p` : isVideo ? 'HD Video' : 'Audio';
+    if (isHlsDash) {
+      quality = rawSrc.toLowerCase().includes('.m3u8') ? 'HLS Stream (.m3u8)' : 'DASH Manifest (.mpd)';
+    }
+
     const stream: DetectedMediaStream = {
       url: targetUrl,
       title: getMediaTitle(),
       format: isVideo ? 'video' : 'audio',
-      quality: height,
+      quality,
     };
 
     notifyMediaDetected(stream);
@@ -289,11 +306,22 @@ function inspectMediaElement(el: HTMLMediaElement): void {
 }
 
 function scanMediaElements(): void {
+  if (isCurrentSiteExcluded() || !snifferEnabled) return;
+
   const medias = document.querySelectorAll<HTMLMediaElement>('video, audio');
   for (const media of Array.from(medias)) {
     inspectMediaElement(media);
     media.addEventListener('play', () => inspectMediaElement(media), { once: true });
     media.addEventListener('loadedmetadata', () => inspectMediaElement(media), { once: true });
+  }
+
+  // Also query <source> tags with HLS/DASH manifests
+  const sources = document.querySelectorAll<HTMLSourceElement>('source[src*=".m3u8"], source[src*=".mpd"]');
+  for (const srcEl of Array.from(sources)) {
+    const parentMedia = srcEl.closest<HTMLMediaElement>('video, audio');
+    if (parentMedia) {
+      inspectMediaElement(parentMedia);
+    }
   }
 
   // Also detect supported streaming pages even before <video> finishes mounting
@@ -307,18 +335,74 @@ function scanMediaElements(): void {
   }
 }
 
-// Observe DOM mutations for dynamically inserted video/audio elements (YouTube, Twitch, Netflix, etc.)
-const observer = new MutationObserver(() => {
-  scanMediaElements();
+// ---------------------------------------------------------------------------
+// Debounced & Tab-Visibility Aware MutationObserver (Item 7.1)
+// ---------------------------------------------------------------------------
+
+let scanTimeout: any = null;
+function scheduleMediaScan(): void {
+  if (scanTimeout) clearTimeout(scanTimeout);
+  scanTimeout = setTimeout(() => {
+    scanMediaElements();
+  }, 250);
+}
+
+function hasMediaNodes(nodes: NodeList): boolean {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const el = node as Element;
+    const tag = el.tagName?.toLowerCase();
+    if (tag === 'video' || tag === 'audio' || tag === 'source') return true;
+    if (el.querySelector?.('video, audio, source')) return true;
+  }
+  return false;
+}
+
+const observer = new MutationObserver((mutations) => {
+  let hasMedia = false;
+  for (const m of mutations) {
+    if (m.addedNodes && hasMediaNodes(m.addedNodes)) {
+      hasMedia = true;
+      break;
+    }
+  }
+  if (hasMedia) {
+    scheduleMediaScan();
+  }
+});
+
+let isObserving = false;
+
+function startObserver(): void {
+  if (isObserving || isCurrentSiteExcluded() || !snifferEnabled || !document.body) return;
+  observer.observe(document.body, { childList: true, subtree: true });
+  isObserving = true;
+}
+
+function stopObserver(): void {
+  if (!isObserving) return;
+  observer.disconnect();
+  isObserving = false;
+}
+
+// Disconnect observer when page is hidden in background tab to save CPU/battery, reconnect on visible
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    stopObserver();
+  } else if (document.visibilityState === 'visible') {
+    startObserver();
+    scheduleMediaScan();
+  }
 });
 
 if (document.body) {
-  observer.observe(document.body, { childList: true, subtree: true });
-  scanMediaElements();
+  startObserver();
+  scheduleMediaScan();
 } else {
   document.addEventListener('DOMContentLoaded', () => {
-    observer.observe(document.body, { childList: true, subtree: true });
-    scanMediaElements();
+    startObserver();
+    scheduleMediaScan();
   });
 }
 

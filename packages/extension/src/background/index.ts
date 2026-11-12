@@ -3,6 +3,8 @@ import {
   compareSemver,
   extractFileExtension,
   extractFilenameFromUrl,
+  isHlsOrDashUrl,
+  isLoopbackHost,
   loadExtensionConfig,
   saveExtensionConfig,
   shouldInterceptDownload,
@@ -116,14 +118,36 @@ async function checkExtensionUpdate(autoInstall = true): Promise<ExtensionUpdate
 const tabMediaMap = new Map<number, DetectedMediaStream[]>();
 const interceptedDownloadIds = new Set<number>();
 
-// Initialize context menus and inject content scripts into open tabs on install/update
+// Initialize context menus, connection badge, and inject content scripts into open tabs on install/update
 chrome.runtime.onInstalled.addListener(() => {
   setupContextMenus();
   void injectIntoOpenTabs();
+  void updateConnectionBadge();
 });
 
-// Ensure context menus exist on service worker wakeup
+if (chrome.runtime.onStartup) {
+  chrome.runtime.onStartup.addListener(() => {
+    void updateConnectionBadge();
+  });
+}
+
+// Ensure context menus exist and badge is updated on service worker wakeup
 setupContextMenus();
+void updateConnectionBadge();
+
+// Periodic connection badge refresh (Item 7.3)
+try {
+  if (typeof chrome !== 'undefined' && chrome.alarms) {
+    chrome.alarms.create('grabbit_badge_poll', { periodInMinutes: 1 });
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === 'grabbit_badge_poll') {
+        void updateConnectionBadge();
+      }
+    });
+  }
+} catch {
+  // ignore
+}
 
 async function injectIntoOpenTabs(): Promise<void> {
   try {
@@ -175,8 +199,18 @@ function setupContextMenus(): void {
   }
 }
 
-async function getCookiesHeader(url: string): Promise<string> {
+/**
+ * Forward browser cookies to desktop RPC.
+ * Item 7.2: Plain HTTP forwarding is strictly loopback-only (127.0.0.1 / localhost)
+ * by default. Remote bridge hosts do not receive cookies unless allowRemoteCookies is opted in.
+ */
+async function getCookiesHeader(url: string, config?: ExtensionConfig): Promise<string> {
   try {
+    if (config) {
+      if (!isLoopbackHost(config.bridgeHost) && !config.allowRemoteCookies) {
+        return '';
+      }
+    }
     if (chrome.cookies && chrome.cookies.getAll) {
       const cookies = await chrome.cookies.getAll({ url });
       if (cookies && cookies.length > 0) {
@@ -187,6 +221,43 @@ async function getCookiesHeader(url: string): Promise<string> {
     // Ignore cookie retrieval failure
   }
   return '';
+}
+
+/**
+ * Item 7.3: Update toolbar action icon badge with connection & pairing status:
+ * - Empty ("") with green tint when connected and authenticated.
+ * - "PAIR" with orange tint when desktop is reachable but authentication token is invalid.
+ * - "OFF" with red tint when desktop RPC is unreachable / offline.
+ */
+export async function updateConnectionBadge(): Promise<void> {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return;
+    const config = await loadExtensionConfig();
+    const rpc = new ExtensionRpcClient(config);
+    const ping = await rpc.ping(1200);
+
+    if (ping.ok && ping.data?.authenticated) {
+      await chrome.action.setBadgeText({ text: '' });
+      await chrome.action.setBadgeBackgroundColor({ color: '#10b981' });
+      if (chrome.action.setTitle) {
+        await chrome.action.setTitle({ title: 'GRabbit Companion (Connected)' });
+      }
+    } else if (ping.ok && !ping.data?.authenticated) {
+      await chrome.action.setBadgeText({ text: 'PAIR' });
+      await chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' });
+      if (chrome.action.setTitle) {
+        await chrome.action.setTitle({ title: 'GRabbit Companion (Needs Pairing - Check Token)' });
+      }
+    } else {
+      await chrome.action.setBadgeText({ text: 'OFF' });
+      await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+      if (chrome.action.setTitle) {
+        await chrome.action.setTitle({ title: 'GRabbit Companion (Desktop Offline)' });
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function showNotification(title: string, message: string): void {
@@ -226,7 +297,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       return;
     }
 
-    const cookies = await getCookiesHeader(targetUrl);
+    const cookies = await getCookiesHeader(targetUrl, config);
     const res = await rpc.addDownload({
       url: targetUrl,
       referrer: info.pageUrl || tab?.url,
@@ -291,7 +362,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const pageUrl = tab?.url || info.pageUrl;
     if (!pageUrl) return;
 
-    const cookies = await getCookiesHeader(pageUrl);
+    const cookies = await getCookiesHeader(pageUrl, config);
     const res = await rpc.addDownload({
       url: pageUrl,
       referrer: pageUrl,
@@ -348,7 +419,7 @@ async function tryInterceptDownload(
   }
 
   const rpc = new ExtensionRpcClient(config);
-  const cookies = await getCookiesHeader(url);
+  const cookies = await getCookiesHeader(url, config);
   const cleanFileName = rawFilename
     ? rawFilename.replace(/.*[/\\]/, '')
     : extractFilenameFromUrl(url) || extractFilenameFromUrl(originalUrl);
@@ -449,7 +520,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     void (async () => {
       const config = await loadExtensionConfig();
       const rpc = new ExtensionRpcClient(config);
-      const cookies = payload.cookies || (await getCookiesHeader(payload.url));
+      const rawCookies = payload.cookies || (await getCookiesHeader(payload.url, config));
+      const cookies = !isLoopbackHost(config.bridgeHost) && !config.allowRemoteCookies ? '' : rawCookies;
       const res = await rpc.addDownload({
         url: payload.url,
         fileName: payload.fileName,
@@ -490,6 +562,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const s = await rpc.status();
         if (s.ok) statusData = s.data;
       }
+      void updateConnectionBadge();
       sendResponse({
         ok: ping.ok,
         authenticated: ping.data?.authenticated ?? false,
@@ -520,6 +593,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     const patch = message.payload as Partial<ExtensionConfig>;
     void (async () => {
       const updated = await saveExtensionConfig(patch);
+      void updateConnectionBadge();
       sendResponse({ ok: true, config: updated });
     })();
     return true;
