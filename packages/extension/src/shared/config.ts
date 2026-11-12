@@ -71,7 +71,7 @@ export function isDirectMediaFileUrl(urlStr: string): boolean {
 
 export function isHlsOrDashUrl(urlStr: string): boolean {
   if (!urlStr) return false;
-  const clean = urlStr.toLowerCase().split('?')[0];
+  const clean = urlStr.toLowerCase().split('?')[0].split('#')[0].trim();
   return clean.endsWith('.m3u8') || clean.endsWith('.mpd');
 }
 
@@ -236,12 +236,12 @@ export function shouldInterceptDownload(
     }
   }
 
-  const allowed = new Set(config.interceptExtensions.map((e) => e.trim().toLowerCase().replace(/^\./, '')));
-
-  // HLS and DASH manifests (.m3u8, .mpd) are always interceptable for desktop yt-dlp remuxing
-  if (isHlsOrDashUrl(url) || (originalUrl && isHlsOrDashUrl(originalUrl))) {
+  // Always intercept HLS (.m3u8) and DASH (.mpd) manifest streams automatically (Item 7.5)
+  if (isHlsOrDashUrl(url) || isHlsOrDashUrl(filename) || (originalUrl && isHlsOrDashUrl(originalUrl))) {
     return true;
   }
+
+  const allowed = new Set(config.interceptExtensions.map((e) => e.trim().toLowerCase().replace(/^\./, '')));
 
   const candidates = [
     extractFileExtension(filename),
@@ -250,7 +250,7 @@ export function shouldInterceptDownload(
   ].filter(Boolean);
 
   for (const ext of candidates) {
-    if (allowed.has(ext) || ext === 'm3u8' || ext === 'mpd') {
+    if (allowed.has(ext)) {
       return true;
     }
   }

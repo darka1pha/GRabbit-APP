@@ -96,12 +96,12 @@ declare global {
       };
       const onStartup: {
         addListener(callback: () => void): void;
-      };
+      } | undefined;
     }
 
     namespace action {
       function setBadgeText(details: { text: string; tabId?: number }): Promise<void>;
-      function setBadgeBackgroundColor(details: { color: string | [number, number, number, number]; tabId?: number }): Promise<void>;
+      function setBadgeBackgroundColor(details: { color: string; tabId?: number }): Promise<void>;
       function setTitle(details: { title: string; tabId?: number }): Promise<void>;
     }
 
@@ -111,10 +111,7 @@ declare global {
         scheduledTime: number;
         periodInMinutes?: number;
       }
-      function create(
-        name: string,
-        alarmInfo: { delayInMinutes?: number; periodInMinutes?: number; when?: number }
-      ): void;
+      function create(name: string, alarmInfo: { periodInMinutes?: number; delayInMinutes?: number }): void;
       const onAlarm: {
         addListener(callback: (alarm: Alarm) => void): void;
       };

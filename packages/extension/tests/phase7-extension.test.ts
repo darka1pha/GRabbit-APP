@@ -210,3 +210,4 @@ describe('Phase 7 — Browser Extension Unit Tests', () => {
     });
   });
 });
+
