@@ -42,3 +42,4 @@ describe('Phase 5 — Desktop Settings & Onboarding', () => {
     });
   });
 });
+

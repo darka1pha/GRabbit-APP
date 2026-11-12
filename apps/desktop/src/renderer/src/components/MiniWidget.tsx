@@ -95,3 +95,4 @@ export function MiniWidget({ onExpand }: { onExpand: () => void }) {
     </div>
   );
 }
+
