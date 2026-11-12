@@ -9,9 +9,11 @@ import {
   Moon,
   Plus,
   RotateCw,
+  Search,
   Settings,
   Sparkles,
   Sun,
+  TvMinimal,
 } from 'lucide-react';
 import { CATEGORIES, type Category, type ClipboardLink, type UpdateStatusInfo } from '../../shared/types';
 import { createTranslator, I18nContext, useI18n, type MessageKey } from './i18n';
@@ -19,6 +21,10 @@ import { api, AppProvider, useApp } from './state';
 import { useDownloadsAggregate } from './downloads-store';
 import { formatSpeed, isHttpUrl, looksLikeDirectFile } from './format';
 import { CategoryIcon, ProgressBar, Toasts } from './components/ui';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { MiniWidget } from './components/MiniWidget';
+import { CommandPalette } from './components/CommandPalette';
+import { OnboardingModal } from './components/OnboardingModal';
 import { GrabView } from './views/GrabView';
 import { DownloadsView } from './views/DownloadsView';
 
@@ -108,6 +114,15 @@ function Shell() {
   const [clipboardLink, setClipboardLink] = useState<ClipboardLink | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
   const [draggingOverWindow, setDraggingOverWindow] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [miniMode, setMiniMode] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    void api.app.isMiniMode().then(setMiniMode);
+    const offMini = api.app.onMiniModeChanged((m) => setMiniMode(m));
+    return offMini;
+  }, []);
 
   useEffect(() => {
     const unsub = api.updater.onStatus((status) => {
@@ -165,6 +180,9 @@ function Shell() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         setAddDialog({});
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
       }
     };
     window.addEventListener('paste', onPaste);
@@ -186,6 +204,14 @@ function Shell() {
   }, [downloads]);
 
   if (!settings) return null;
+
+  if (miniMode) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <MiniWidget onExpand={() => void api.app.toggleMiniMode(false)} />
+      </I18nContext.Provider>
+    );
+  }
 
   const navItem = (id: View, icon: React.ReactNode, label: string, count?: number) => {
     const isActive = view === id && (id !== 'downloads' || category === 'all');
@@ -250,40 +276,44 @@ function Shell() {
               <Plus size={13} />
               <span>{t('dl.add')}</span>
             </button>
+            {(updateStatus?.state === 'available' ||
+              updateStatus?.state === 'downloading' ||
+              updateStatus?.state === 'downloaded') && (
+              <button
+                className="quick-pill btn ghost accent-pill"
+                disabled={updateStatus?.state === 'downloading'}
+                onClick={async () => {
+                  if (updateStatus?.state === 'downloaded') {
+                    await api.updater.install();
+                    return;
+                  }
+                  if (updateStatus?.state === 'available') {
+                    await api.updater.download();
+                  }
+                }}
+                title={t('app.update')}
+              >
+                {updateStatus?.state === 'downloading' ? (
+                  <LoaderCircle size={13} className="spin" />
+                ) : (
+                  <RotateCw size={13} />
+                )}
+                <span>
+                  {updateStatus?.state === 'downloading'
+                    ? `${updateStatus.progressPercent ?? 0}%`
+                    : updateStatus?.state === 'downloaded'
+                    ? t('set.restartAndInstall')
+                    : t('app.update')}
+                </span>
+              </button>
+            )}
             <button
               className="quick-pill btn ghost"
-              disabled={updateStatus?.state === 'checking' || updateStatus?.state === 'downloading'}
-              onClick={async () => {
-                if (updateStatus?.state === 'downloaded') {
-                  await api.updater.install();
-                  return;
-                }
-                if (updateStatus?.state === 'available') {
-                  await api.updater.download();
-                  return;
-                }
-                const st = await api.updater.check();
-                setUpdateStatus(st);
-                if (st.state === 'not-available') {
-                  toast(`${t('set.upToDate')} (v${st.version || ''})`, 'success');
-                }
-              }}
-              title={t('set.checkForUpdates')}
+              onClick={() => setCommandPaletteOpen(true)}
+              title="Command Palette (Ctrl+K)"
             >
-              {updateStatus?.state === 'checking' || updateStatus?.state === 'downloading' ? (
-                <LoaderCircle size={13} className="spin" />
-              ) : (
-                <RotateCw size={13} />
-              )}
-              <span>
-                {updateStatus?.state === 'checking'
-                  ? t('set.checkingUpdates')
-                  : updateStatus?.state === 'downloading'
-                  ? `${updateStatus.progressPercent ?? 0}%`
-                  : updateStatus?.state === 'downloaded'
-                  ? t('set.restartAndInstall')
-                  : t('app.update')}
-              </span>
+              <Search size={13} />
+              <span className="kbd">Ctrl+K</span>
             </button>
             <button
               className="quick-pill btn ghost"
@@ -292,6 +322,13 @@ function Shell() {
             >
               <Sparkles size={13} />
               <span className="kbd">Ctrl+Alt+G</span>
+            </button>
+            <button
+              className="quick-pill btn ghost icon-pill"
+              onClick={() => void api.app.toggleMiniMode(true)}
+              title={t('tray.miniMode')}
+            >
+              <TvMinimal size={13} />
             </button>
             <button
               className="quick-pill btn ghost icon-pill"
@@ -358,23 +395,25 @@ function Shell() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
             >
-              {view === 'grab' && (
-                <GrabView
-                  pendingInput={grabInput}
-                  clipboardLink={clipboardLink}
-                  onConsumePending={() => setGrabInput(null)}
-                  onOpenAddDialog={(url) => setAddDialog({ url })}
-                  onAdded={() => {
-                    setCategory('all');
-                    setView('downloads');
-                  }}
-                />
-              )}
-              {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
-              <Suspense fallback={null}>
-                {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
-                {view === 'settings' && <SettingsView />}
-              </Suspense>
+              <ErrorBoundary fallbackTitle="View Rendering Error">
+                {view === 'grab' && (
+                  <GrabView
+                    pendingInput={grabInput}
+                    clipboardLink={clipboardLink}
+                    onConsumePending={() => setGrabInput(null)}
+                    onOpenAddDialog={(url) => setAddDialog({ url })}
+                    onAdded={() => {
+                      setCategory('all');
+                      setView('downloads');
+                    }}
+                  />
+                )}
+                {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
+                <Suspense fallback={null}>
+                  {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
+                  {view === 'settings' && <SettingsView initialSection={settingsSection} />}
+                </Suspense>
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </main>
@@ -414,6 +453,28 @@ function Shell() {
           />
         </Suspense>
       )}
+
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        onNavigate={(v, s) => {
+          setView(v);
+          if (s) setSettingsSection(s);
+        }}
+        onOpenAdd={() => setAddDialog({})}
+        onSelectDownload={(d) => {
+          setView('downloads');
+          setCategory('all');
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('select-download', { detail: d.id }));
+          }, 50);
+        }}
+      />
+
+      {settings && settings.onboarded === false && (
+        <OnboardingModal onClose={() => void updateSettings({ onboarded: true })} />
+      )}
+
       <Toasts />
     </I18nContext.Provider>
   );
