@@ -161,7 +161,7 @@ export function DownloadsView({
   onAdd,
 }: {
   category: Category | 'all';
-  onAdd(url?: string): void;
+  onAdd(url?: string, mode?: 'single' | 'batch' | 'pattern'): void;
 }) {
   const { t, language } = useI18n();
   const { downloads, queues, refreshQueues, toast } = useApp();
@@ -871,8 +871,11 @@ export function DownloadsView({
               </button>
             )}
           </div>
-          <button className="btn primary" onClick={() => onAdd()}>
+          <button className="btn primary" onClick={() => onAdd('', 'single')}>
             <Plus size={16} /> <span className="hide-narrow">{t('dl.add')}</span>
+          </button>
+          <button className="btn" onClick={() => onAdd('', 'batch')} title={t('dl.addBatch')}>
+            <Layers size={15} /> <span className="hide-narrow">{t('dl.addBatch')}</span>
           </button>
           <div className="divider" />
           <button className="btn ghost" title={t('dl.resumeAll')} onClick={() => void run(() => api.downloads.resumeAll())}>
@@ -1139,9 +1142,14 @@ export function DownloadsView({
             </div>
             <h3>{t('dl.empty')}</h3>
             <p>{t('dl.emptyHint')}</p>
-            <button className="btn primary" style={{ marginTop: 10 }} onClick={() => onAdd()}>
-              <Plus size={16} /> {t('dl.add')}
-            </button>
+            <div className="row" style={{ gap: 8, marginTop: 12 }}>
+              <button className="btn primary" onClick={() => onAdd('', 'single')}>
+                <Plus size={16} /> {t('dl.add')}
+              </button>
+              <button className="btn" onClick={() => onAdd('', 'batch')}>
+                <Layers size={16} /> {t('dl.addBatch')}
+              </button>
+            </div>
           </div>
         ) : (
           <table

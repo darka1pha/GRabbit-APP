@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import {
   AudioLines,
   Download,
+  Layers,
   Link,
   Moon,
   Pause,
@@ -37,7 +38,7 @@ export function CommandPalette({
   isOpen: boolean;
   onClose: () => void;
   onNavigate: (view: 'grab' | 'downloads' | 'recognize' | 'settings', section?: string) => void;
-  onOpenAdd: () => void;
+  onOpenAdd: (mode?: 'single' | 'batch' | 'pattern') => void;
   onSelectDownload?: (item: DownloadItem) => void;
 }) {
   const { t, language } = useI18n();
@@ -66,7 +67,18 @@ export function CommandPalette({
         icon: <Plus size={16} />,
         action: () => {
           onClose();
-          onOpenAdd();
+          onOpenAdd('single');
+        },
+      },
+      {
+        id: 'action-add-batch',
+        title: t('dl.addBatch'),
+        subtitle: t('add.modeBatch'),
+        category: t('palette.actions') ?? 'Actions',
+        icon: <Layers size={16} />,
+        action: () => {
+          onClose();
+          onOpenAdd('batch');
         },
       },
       {

@@ -109,7 +109,7 @@ function Shell() {
 
   const [view, setView] = useState<View>('grab');
   const [category, setCategory] = useState<Category | 'all'>('all');
-  const [addDialog, setAddDialog] = useState<{ url?: string } | null>(null);
+  const [addDialog, setAddDialog] = useState<{ url?: string; mode?: 'single' | 'batch' | 'pattern' } | null>(null);
   const [grabInput, setGrabInput] = useState<string | null>(null);
   const [clipboardLink, setClipboardLink] = useState<ClipboardLink | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
@@ -408,7 +408,7 @@ function Shell() {
                     }}
                   />
                 )}
-                {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
+                {view === 'downloads' && <DownloadsView category={category} onAdd={(url, mode) => setAddDialog({ url, mode })} />}
                 <Suspense fallback={null}>
                   {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
                   {view === 'settings' && <SettingsView initialSection={settingsSection} />}
@@ -445,6 +445,7 @@ function Shell() {
         <Suspense fallback={null}>
           <AddDownloadDialog
             initialUrl={addDialog.url}
+            initialMode={addDialog.mode}
             onClose={() => setAddDialog(null)}
             onOpenInGrab={(url) => {
               setAddDialog(null);
@@ -461,7 +462,7 @@ function Shell() {
           setView(v);
           if (s) setSettingsSection(s);
         }}
-        onOpenAdd={() => setAddDialog({})}
+        onOpenAdd={(mode) => setAddDialog({ mode })}
         onSelectDownload={(d) => {
           setView('downloads');
           setCategory('all');
