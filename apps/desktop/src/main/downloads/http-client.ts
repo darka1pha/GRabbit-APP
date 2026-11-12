@@ -1,6 +1,6 @@
 import http, { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import https from 'node:https';
-import { HttpStatusError, InvalidUrlError } from '../media/errors';
+import { HttpStatusError, InvalidUrlError, JobCancelledError } from '../media/errors';
 
 const MAX_REDIRECTS = 10;
 /** A connection that delivers no data for this long is dropped and retried. */
@@ -138,3 +138,79 @@ export function headerValue(headers: IncomingHttpHeaders, name: string): string 
   const value = headers[name.toLowerCase()];
   return Array.isArray(value) ? value[0] : value;
 }
+
+/**
+ * Limits concurrent connections to the same host so multiple connections
+ * or tasks do not overwhelm the remote server or trigger rate-limiting.
+ */
+export class HostConnectionPool {
+  private activePerHost = new Map<string, number>();
+  private waitingPerHost = new Map<string, Array<() => void>>();
+
+  constructor(private readonly maxPerHost = 8) {}
+
+  public async acquire(host: string, signal?: AbortSignal): Promise<() => void> {
+    const key = host.toLowerCase();
+    if (signal?.aborted) throw new JobCancelledError();
+
+    const current = this.activePerHost.get(key) ?? 0;
+    if (current < this.maxPerHost) {
+      this.activePerHost.set(key, current + 1);
+      return this.createRelease(key);
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      let dispatched = false;
+      const onAbort = () => {
+        if (dispatched) return;
+        const waiters = this.waitingPerHost.get(key);
+        if (waiters) {
+          const idx = waiters.indexOf(dispatch);
+          if (idx >= 0) waiters.splice(idx, 1);
+        }
+        reject(new JobCancelledError());
+      };
+
+      const dispatch = () => {
+        dispatched = true;
+        signal?.removeEventListener('abort', onAbort);
+        resolve(this.createRelease(key));
+      };
+
+      signal?.addEventListener('abort', onAbort, { once: true });
+      let waiters = this.waitingPerHost.get(key);
+      if (!waiters) {
+        waiters = [];
+        this.waitingPerHost.set(key, waiters);
+      }
+      waiters.push(dispatch);
+    });
+  }
+
+  private createRelease(key: string): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const waiters = this.waitingPerHost.get(key);
+      if (waiters && waiters.length > 0) {
+        const next = waiters.shift()!;
+        next();
+      } else {
+        const current = this.activePerHost.get(key) ?? 1;
+        if (current <= 1) this.activePerHost.delete(key);
+        else this.activePerHost.set(key, current - 1);
+      }
+    };
+  }
+
+  public getActiveCount(host: string): number {
+    return this.activePerHost.get(host.toLowerCase()) ?? 0;
+  }
+
+  public getMaxPerHost(): number {
+    return this.maxPerHost;
+  }
+}
+
+export const defaultHostPool = new HostConnectionPool(8);

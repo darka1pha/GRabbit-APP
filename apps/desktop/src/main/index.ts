@@ -1,3 +1,5 @@
+const startupStartTime = performance.now();
+
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
@@ -482,5 +484,6 @@ app.whenReady().then(() => {
     }, 6000);
   }
 
-  logger.info({ version: app.getVersion(), dataDir }, 'GRabbit started');
+  const startupDurationMs = Math.round(performance.now() - startupStartTime);
+  logger.info({ version: app.getVersion(), dataDir, startupDurationMs }, 'GRabbit started');
 });

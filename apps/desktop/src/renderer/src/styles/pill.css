@@ -1,0 +1,183 @@
+/* ------------------------------------------------------------------ floating grab pill */
+
+.grab-pill-container {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.grab-pill-bar {
+  width: 100%;
+  height: 60px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 14px;
+  gap: 10px;
+  -webkit-app-region: drag;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+:root[data-theme='dark'] .grab-pill-bar {
+  background: rgba(21, 24, 33, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.grab-pill-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.grab-pill-brand img {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+
+.grab-pill-glow {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  filter: blur(6px);
+  bottom: 0;
+  right: 0;
+  opacity: 0.8;
+}
+
+.grab-pill-input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.grab-pill-input {
+  width: 100%;
+  height: 40px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13.5px;
+  padding: 0 26px 0 4px;
+}
+
+[dir='rtl'] .grab-pill-input {
+  padding: 0 4px 0 26px;
+}
+
+.grab-pill-input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.grab-pill-clear-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+[dir='rtl'] .grab-pill-clear-btn {
+  right: auto;
+  left: 4px;
+}
+
+.grab-pill-clear-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.grab-pill-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.grab-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 550;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.grab-pill-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+.grab-pill-btn.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px var(--accent-soft);
+}
+
+.grab-pill-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.grab-pill-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.grab-pill-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.grab-pill-close-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}

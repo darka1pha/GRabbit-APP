@@ -19,11 +19,11 @@ import { api, AppProvider, useApp } from './state';
 import { useDownloadsAggregate } from './downloads-store';
 import { formatSpeed, isHttpUrl, looksLikeDirectFile } from './format';
 import { CategoryIcon, ProgressBar, Toasts } from './components/ui';
-import { AddDownloadDialog } from './components/AddDownloadDialog';
 import { GrabView } from './views/GrabView';
 import { DownloadsView } from './views/DownloadsView';
 
-// Views that are not on screen at launch load when first opened
+// Views and modals that are not on screen at launch load when first opened
+const AddDownloadDialog = lazy(() => import('./components/AddDownloadDialog').then((m) => ({ default: m.AddDownloadDialog })));
 const RecognizeView = lazy(() => import('./views/RecognizeView').then((m) => ({ default: m.RecognizeView })));
 const SettingsView = lazy(() => import('./views/SettingsView').then((m) => ({ default: m.SettingsView })));
 import iconUrl from './assets/icon.png';
@@ -403,14 +403,16 @@ function Shell() {
       </div>
 
       {addDialog && (
-        <AddDownloadDialog
-          initialUrl={addDialog.url}
-          onClose={() => setAddDialog(null)}
-          onOpenInGrab={(url) => {
-            setAddDialog(null);
-            openGrab(url);
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddDownloadDialog
+            initialUrl={addDialog.url}
+            onClose={() => setAddDialog(null)}
+            onOpenInGrab={(url) => {
+              setAddDialog(null);
+              openGrab(url);
+            }}
+          />
+        </Suspense>
       )}
       <Toasts />
     </I18nContext.Provider>

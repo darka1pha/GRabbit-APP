@@ -1,0 +1,153 @@
+/* ------------------------------------------------------------------ overlays */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 20, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  animation: fade 0.12s ease;
+  padding: 20px;
+}
+.modal {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  animation: pop 0.14s ease;
+}
+.modal.sm {
+  width: min(440px, 100%);
+}
+.modal.lg {
+  width: min(760px, 100%);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px 6px;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-family: var(--font-display);
+  flex: 1;
+}
+.modal-body {
+  padding: 10px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 18px;
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop {
+  from {
+    transform: scale(0.97);
+    opacity: 0;
+  }
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 210px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+  animation: fade 0.08s ease;
+}
+.context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: start;
+  font-size: 13px;
+}
+.context-menu button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.context-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.context-menu button.danger {
+  color: var(--danger);
+}
+.context-menu hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 2px;
+}
+.context-menu svg {
+  color: var(--muted);
+}
+.context-menu button.danger svg {
+  color: var(--danger);
+}
+
+.toasts {
+  position: fixed;
+  bottom: 18px;
+  inset-inline-end: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 70;
+  max-width: 420px;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  animation: pop 0.15s ease;
+}
+.toast .grow {
+  flex: 1;
+  min-width: 0;
+}
+.toast.success svg.kind {
+  color: var(--success);
+}
+.toast.error svg.kind {
+  color: var(--danger);
+}
+.toast.info svg.kind {
+  color: var(--accent);
+}
+
+@media (max-width: 1100px) {
+  .media-card {
+    grid-template-columns: 220px 1fr;
+  }
+  .hide-narrow {
+    display: none;
+  }
+}

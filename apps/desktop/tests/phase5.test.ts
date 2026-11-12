@@ -140,6 +140,10 @@ describe('Phase 5: Desktop Polish & Windows 11 Native Integration', () => {
     });
 
     it('handles unpackaged environment gracefully without errors', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ tag_name: 'v1.0.0' }),
+      } as Response);
       const statusChangeMock = vi.fn();
       const updater = new AutoUpdaterService({
         getSettings: () => defaultSettings(),

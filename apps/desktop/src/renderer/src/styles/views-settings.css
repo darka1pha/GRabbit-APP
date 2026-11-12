@@ -1,0 +1,56 @@
+/* ------------------------------------------------------------------ settings */
+
+.settings-section {
+  margin-bottom: 18px;
+}
+.settings-section > h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-section .card {
+  padding: 4px 18px;
+}
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+.setting:last-child {
+  border-bottom: none;
+}
+.setting .label {
+  flex: 1;
+  min-width: 0;
+}
+.setting .label b {
+  font-weight: 550;
+  display: block;
+}
+.setting .label span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.setting .control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.setting .control .input {
+  width: 300px;
+}
+.setting .control .input.narrow {
+  width: 96px;
+}
+.setting.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}

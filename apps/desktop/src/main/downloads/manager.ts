@@ -33,6 +33,8 @@ import { ScheduleTracker } from './scheduler';
 const TICK_MS = 500;
 const FLUSH_MS = 250;
 const ACTIVE_STATUSES: DownloadStatus[] = ['starting', 'downloading', 'processing'];
+const TERMINAL_STATUSES: DownloadStatus[] = ['completed', 'error'];
+const MAX_HISTORY_ITEMS = 5000;
 const MAX_AUTO_RESTARTS = 2;
 
 export interface ManagerDeps {
@@ -87,7 +89,9 @@ export class DownloadManager {
   /** Downloads whose progress patches carry live segment data. */
   private watchedSegments = new Set<string>();
   private statusFlags = { hasError: false, hasPaused: false, stale: true };
-  private store: JsonStore<DownloadItem[]>;
+  private activeStore: JsonStore<DownloadItem[]>;
+  private historyStore: JsonStore<DownloadItem[]>;
+  private legacyStore: JsonStore<DownloadItem[]>;
   private queueStore: JsonStore<DownloadQueue[]>;
   private globalLimiter = new RateLimiter();
   private flushTimer: NodeJS.Timeout | null = null;
@@ -99,7 +103,9 @@ export class DownloadManager {
   private pendingAfter: AfterQueueAction | null = null;
 
   constructor(private readonly deps: ManagerDeps) {
-    this.store = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'downloads.json'), 1500);
+    this.activeStore = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'active.json'), 500);
+    this.historyStore = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'history.json'), 2000);
+    this.legacyStore = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'downloads.json'), 1500);
     this.queueStore = new JsonStore<DownloadQueue[]>(join(deps.dataDir, 'queues.json'), 1500);
   }
 
@@ -142,10 +148,27 @@ export class DownloadManager {
 
     const inQueueOrder = new Map<string, Set<string>>();
     for (const q of this.queues.values()) inQueueOrder.set(q.id, new Set(q.order));
-    for (const raw of this.store.load([], Array.isArray)) {
+
+    const legacyPath = join(this.deps.dataDir, 'downloads.json');
+    const hasLegacy = existsSync(legacyPath);
+
+    const rawItems: { source: string; item: unknown }[] = [];
+    for (const raw of this.activeStore.load([], Array.isArray)) {
+      rawItems.push({ source: 'active.json', item: raw });
+    }
+    for (const raw of this.historyStore.load([], Array.isArray)) {
+      rawItems.push({ source: 'history.json', item: raw });
+    }
+    if (hasLegacy) {
+      for (const raw of this.legacyStore.load([], Array.isArray)) {
+        rawItems.push({ source: 'downloads.json', item: raw });
+      }
+    }
+
+    for (const { source, item: raw } of rawItems) {
       const parsed = StoredDownloadItemSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn({ issue: parsed.error.issues[0] }, 'Dropped an unreadable entry from downloads.json');
+        logger.warn({ issue: parsed.error.issues[0] }, `Dropped an unreadable entry from ${source}`);
         continue;
       }
       const item = parsed.data as unknown as DownloadItem;
@@ -168,6 +191,11 @@ export class DownloadManager {
       this.items.set(item.id, item);
       this.order.push(item.id);
     }
+
+    if (hasLegacy && rawItems.length > 0) {
+      this.persistActive();
+      this.persistHistory();
+    }
     this.applySettings(settings);
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     this.pump();
@@ -188,7 +216,11 @@ export class DownloadManager {
       if (item) item.status = entry.stopAs;
       entry.controller.abort(new JobCancelledError());
     }
-    this.store.saveSync(this.snapshot());
+    const active = this.order
+      .map((id) => this.items.get(id)!)
+      .filter((it) => it && !TERMINAL_STATUSES.includes(it.status));
+    this.activeStore.saveSync(active);
+    this.historyStore.saveSync(this.getCappedHistory());
     this.queueStore.saveSync(Array.from(this.queues.values()));
   }
 
@@ -709,7 +741,7 @@ export class DownloadManager {
       userAgent: settings.userAgent,
       maxRetries: settings.maxRetries,
       onProbe: (info) => this.applyProbe(item, info),
-      onPersist: () => this.persist(),
+      onPersist: () => this.persistActive(),
       onUpdate: () => this.markProgress(item),
     });
     entry.http = task;
@@ -779,6 +811,7 @@ export class DownloadManager {
     if (item.totalBytes !== null) item.receivedBytes = item.totalBytes;
     this.finishedSinceIdle++;
     this.markDirty(item);
+    this.persistHistory();
     this.deps.onCompleted(item);
   }
 
@@ -805,6 +838,7 @@ export class DownloadManager {
     item.error = err instanceof Error ? err.message : String(err);
     item.errorCode = codeOf(err);
     logger.error({ id: item.id, url: item.url, err }, 'Download failed');
+    this.persistHistory();
     this.deps.onFailed(item);
   }
 
@@ -872,7 +906,7 @@ export class DownloadManager {
     // Keep the saved state close to reality in case the app is killed
     if (this.running.size > 0 && ++this.ticksSinceSave >= 10) {
       this.ticksSinceSave = 0;
-      this.persist();
+      this.persistActive();
     }
 
     this.checkScheduler();
@@ -977,7 +1011,38 @@ export class DownloadManager {
     }, FLUSH_MS);
   }
 
+  private persistActive(): void {
+    const active = this.order
+      .map((id) => this.items.get(id)!)
+      .filter((it) => it && !TERMINAL_STATUSES.includes(it.status));
+    this.activeStore.save(() => active);
+  }
+
+  private getCappedHistory(): DownloadItem[] {
+    let history = this.order
+      .map((id) => this.items.get(id)!)
+      .filter((it) => it && TERMINAL_STATUSES.includes(it.status));
+
+    if (history.length > MAX_HISTORY_ITEMS) {
+      const dropCount = history.length - MAX_HISTORY_ITEMS;
+      const toDrop = new Set(history.slice(0, dropCount).map((it) => it.id));
+      for (const id of toDrop) {
+        this.items.delete(id);
+        this.limiters.delete(id);
+        this.restarts.delete(id);
+      }
+      this.order = this.order.filter((id) => !toDrop.has(id));
+      history = history.slice(dropCount);
+    }
+    return history;
+  }
+
+  private persistHistory(): void {
+    this.historyStore.save(() => this.getCappedHistory());
+  }
+
   private persist(): void {
-    this.store.save(() => this.snapshot());
+    this.persistActive();
+    this.persistHistory();
   }
 }
