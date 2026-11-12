@@ -158,6 +158,7 @@ export const en = {
   'dl.sortBy': 'Sort by',
   'dl.viewOptions': 'View options',
 
+  'queue.label': 'Queue',
   'queue.title': 'Download Queues',
   'queue.all': 'All Downloads',
   'queue.main': 'Main Queue',
@@ -559,6 +560,7 @@ export const fa: Record<MessageKey, string> = {
   'dl.sortBy': 'مرتب‌سازی',
   'dl.viewOptions': 'گزینه‌های نمایش',
 
+  'queue.label': 'صف',
   'queue.title': 'صف‌های دانلود',
   'queue.all': 'همه دانلودها',
   'queue.main': 'صف اصلی',

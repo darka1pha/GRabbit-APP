@@ -942,22 +942,24 @@ export function DownloadsView({
               className={`queue-menu-trigger ${showQueueMenu ? 'active' : ''}`}
               onClick={() => setShowQueueMenu((v) => !v)}
               title={t('queue.title')}
+              aria-haspopup="listbox"
               aria-expanded={showQueueMenu}
             >
-              {currentQueue ? (
+              <Layers size={14} className="queue-trigger-icon" />
+              <span className="queue-trigger-prefix">{t('queue.label')}:</span>
+              <span className="queue-trigger-name">
+                {currentQueue ? currentQueue.name : t('queue.all')}
+              </span>
+              {currentQueue && (
                 <span
                   className={`queue-dot ${currentQueue.enabled ? 'running' : 'stopped'}`}
                   title={currentQueue.enabled ? t('queue.start') : t('queue.stop')}
                 />
-              ) : (
-                <Layers size={14} />
               )}
-              <span className="queue-menu-trigger-label">
-                {currentQueue ? currentQueue.name : t('queue.all')}
-              </span>
               <span className="queue-badge">{queueCounts[selectedQueueId] ?? 0}</span>
               <ChevronDown
                 size={13}
+                className="queue-trigger-chevron"
                 style={{
                   transform: showQueueMenu ? 'rotate(180deg)' : undefined,
                   transition: 'transform 0.15s ease',
@@ -994,7 +996,21 @@ export function DownloadsView({
 
             {showQueueMenu && (
               <div className="queue-dropdown-popover">
-                <div className="dropdown-popover-header">{t('queue.title')}</div>
+                <div className="queue-popover-header">
+                  <span className="queue-popover-header-title">{t('queue.title')}</span>
+                  <button
+                    type="button"
+                    className="queue-popover-new-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setQueueModal({ queue: null });
+                      setShowQueueMenu(false);
+                    }}
+                  >
+                    <Plus size={11} />
+                    <span>{t('queue.new')}</span>
+                  </button>
+                </div>
 
                 <div
                   role="button"
@@ -1012,106 +1028,93 @@ export function DownloadsView({
                   }}
                 >
                   <div className="queue-dropdown-item-left">
-                    <Layers size={14} />
+                    <Layers size={14} className="queue-item-icon" />
                     <span className="queue-dropdown-item-title">{t('queue.all')}</span>
                   </div>
                   <div className="queue-dropdown-item-right">
                     <span className="queue-badge">{queueCounts['all'] ?? 0}</span>
-                    {selectedQueueId === 'all' && <span style={{ fontSize: 11, fontWeight: 700 }}>✓</span>}
+                    {selectedQueueId === 'all' && <span className="queue-check">✓</span>}
                   </div>
                 </div>
 
                 <div className="dropdown-popover-divider" />
 
-                {queues.map((q) => {
-                  const isSelected = selectedQueueId === q.id;
-                  return (
-                    <div
-                      key={q.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`queue-dropdown-item ${isSelected ? 'active' : ''}`}
-                      onClick={() => {
-                        setSelectedQueueId(q.id);
-                        setShowQueueMenu(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
+                <div className="queue-dropdown-list">
+                  {queues.map((q) => {
+                    const isSelected = selectedQueueId === q.id;
+                    return (
+                      <div
+                        key={q.id}
+                        role="button"
+                        tabIndex={0}
+                        className={`queue-dropdown-item ${isSelected ? 'active' : ''}`}
+                        onClick={() => {
                           setSelectedQueueId(q.id);
                           setShowQueueMenu(false);
-                        }
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const draggedId = e.dataTransfer.getData('text/download-id');
-                        if (!draggedId) return;
-                        const toMove = selected.has(draggedId) ? Array.from(selected) : [draggedId];
-                        void run(async () => {
-                          for (const id of toMove) {
-                            await api.queues.moveItem(id, q.id);
-                          }
-                          toast(t('queue.items', { count: toMove.length }), 'info');
-                        });
-                        setShowQueueMenu(false);
-                      }}
-                    >
-                      <div className="queue-dropdown-item-left">
-                        <span
-                          className={`queue-dot ${q.enabled ? 'running' : 'stopped'}`}
-                          title={q.enabled ? t('queue.start') : t('queue.stop')}
-                        />
-                        <span className="queue-dropdown-item-title" title={q.name}>
-                          {q.name}
-                        </span>
-                      </div>
-                      <div className="queue-dropdown-item-right" onClick={(e) => e.stopPropagation()}>
-                        <span className="queue-badge">{queueCounts[q.id] ?? 0}</span>
-                        <button
-                          type="button"
-                          className={`queue-btn-action ${q.enabled ? 'running' : ''}`}
-                          title={q.enabled ? t('queue.stop') : t('queue.start')}
-                          onClick={() => {
-                            void run(() => (q.enabled ? api.queues.stop(q.id) : api.queues.start(q.id)));
-                          }}
-                        >
-                          {q.enabled ? <Pause size={12} /> : <Play size={12} />}
-                        </button>
-                        <button
-                          type="button"
-                          className="queue-btn-action"
-                          title={t('queue.edit')}
-                          onClick={() => {
-                            setQueueModal({ queue: q });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            setSelectedQueueId(q.id);
                             setShowQueueMenu(false);
-                          }}
-                        >
-                          <Settings size={12} />
-                        </button>
-                        {isSelected && <span style={{ fontSize: 11, fontWeight: 700 }}>✓</span>}
+                          }
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const draggedId = e.dataTransfer.getData('text/download-id');
+                          if (!draggedId) return;
+                          const toMove = selected.has(draggedId) ? Array.from(selected) : [draggedId];
+                          void run(async () => {
+                            for (const id of toMove) {
+                              await api.queues.moveItem(id, q.id);
+                            }
+                            toast(t('queue.items', { count: toMove.length }), 'info');
+                          });
+                          setShowQueueMenu(false);
+                        }}
+                      >
+                        <div className="queue-dropdown-item-left">
+                          <span
+                            className={`queue-dot ${q.enabled ? 'running' : 'stopped'}`}
+                            title={q.enabled ? t('queue.start') : t('queue.stop')}
+                          />
+                          <span className="queue-dropdown-item-title" title={q.name}>
+                            {q.name}
+                          </span>
+                        </div>
+                        <div className="queue-dropdown-item-right" onClick={(e) => e.stopPropagation()}>
+                          <span className="queue-badge">{queueCounts[q.id] ?? 0}</span>
+                          <button
+                            type="button"
+                            className={`queue-btn-action ${q.enabled ? 'running' : ''}`}
+                            title={q.enabled ? t('queue.stop') : t('queue.start')}
+                            onClick={() => {
+                              void run(() => (q.enabled ? api.queues.stop(q.id) : api.queues.start(q.id)));
+                            }}
+                          >
+                            {q.enabled ? <Pause size={12} /> : <Play size={12} />}
+                          </button>
+                          <button
+                            type="button"
+                            className="queue-btn-action"
+                            title={t('queue.edit')}
+                            onClick={() => {
+                              setQueueModal({ queue: q });
+                              setShowQueueMenu(false);
+                            }}
+                          >
+                            <Settings size={12} />
+                          </button>
+                          {isSelected && <span className="queue-check">✓</span>}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-
-                <div className="dropdown-popover-divider" />
-
-                <button
-                  type="button"
-                  className="dropdown-popover-item"
-                  style={{ color: 'var(--accent)', fontWeight: 600, gap: 8 }}
-                  onClick={() => {
-                    setQueueModal({ queue: null });
-                    setShowQueueMenu(false);
-                  }}
-                >
-                  <Plus size={14} />
-                  <span>{t('queue.new')}</span>
-                </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
