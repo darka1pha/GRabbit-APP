@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
@@ -30,6 +30,7 @@ import { api, useApp } from '../state';
 import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '../format';
 import { ContextMenu, FileIcon, MenuEntry, Modal, ProgressBar } from '../components/ui';
 import { QueueConfigModal } from '../components/QueueConfigModal';
+import { downloadStore, useDownloadsAggregate, useLiveDownload, useSegmentWatch } from '../downloads-store';
 
 export type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
 
@@ -64,6 +65,58 @@ function canResume(item: DownloadItem): boolean {
   return item.status === 'paused' || item.status === 'error';
 }
 
+/** Height of one table row in px; must match `.dl-table tr.dl-row td` in styles.css. */
+export const ROW_HEIGHT = 56;
+const OVERSCAN_ROWS = 10;
+
+/**
+ * Which rows of a fixed-row-height list are in (or near) view. Only those are rendered; the
+ * rest of the list is represented by two spacers of the right height.
+ */
+function useVirtualRows(container: RefObject<HTMLElement | null>, count: number): { start: number; end: number } {
+  const [range, setRange] = useState({ start: 0, end: Math.min(count, 40) });
+  useLayoutEffect(() => {
+    const el = container.current;
+    if (!el) return;
+    const update = () => {
+      const start = Math.max(0, Math.floor(el.scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
+      const end = Math.min(count, Math.ceil((el.scrollTop + el.clientHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
+      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      observer.disconnect();
+    };
+  }, [container, count]);
+  return { start: Math.min(range.start, count), end: Math.min(range.end, count) };
+}
+
+/** Row callbacks that keep the same identity for the life of the view, so rows can be memoised. */
+interface RowActions {
+  click(e: React.MouseEvent, item: DownloadItem): void;
+  doubleClick(item: DownloadItem): void;
+  contextMenu(e: React.MouseEvent, item: DownloadItem): void;
+  toggle(item: DownloadItem): void;
+  openFile(item: DownloadItem): void;
+  openFolder(item: DownloadItem): void;
+  remove(item: DownloadItem): void;
+}
+
+/** Speed and count of active downloads in the page header. */
+function ActiveStat({ count }: { count: number }) {
+  const { t, language } = useI18n();
+  const { speed } = useDownloadsAggregate();
+  return (
+    <span className="stat">
+      <Download size={14} /> <b>{formatSpeed(speed, language) || '0 B/s'}</b> · {t('dl.active', { count })}
+    </span>
+  );
+}
+
 type DialogState =
   | { kind: 'remove'; ids: string[]; deleteFiles: boolean }
   | { kind: 'url'; item: DownloadItem }
@@ -79,7 +132,7 @@ export function DownloadsView({
   category: Category | 'all';
   onAdd(url?: string): void;
 }) {
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const { downloads, queues, refreshQueues, toast } = useApp();
   const [selectedQueueId, setSelectedQueueId] = useState<string | 'all'>('all');
   const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
@@ -110,6 +163,16 @@ export function DownloadsView({
     () => inCategory.filter((d) => selectedQueueId === 'all' || (d.queueId || 'main') === selectedQueueId),
     [inCategory, selectedQueueId]
   );
+  // The list only changes with its structure; sorting by a running number re-sorts on a slow timer
+  const [liveSortTick, setLiveSortTick] = useState(0);
+  const sortsByLiveValue = sortBy === 'size' || sortBy === 'progress' || sortBy === 'speed';
+  const anyActive = useMemo(() => downloads.some((d) => ACTIVE.includes(d.status)), [downloads]);
+  useEffect(() => {
+    if (!sortsByLiveValue || !anyActive) return;
+    const timer = setInterval(() => setLiveSortTick((n) => n + 1), 2000);
+    return () => clearInterval(timer);
+  }, [sortsByLiveValue, anyActive]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = inQueue.filter(
@@ -118,7 +181,10 @@ export function DownloadsView({
         (!q || d.fileName.toLowerCase().includes(q) || d.url.toLowerCase().includes(q) || d.media?.title.toLowerCase().includes(q))
     );
     const mult = sortDir === 'asc' ? 1 : -1;
-    return [...filtered].sort((a, b) => {
+    const live = (d: DownloadItem) => (sortsByLiveValue ? (downloadStore.get(d.id) ?? d) : d);
+    return [...filtered].sort((x, y) => {
+      const a = live(x);
+      const b = live(y);
       switch (sortBy) {
         case 'name':
           return a.fileName.localeCompare(b.fileName) * mult;
@@ -133,7 +199,8 @@ export function DownloadsView({
           return (a.createdAt - b.createdAt) * mult;
       }
     });
-  }, [inQueue, filter, query, sortBy, sortDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inQueue, filter, query, sortBy, sortDir, sortsByLiveValue, liveSortTick]);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilter, number> = { all: 0, active: 0, queued: 0, completed: 0, failed: 0 };
@@ -164,7 +231,8 @@ export function DownloadsView({
 
   const selectedItems = visible.filter((d) => selected.has(d.id));
   const single = selectedItems.length === 1 ? selectedItems[0] : null;
-  const totalSpeed = downloads.reduce((s, d) => s + (ACTIVE.includes(d.status) ? d.speed : 0), 0);
+  const rows = useVirtualRows(tableRef, visible.length);
+  const queueNames = useMemo(() => new Map(queues.map((q) => [q.id, q.name])), [queues]);
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -249,7 +317,7 @@ export function DownloadsView({
       {
         label: t('dl.inspectSegments'),
         icon: <Activity size={15} />,
-        disabled: !item.segments || item.segments.length === 0,
+        disabled: item.kind !== 'http' || done,
         onClick: () => setDialog({ kind: 'segments', item }),
       },
       { label: t('dl.verify'), icon: <ShieldCheck size={15} />, disabled: !done, onClick: () => setDialog({ kind: 'verify', item }) },
@@ -286,16 +354,40 @@ export function DownloadsView({
 
   const filters: StatusFilter[] = ['all', 'active', 'queued', 'completed', 'failed'];
 
+  // Rows are memoised: they get one stable set of callbacks that forwards to the latest handlers
+  const latestActions = useRef<RowActions>(null!);
+  latestActions.current = {
+    click: onRowClick,
+    doubleClick: onDoubleClick,
+    contextMenu: (e, item) => {
+      e.preventDefault();
+      if (!selected.has(item.id)) setSelected(new Set([item.id]));
+      setMenu({ x: e.clientX, y: e.clientY, item });
+    },
+    toggle: (item) => void run(() => (canResume(item) ? api.downloads.resume([item.id]) : api.downloads.pause([item.id]))),
+    openFile: (item) => void run(() => api.downloads.openFile(item.id)),
+    openFolder: (item) => void run(() => api.downloads.showInFolder(item.id)),
+    remove: (item) => setDialog({ kind: 'remove', ids: [item.id], deleteFiles: false }),
+  };
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      click: (e, item) => latestActions.current.click(e, item),
+      doubleClick: (item) => latestActions.current.doubleClick(item),
+      contextMenu: (e, item) => latestActions.current.contextMenu(e, item),
+      toggle: (item) => latestActions.current.toggle(item),
+      openFile: (item) => latestActions.current.openFile(item),
+      openFolder: (item) => latestActions.current.openFolder(item),
+      remove: (item) => latestActions.current.remove(item),
+    }),
+    []
+  );
+
   return (
     <div className="dl-layout">
       <div className="dl-head">
         <div className="title-row">
           <h1>{category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}</h1>
-          {counts.active > 0 && (
-            <span className="stat">
-              <Download size={14} /> <b>{formatSpeed(totalSpeed, language) || '0 B/s'}</b> · {t('dl.active', { count: counts.active })}
-            </span>
-          )}
+          {counts.active > 0 && <ActiveStat count={counts.active} />}
           <div style={{ flex: 1 }} />
           <div className="input-with-icon" style={{ width: 260 }}>
             <Search size={15} />
@@ -461,27 +553,25 @@ export function DownloadsView({
               </tr>
             </thead>
             <tbody>
-              {visible.map((item) => (
+              {rows.start > 0 && (
+                <tr className="dl-spacer" aria-hidden="true">
+                  <td colSpan={7} style={{ height: rows.start * ROW_HEIGHT }} />
+                </tr>
+              )}
+              {visible.slice(rows.start, rows.end).map((item) => (
                 <DownloadRow
                   key={item.id}
                   item={item}
                   selected={selected.has(item.id)}
-                  queueName={selectedQueueId === 'all' ? queues.find((q) => q.id === (item.queueId || 'main'))?.name : undefined}
-                  onClick={(e) => onRowClick(e, item)}
-                  onDoubleClick={() => onDoubleClick(item)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    if (!selected.has(item.id)) setSelected(new Set([item.id]));
-                    setMenu({ x: e.clientX, y: e.clientY, item });
-                  }}
-                  onToggle={() =>
-                    void run(() => (canResume(item) ? api.downloads.resume([item.id]) : api.downloads.pause([item.id])))
-                  }
-                  onOpenFile={() => void run(() => api.downloads.openFile(item.id))}
-                  onOpenFolder={() => void run(() => api.downloads.showInFolder(item.id))}
-                  onRemove={() => setDialog({ kind: 'remove', ids: [item.id], deleteFiles: false })}
+                  queueName={selectedQueueId === 'all' ? queueNames.get(item.queueId || 'main') : undefined}
+                  actions={rowActions}
                 />
               ))}
+              {rows.end < visible.length && (
+                <tr className="dl-spacer" aria-hidden="true">
+                  <td colSpan={7} style={{ height: (visible.length - rows.end) * ROW_HEIGHT }} />
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -543,30 +633,27 @@ export function DownloadsView({
   );
 }
 
-function DownloadRow({
-  item,
+/** One table row. Subscribes to its own download, so progress re-renders this row and nothing else. */
+const DownloadRow = memo(function DownloadRow({
+  item: listed,
   selected,
   queueName,
-  onClick,
-  onDoubleClick,
-  onContextMenu,
-  onToggle,
-  onOpenFile,
-  onOpenFolder,
-  onRemove,
+  actions,
 }: {
   item: DownloadItem;
   selected: boolean;
   queueName?: string;
-  onClick(e: React.MouseEvent): void;
-  onDoubleClick(): void;
-  onContextMenu(e: React.MouseEvent): void;
-  onToggle(): void;
-  onOpenFile(): void;
-  onOpenFolder(): void;
-  onRemove(): void;
+  actions: RowActions;
 }) {
   const { t, language } = useI18n();
+  const item = useLiveDownload(listed);
+  const onClick = (e: React.MouseEvent) => actions.click(e, item);
+  const onDoubleClick = () => actions.doubleClick(item);
+  const onContextMenu = (e: React.MouseEvent) => actions.contextMenu(e, item);
+  const onToggle = () => actions.toggle(item);
+  const onOpenFile = () => actions.openFile(item);
+  const onOpenFolder = () => actions.openFolder(item);
+  const onRemove = () => actions.remove(item);
   const f = fraction(item);
   const active = ACTIVE.includes(item.status);
   const title = item.media?.title && item.status !== 'completed' ? item.media.title : item.fileName;
@@ -605,7 +692,7 @@ function DownloadRow({
           : '—';
 
   return (
-    <tr className={selected ? 'selected' : ''} onMouseDown={onClick} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}>
+    <tr className={selected ? 'dl-row selected' : 'dl-row'} onMouseDown={onClick} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}>
       <td>
         <div className="name-cell">
           <FileIcon item={item} />
@@ -666,10 +753,10 @@ function DownloadRow({
       </td>
     </tr>
   );
-}
+});
 
 function DetailsPanel({
-  item,
+  item: listed,
   onClose,
   onCopyUrl,
   onOpenFile,
@@ -684,6 +771,9 @@ function DetailsPanel({
   onInspectSegments(item: DownloadItem): void;
 }) {
   const { t, language } = useI18n();
+  const item = useLiveDownload(listed);
+  // The segment map needs per-segment progress, which is only sent for watched downloads
+  useSegmentWatch(item.kind === 'http' && item.status !== 'completed' ? item.id : null);
   const total = item.totalBytes ?? 0;
   const where = item.filePath ?? `${item.directory}\\${item.fileName}`;
   return (
@@ -983,8 +1073,10 @@ function VerifyDialog({ item, onClose }: { item: DownloadItem; onClose(): void }
   );
 }
 
-function SegmentInspectorModal({ item, onClose }: { item: DownloadItem; onClose(): void }) {
+function SegmentInspectorModal({ item: listed, onClose }: { item: DownloadItem; onClose(): void }) {
   const { t, language } = useI18n();
+  const item = useLiveDownload(listed);
+  useSegmentWatch(item.id);
   const segments = item.segments ?? [];
   const total = item.totalBytes ?? 0;
   const activeCount = item.activeConnections;

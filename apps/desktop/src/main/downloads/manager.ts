@@ -12,6 +12,7 @@ import type {
   Category,
   ChecksumAlgorithm,
   DownloadItem,
+  DownloadProgressPatch,
   DownloadQueue,
   DownloadStatus,
 } from '../../shared/types';
@@ -39,7 +40,10 @@ export interface ManagerDeps {
   tempRoot: string;
   router: PlatformRouter;
   getSettings(): AppSettings;
+  /** Whole items: new downloads and every change other than running progress. */
   onItemsChanged(items: DownloadItem[]): void;
+  /** Running progress of active downloads (small patches, sent every flush). */
+  onItemsProgress?(patches: DownloadProgressPatch[]): void;
   onItemsRemoved(ids: string[]): void;
   onOrderChanged(ids: string[]): void;
   onQueuesChanged?(queues: DownloadQueue[]): void;
@@ -54,6 +58,8 @@ export interface ManagerDeps {
   onAggregateProgress(progress: {
     fraction: number | null;
     active: number;
+    /** Bytes per second across running downloads. */
+    speed: number;
     hasError?: boolean;
     hasPaused?: boolean;
   }): void;
@@ -76,6 +82,11 @@ export class DownloadManager {
   private limiters = new Map<string, RateLimiter>();
   private restarts = new Map<string, number>();
   private dirty = new Set<string>();
+  /** Items whose running numbers changed but nothing else did. */
+  private progressDirty = new Set<string>();
+  /** Downloads whose progress patches carry live segment data. */
+  private watchedSegments = new Set<string>();
+  private statusFlags = { hasError: false, hasPaused: false, stale: true };
   private store: JsonStore<DownloadItem[]>;
   private queueStore: JsonStore<DownloadQueue[]>;
   private globalLimiter = new RateLimiter();
@@ -129,6 +140,8 @@ export class DownloadManager {
       this.queues.set('main', defaultQueues[0]);
     }
 
+    const inQueueOrder = new Map<string, Set<string>>();
+    for (const q of this.queues.values()) inQueueOrder.set(q.id, new Set(q.order));
     for (const raw of this.store.load([], Array.isArray)) {
       const parsed = StoredDownloadItemSchema.safeParse(raw);
       if (!parsed.success) {
@@ -146,9 +159,10 @@ export class DownloadManager {
       if (!item.queueId || !this.queues.has(item.queueId)) {
         item.queueId = 'main';
       }
-      const q = this.queues.get(item.queueId)!;
-      if (!q.order.includes(item.id)) {
-        q.order.push(item.id);
+      const known = inQueueOrder.get(item.queueId)!;
+      if (!known.has(item.id)) {
+        known.add(item.id);
+        this.queues.get(item.queueId)!.order.push(item.id);
       }
 
       this.items.set(item.id, item);
@@ -254,6 +268,7 @@ export class DownloadManager {
       this.insert(item);
       added.push(item);
     }
+    if (added.length > 0) this.persistQueues();
     this.persist();
     this.pump();
     return added;
@@ -301,19 +316,17 @@ export class DownloadManager {
       this.insert(item);
       added.push(item);
     }
+    if (added.length > 0) this.persistQueues();
     this.persist();
     this.pump();
     return added;
   }
 
+  /** Adds a new item (fresh id) to the list and its queue. The caller saves the queues once per batch. */
   private insert(item: DownloadItem): void {
     this.items.set(item.id, item);
     this.order.push(item.id);
-    const q = this.queues.get(item.queueId || 'main');
-    if (q && !q.order.includes(item.id)) {
-      q.order.push(item.id);
-      this.persistQueues();
-    }
+    this.queues.get(item.queueId || 'main')?.order.push(item.id);
     this.markDirty(item);
   }
 
@@ -396,12 +409,16 @@ export class DownloadManager {
       this.limiters.delete(id);
       this.restarts.delete(id);
       this.dirty.delete(id);
+      this.progressDirty.delete(id);
+      this.watchedSegments.delete(id);
       removed.push(id);
     }
-    this.order = this.order.filter((id) => !removed.includes(id));
+    const gone = new Set(removed);
+    this.order = this.order.filter((id) => !gone.has(id));
     for (const q of this.queues.values()) {
-      q.order = q.order.filter((id) => !removed.includes(id));
+      q.order = q.order.filter((id) => !gone.has(id));
     }
+    this.statusFlags.stale = true;
     this.persistQueues();
     if (removed.length > 0) this.deps.onItemsRemoved(removed);
     this.persist();
@@ -481,10 +498,15 @@ export class DownloadManager {
     const globalMax = this.deps.getSettings().maxConcurrent;
     if (this.running.size >= globalMax) return;
 
+    const activeByQueue = new Map<string, number>();
+    for (const id of this.running.keys()) {
+      const queueId = this.items.get(id)?.queueId || 'main';
+      activeByQueue.set(queueId, (activeByQueue.get(queueId) ?? 0) + 1);
+    }
+
     for (const queue of this.queues.values()) {
       if (!queue.enabled) continue;
-      const activeInQueue = Array.from(this.running.keys()).filter((id) => this.items.get(id)?.queueId === queue.id).length;
-      let slots = Math.max(0, queue.maxConcurrent - activeInQueue);
+      let slots = Math.max(0, queue.maxConcurrent - (activeByQueue.get(queue.id) ?? 0));
 
       for (const id of queue.order) {
         if (slots <= 0 || this.running.size >= globalMax) break;
@@ -688,7 +710,7 @@ export class DownloadManager {
       maxRetries: settings.maxRetries,
       onProbe: (info) => this.applyProbe(item, info),
       onPersist: () => this.persist(),
-      onUpdate: () => this.markDirty(item),
+      onUpdate: () => this.markProgress(item),
     });
     entry.http = task;
     await mkdir(item.directory, { recursive: true });
@@ -733,7 +755,7 @@ export class DownloadManager {
     const task = new MediaDownloadTask(item, {
       router: this.deps.router,
       tempRoot: this.deps.tempRoot,
-      onUpdate: () => this.markDirty(item),
+      onUpdate: () => this.markProgress(item),
     });
     const result = await task.run(entry.controller.signal);
 
@@ -826,6 +848,7 @@ export class DownloadManager {
   private tick(): void {
     let received = 0;
     let total = 0;
+    let speed = 0;
     let unknown = false;
 
     for (const [id, entry] of this.running) {
@@ -842,7 +865,8 @@ export class DownloadManager {
       received += item.receivedBytes;
       if (item.totalBytes) total += item.totalBytes;
       else unknown = true;
-      this.dirty.add(id);
+      speed += item.speed || 0;
+      this.progressDirty.add(id);
     }
 
     // Keep the saved state close to reality in case the app is killed
@@ -853,17 +877,23 @@ export class DownloadManager {
 
     this.checkScheduler();
     this.scheduleFlush();
-    let hasError = false;
-    let hasPaused = false;
-    for (const it of this.items.values()) {
-      if (it.status === 'error') hasError = true;
-      if (it.status === 'paused') hasPaused = true;
+    // Scanning every item is only needed after something other than progress changed
+    if (this.statusFlags.stale) {
+      let hasError = false;
+      let hasPaused = false;
+      for (const it of this.items.values()) {
+        if (it.status === 'error') hasError = true;
+        else if (it.status === 'paused') hasPaused = true;
+        if (hasError && hasPaused) break;
+      }
+      this.statusFlags = { hasError, hasPaused, stale: false };
     }
     this.deps.onAggregateProgress({
       fraction: this.running.size === 0 ? null : unknown || total === 0 ? -1 : received / total,
       active: this.running.size,
-      hasError,
-      hasPaused,
+      speed,
+      hasError: this.statusFlags.hasError,
+      hasPaused: this.statusFlags.hasPaused,
     });
   }
 
@@ -890,9 +920,40 @@ export class DownloadManager {
     }
   }
 
+  /** Something about the item changed that the renderer needs the whole item for. */
   private markDirty(item: DownloadItem): void {
     this.dirty.add(item.id);
+    this.statusFlags.stale = true;
     this.scheduleFlush();
+  }
+
+  /** Only the item's running numbers (bytes, speed, stage…) changed. */
+  private markProgress(item: DownloadItem): void {
+    this.progressDirty.add(item.id);
+    this.scheduleFlush();
+  }
+
+  /** Chooses which downloads get live segment data in their progress patches. */
+  public watchSegments(ids: string[]): void {
+    this.watchedSegments = new Set(ids.filter((id) => this.items.has(id)));
+    for (const id of this.watchedSegments) this.progressDirty.add(id);
+    this.scheduleFlush();
+  }
+
+  private progressPatch(item: DownloadItem): DownloadProgressPatch {
+    return {
+      id: item.id,
+      status: item.status,
+      totalBytes: item.totalBytes,
+      receivedBytes: item.receivedBytes,
+      speed: item.speed,
+      eta: item.eta,
+      percent: item.percent,
+      activeConnections: item.activeConnections,
+      retries: item.retries,
+      stage: item.media?.stage,
+      segments: this.watchedSegments.has(item.id) ? item.segments : undefined,
+    };
   }
 
   private scheduleFlush(): void {
@@ -900,8 +961,19 @@ export class DownloadManager {
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
       const changed = [...this.dirty].map((id) => this.items.get(id)).filter((i): i is DownloadItem => Boolean(i));
+      // An item sent whole needs no patch as well
+      const patches: DownloadProgressPatch[] = [];
+      for (const id of this.progressDirty) {
+        const item = this.dirty.has(id) ? undefined : this.items.get(id);
+        if (item) patches.push(this.progressPatch(item));
+      }
       this.dirty.clear();
+      this.progressDirty.clear();
       if (changed.length > 0) this.deps.onItemsChanged(changed);
+      if (patches.length > 0) {
+        if (this.deps.onItemsProgress) this.deps.onItemsProgress(patches);
+        else this.deps.onItemsChanged(patches.map((p) => this.items.get(p.id)!));
+      }
     }, FLUSH_MS);
   }
 

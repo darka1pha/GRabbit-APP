@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { AppSettings, DeepPartial, DownloadItem, DownloadQueue } from '../../shared/types';
+import { downloadStore, useDownloadList } from './downloads-store';
 
 export const api = window.grabbit;
 
@@ -13,6 +14,10 @@ export interface ToastMessage {
 interface AppState {
   settings: AppSettings | null;
   updateSettings(patch: DeepPartial<AppSettings>): Promise<void>;
+  /**
+   * Every download in queue order. Updates when the list changes (add, remove, reorder, status),
+   * not on progress: use `useLiveDownload` for a download's running numbers.
+   */
   downloads: DownloadItem[];
   queues: DownloadQueue[];
   refreshQueues(): Promise<void>;
@@ -27,8 +32,7 @@ let toastId = 0;
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [byId, setById] = useState<Map<string, DownloadItem>>(new Map());
-  const [order, setOrder] = useState<string[]>([]);
+  const downloads = useDownloadList();
   const [queues, setQueues] = useState<DownloadQueue[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -44,40 +48,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void api.settings.get().then(setSettings);
     void refreshQueues();
-    void api.downloads.list().then((items) => {
-      setById(new Map(items.map((i) => [i.id, i])));
-      setOrder(items.map((i) => i.id));
-    });
-
+    const disconnect = downloadStore.connect(api.downloads);
     const offQueues = api.queues.onChanged((updated) => setQueues(updated));
-
-    const offChanged = api.downloads.onChanged((items) => {
-      setById((prev) => {
-        const next = new Map(prev);
-        for (const item of items) next.set(item.id, item);
-        return next;
-      });
-      setOrder((prev) => {
-        const known = new Set(prev);
-        const added = items.filter((i) => !known.has(i.id)).map((i) => i.id);
-        return added.length > 0 ? [...prev, ...added] : prev;
-      });
-    });
-    const offOrder = api.downloads.onOrderChanged((ids) => setOrder(ids));
-    const offRemoved = api.downloads.onRemoved((ids) => {
-      const gone = new Set(ids);
-      setById((prev) => {
-        const next = new Map(prev);
-        for (const id of ids) next.delete(id);
-        return next;
-      });
-      setOrder((prev) => prev.filter((id) => !gone.has(id)));
-    });
     return () => {
       offQueues();
-      offChanged();
-      offRemoved();
-      offOrder();
+      disconnect();
     };
   }, [refreshQueues]);
 
@@ -95,8 +70,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [dismissToast]
   );
-
-  const downloads = useMemo(() => order.map((id) => byId.get(id)).filter((i): i is DownloadItem => Boolean(i)), [order, byId]);
 
   const value = useMemo(
     () => ({ settings, updateSettings, downloads, queues, refreshQueues, toasts, toast, dismissToast }),

@@ -2,7 +2,14 @@ import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notificatio
 import { spawn } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { IPC, type AfterQueueAction, type AppSettings, type ClipboardLink, type DownloadItem } from '../shared/types';
+import {
+  IPC,
+  type AfterQueueAction,
+  type AppSettings,
+  type ClipboardLink,
+  type DownloadItem,
+  type DownloadsAggregate,
+} from '../shared/types';
 import { initLogger, logger } from './logger';
 import { SettingsService } from './settings';
 import { DownloadManager } from './downloads/manager';
@@ -98,6 +105,7 @@ const manager = new DownloadManager({
   router,
   getSettings: () => settings.get(),
   onItemsChanged: (items) => send(IPC.downloadsChanged, items),
+  onItemsProgress: (patches) => send(IPC.downloadsProgress, patches),
   onItemsRemoved: (ids) => send(IPC.downloadsRemoved, ids),
   onOrderChanged: (ids) => send(IPC.downloadsOrder, ids),
   onQueuesChanged: (queues) => send(IPC.queuesChanged, queues),
@@ -109,8 +117,13 @@ const manager = new DownloadManager({
   },
   onFailed: (item) => notify(text('notify.failed'), `${fileLabel(item)}\n${item.error ?? ''}`.trim(), () => showWindow('downloads')),
   onQueueDrained: (action) => void runAfterQueueAction(action),
-  onAggregateProgress: ({ fraction, active, hasError, hasPaused }) => {
+  onAggregateProgress: ({ fraction, active, speed, hasError, hasPaused }) => {
     updateTrayTooltip(active);
+    sendAggregate({
+      active,
+      speed,
+      percent: fraction === null || fraction < 0 ? null : Math.round(Math.min(1, fraction) * 100),
+    });
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (fraction === null) {
       if (hasError) {
@@ -128,6 +141,16 @@ const manager = new DownloadManager({
     }
   },
 });
+
+let lastAggregate = '';
+
+/** Totals for the title bar and sidebar; sent only when they change. */
+function sendAggregate(aggregate: DownloadsAggregate): void {
+  const key = `${aggregate.active}|${Math.round(aggregate.speed)}|${aggregate.percent}`;
+  if (key === lastAggregate) return;
+  lastAggregate = key;
+  send(IPC.downloadsAggregate, aggregate);
+}
 
 const AFTER_QUEUE_COUNTDOWN_SECONDS = 60;
 let afterQueuePrompt: AbortController | null = null;
