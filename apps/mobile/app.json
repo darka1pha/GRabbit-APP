@@ -31,7 +31,8 @@
         "READ_MEDIA_VIDEO",
         "READ_MEDIA_IMAGES",
         "WRITE_EXTERNAL_STORAGE",
-        "INTERNET"
+        "INTERNET",
+        "REQUEST_INSTALL_PACKAGES"
       ],
       "intentFilters": [
         {

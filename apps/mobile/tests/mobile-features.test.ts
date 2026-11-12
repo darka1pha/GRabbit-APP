@@ -7,6 +7,14 @@ import { mobileSettingsManager } from '../services/settings-manager';
 import { mobileRecognizer } from '../services/recognizer';
 
 // Mock react-native, expo-file-system and expo-media-library
+(globalThis as any).expo = (globalThis as any).expo || { EventEmitter: class {} };
+
+vi.mock('expo-constants', () => ({
+  default: {
+    expoConfig: { version: '1.2.0' },
+  },
+}));
+
 vi.mock('react-native', () => ({
   AppState: {
     addEventListener: vi.fn().mockReturnValue({ remove: vi.fn() }),
@@ -14,6 +22,12 @@ vi.mock('react-native', () => ({
   Platform: {
     OS: 'android',
   },
+  NativeModules: {},
+}));
+
+vi.mock('expo-linking', () => ({
+  openURL: vi.fn().mockResolvedValue(undefined),
+  canOpenURL: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -43,6 +57,7 @@ vi.mock('expo-file-system', () => ({
   writeAsStringAsync: vi.fn().mockResolvedValue(undefined),
   readAsStringAsync: vi.fn().mockResolvedValue('[]'),
   deleteAsync: vi.fn().mockResolvedValue(undefined),
+  getContentUriAsync: vi.fn().mockImplementation((uri: string) => Promise.resolve(`content://com.grabbit.mobile.provider${uri}`)),
   createDownloadResumable: vi.fn().mockReturnValue({
     downloadAsync: vi.fn().mockResolvedValue({ uri: '/mock/file.mp4' }),
     pauseAsync: vi.fn().mockResolvedValue(undefined),
@@ -53,6 +68,10 @@ vi.mock('expo-file-system', () => ({
 vi.mock('expo-media-library', () => ({
   requestPermissionsAsync: vi.fn().mockResolvedValue({ granted: true }),
   saveToLibraryAsync: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('expo-intent-launcher', () => ({
+  startActivityAsync: vi.fn().mockResolvedValue({ resultCode: -1 }),
 }));
 
 describe('Mobile App Desktop Feature Parity', () => {
@@ -223,6 +242,32 @@ describe('Mobile App Desktop Feature Parity', () => {
       expect(compareSemver('v2.0.0', '1.9.9')).toBe(1);
       expect(compareSemver('1.0.0', '1.0.0')).toBe(0);
       expect(compareSemver('1.0.0', '1.2.0')).toBe(-1);
+    });
+
+    it('launches native Android installer with application/vnd.android.package-archive when APK is downloaded', async () => {
+      const { mobileUpdater } = await import('../services/updater');
+      const IntentLauncher = await import('expo-intent-launcher');
+      const startActivitySpy = vi.spyOn(IntentLauncher, 'startActivityAsync');
+
+      await mobileUpdater.launchApkInstaller('/mock/cache/GRabbit-v1.2.0.apk');
+
+      expect(startActivitySpy).toHaveBeenCalledWith('android.intent.action.VIEW', {
+        data: 'content://com.grabbit.mobile.provider/mock/cache/GRabbit-v1.2.0.apk',
+        type: 'application/vnd.android.package-archive',
+        flags: 1,
+      });
+    });
+
+    it('installs already-downloaded APK without re-downloading', async () => {
+      const { mobileUpdater } = await import('../services/updater');
+      const IntentLauncher = await import('expo-intent-launcher');
+      const startActivitySpy = vi.spyOn(IntentLauncher, 'startActivityAsync');
+
+      (mobileUpdater as any).status.localUri = '/mock/cache/GRabbit-v1.2.0.apk';
+      const res = await mobileUpdater.installDownloadedApk();
+
+      expect(res.state).toBe('installing');
+      expect(startActivitySpy).toHaveBeenCalled();
     });
   });
 

@@ -34,6 +34,19 @@ module.exports = function withAndroidFixes(config) {
       manifest['uses-permission'] = manifest['uses-permission'].filter(
         (perm) => perm.$?.['android:name'] !== 'android.permission.SYSTEM_ALERT_WINDOW'
       );
+    } else {
+      manifest['uses-permission'] = [];
+    }
+
+    // Ensure REQUEST_INSTALL_PACKAGES is declared so in-app APK updater can launch the package installer
+    if (
+      !manifest['uses-permission'].some(
+        (perm) => perm.$?.['android:name'] === 'android.permission.REQUEST_INSTALL_PACKAGES'
+      )
+    ) {
+      manifest['uses-permission'].push({
+        $: { 'android:name': 'android.permission.REQUEST_INSTALL_PACKAGES' },
+      });
     }
 
     // Enable cleartext HTTP traffic for LAN Desktop Bridge & HTTP media downloads

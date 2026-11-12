@@ -26,6 +26,11 @@ function HeaderUpdateButton() {
           Alert.alert('Up to Date', `GRabbit Mobile v${res.currentVersion} is already on the latest version.`);
         } else if (res.state === 'error' && res.error) {
           Alert.alert('Update Error', res.error);
+        } else if (res.state === 'installing') {
+          Alert.alert(
+            'Installer Launched',
+            'The update package has been launched. If prompted, please allow "Install unknown apps" for GRabbit in Android Settings.'
+          );
         }
       }}
     >
@@ -35,6 +40,8 @@ function HeaderUpdateButton() {
           ? 'Checking…'
           : status.state === 'downloading'
           ? `${status.progressPercent ?? 0}%`
+          : status.state === 'installing'
+          ? 'Install'
           : 'Update'}
       </Text>
     </TouchableOpacity>
