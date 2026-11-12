@@ -1,6 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { AppSettings, DeepPartial, DownloadItem, DownloadQueue } from '../../shared/types';
 import { downloadStore, useDownloadList } from './downloads-store';
+import { playCompletionChime } from './utils/sound';
 
 export const api = window.grabbit;
 
@@ -50,7 +51,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshQueues();
     const disconnect = downloadStore.connect(api.downloads);
     const offQueues = api.queues.onChanged((updated) => setQueues(updated));
+    const offSound = api.downloads.onAutomationSound?.(() => playCompletionChime());
     return () => {
+      offSound?.();
       offQueues();
       disconnect();
     };

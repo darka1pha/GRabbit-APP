@@ -28,7 +28,8 @@ import { HttpDownloadTask, ProbeInfo, ResourceChangedError } from './http-engine
 import { MediaDownloadTask } from './media-engine';
 import { hashFile, moveFile, uniqueFileName } from './files';
 import { RateLimiter } from './throttle';
-import { ScheduleTracker } from './scheduler';
+import { insideWindow, ScheduleTracker } from './scheduler';
+import { executePostDownloadAutomation } from './automation';
 
 const TICK_MS = 500;
 const FLUSH_MS = 250;
@@ -201,9 +202,25 @@ export class DownloadManager {
     this.pump();
   }
 
-  public applySettings(settings: AppSettings): void {
-    this.globalLimiter.setRate(settings.globalSpeedLimitKBps * 1024);
+  public applySettings(_settings: AppSettings): void {
+    this.updateEffectiveSpeedLimit();
     this.pump();
+  }
+
+  private updateEffectiveSpeedLimit(now = new Date()): void {
+    const settings = this.deps.getSettings();
+    const speedSched = settings.speedSchedule;
+    let targetKBps = settings.globalSpeedLimitKBps;
+    if (speedSched?.enabled) {
+      const inside = insideWindow(speedSched, now);
+      if (inside) {
+        targetKBps = speedSched.speedLimitKBps;
+      }
+    }
+    const targetRate = Math.max(0, targetKBps) * 1024;
+    if (this.globalLimiter.rate !== targetRate) {
+      this.globalLimiter.setRate(targetRate);
+    }
   }
 
   /** Stops every task and saves synchronously (app quit). Running items resume next launch. */
@@ -813,6 +830,7 @@ export class DownloadManager {
     this.markDirty(item);
     this.persistHistory();
     this.deps.onCompleted(item);
+    void executePostDownloadAutomation(item, this.deps.getSettings());
   }
 
   private async onFailure(item: DownloadItem, entry: RunningEntry, err: unknown): Promise<void> {
@@ -933,6 +951,8 @@ export class DownloadManager {
 
   /** Applies the global and per-queue schedules. `now` is a parameter so tests can move the clock. */
   public checkScheduler(now = new Date()): void {
+    this.updateEffectiveSpeedLimit(now);
+
     const global = this.schedules.update('global', this.deps.getSettings().scheduler, now);
     if (global === 'start') {
       logger.info('Scheduler: starting the queue');

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, CircleAlert, Download, FileText, FolderOpen, LoaderCircle, Plus, X, Zap } from 'lucide-react';
+import { hasUrlPattern, expandUrlPatterns } from '@grabbit/utils';
 import { CATEGORIES, type Category, type ChecksumAlgorithm, type DownloadItem, type ProbeResult } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
 import { api, useApp } from '../state';
@@ -81,14 +82,13 @@ export function AddDownloadDialog({
     setText(next.join('\n'));
   }
 
-  const urls = useMemo(
-    () =>
-      text
-        .split(/[\s]+/)
-        .map((u) => u.trim())
-        .filter(isHttpUrl),
-    [text]
-  );
+  const canExpand = useMemo(() => hasUrlPattern(text), [text]);
+  const expandedList = useMemo(() => (canExpand ? expandUrlPatterns(text) : []), [canExpand, text]);
+
+  const urls = useMemo(() => {
+    const raw = canExpand ? expandedList : text.split(/[\s]+/);
+    return raw.map((u) => u.trim()).filter(isHttpUrl);
+  }, [canExpand, expandedList, text]);
   const single = urls.length === 1 ? urls[0] : null;
   const headers = useMemo(() => parseHeaders(headersText), [headersText]);
 
@@ -205,6 +205,18 @@ export function AddDownloadDialog({
             >
               <FileText size={13} /> {t('add.importFile')}
             </button>
+            {canExpand && (
+              <button
+                type="button"
+                className="btn primary sm"
+                style={{ padding: '3px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                onClick={() => setText(expandedList.join('\n'))}
+                title={t('add.expandPatternTooltip')}
+              >
+                <Zap size={13} />
+                <span>{t('add.expandPattern', { count: expandedList.length })}</span>
+              </button>
+            )}
             {urls.length > 0 && (
               <button
                 type="button"

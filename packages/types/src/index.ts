@@ -285,6 +285,31 @@ export interface ExtensionSettings {
   allowLan?: boolean;
 }
 
+export interface AutomationSettings {
+  /** Automatically extract downloaded archives (.zip, .tar.gz, etc.) */
+  autoExtractArchives: boolean;
+  /** Extract archive into a dedicated subfolder matching the archive name */
+  extractToSubfolder: boolean;
+  /** Delete the original archive after successful extraction */
+  deleteArchiveAfterExtraction: boolean;
+  /** Custom command to execute on completion. Supports {filePath}, {fileName}, {directory}, {category}, {fileSize}. */
+  customCommand: string;
+  /** Play an audio completion chime when a download finishes */
+  playCompletionSound: boolean;
+}
+
+export interface SpeedScheduleSettings {
+  enabled: boolean;
+  /** Start time (HH:MM, local time) when speed limit applies */
+  startTime: string;
+  /** Stop time (HH:MM, local time) when speed limit ends */
+  stopTime: string;
+  /** Throttled speed limit in KB/s during the scheduled window */
+  speedLimitKBps: number;
+  /** Weekdays (0 = Sunday … 6 = Saturday). Empty = every day. */
+  days?: number[];
+}
+
 export interface AppSettings {
   language: Language;
   theme: Theme;
@@ -327,6 +352,8 @@ export interface AppSettings {
     /** Weekdays (0 = Sunday … 6 = Saturday) the schedule starts on. Missing or empty = every day. */
     days?: number[];
   };
+  automation: AutomationSettings;
+  speedSchedule: SpeedScheduleSettings;
   media: {
     defaultAudioFormat: 'mp3' | 'm4a';
     defaultVideoQuality: string;
@@ -477,6 +504,8 @@ export interface GrabbitApi {
     onRemoved(listener: (ids: string[]) => void): () => void;
     /** New queue order after a move. */
     onOrderChanged(listener: (ids: string[]) => void): () => void;
+    /** Fired when post-download automation chime sound should play. */
+    onAutomationSound(listener: () => void): () => void;
   };
   queues: {
     list(): Promise<DownloadQueue[]>;
@@ -524,7 +553,9 @@ export interface GrabbitApi {
   };
 }
 
-export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+export type DeepPartial<T> = {
+  [K in keyof T]?: NonNullable<T[K]> extends object ? DeepPartial<NonNullable<T[K]>> : T[K];
+};
 
 export const IPC = {
   settingsGet: 'settings:get',
@@ -584,4 +615,5 @@ export const IPC = {
   toggleMiniMode: 'app:toggle-mini-mode',
   isMiniMode: 'app:is-mini-mode',
   miniModeChanged: 'app:mini-mode-changed',
+  automationPlaySound: 'automation:play-sound',
 } as const;
