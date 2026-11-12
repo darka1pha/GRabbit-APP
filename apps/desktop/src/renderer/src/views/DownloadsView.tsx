@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
@@ -6,6 +6,8 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -21,6 +23,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -34,6 +37,27 @@ import { downloadStore, useDownloadsAggregate, useLiveDownload, useSegmentWatch 
 import { Sparkline } from '../components/Sparkline';
 
 export type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
+export type GroupByOption = 'none' | 'date' | 'status' | 'queue';
+export type DensityOption = 'comfortable' | 'compact';
+
+export const ROW_HEIGHT_COMFORTABLE = 56;
+export const ROW_HEIGHT_COMPACT = 40;
+export const ROW_HEIGHT = ROW_HEIGHT_COMFORTABLE;
+const OVERSCAN_ROWS = 10;
+
+export function getDateGroupKey(timestamp: number): 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older' {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const startOfThisWeek = startOfToday - 6 * 86400000;
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  if (timestamp >= startOfToday) return 'today';
+  if (timestamp >= startOfYesterday) return 'yesterday';
+  if (timestamp >= startOfThisWeek) return 'thisWeek';
+  if (timestamp >= startOfThisMonth) return 'thisMonth';
+  return 'older';
+}
 
 const ACTIVE: DownloadStatus[] = ['starting', 'downloading', 'processing'];
 
@@ -66,22 +90,22 @@ function canResume(item: DownloadItem): boolean {
   return item.status === 'paused' || item.status === 'error';
 }
 
-/** Height of one table row in px; must match `.dl-table tr.dl-row td` in styles.css. */
-export const ROW_HEIGHT = 56;
-const OVERSCAN_ROWS = 10;
-
 /**
  * Which rows of a fixed-row-height list are in (or near) view. Only those are rendered; the
  * rest of the list is represented by two spacers of the right height.
  */
-function useVirtualRows(container: RefObject<HTMLElement | null>, count: number): { start: number; end: number } {
+function useVirtualRows(
+  container: RefObject<HTMLElement | null>,
+  count: number,
+  rowHeight: number = ROW_HEIGHT_COMFORTABLE
+): { start: number; end: number } {
   const [range, setRange] = useState({ start: 0, end: Math.min(count, 40) });
   useLayoutEffect(() => {
     const el = container.current;
     if (!el) return;
     const update = () => {
-      const start = Math.max(0, Math.floor(el.scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
-      const end = Math.min(count, Math.ceil((el.scrollTop + el.clientHeight) / ROW_HEIGHT) + OVERSCAN_ROWS);
+      const start = Math.max(0, Math.floor(el.scrollTop / rowHeight) - OVERSCAN_ROWS);
+      const end = Math.min(count, Math.ceil((el.scrollTop + el.clientHeight) / rowHeight) + OVERSCAN_ROWS);
       setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
     };
     update();
@@ -92,7 +116,7 @@ function useVirtualRows(container: RefObject<HTMLElement | null>, count: number)
       el.removeEventListener('scroll', update);
       observer.disconnect();
     };
-  }, [container, count]);
+  }, [container, count, rowHeight]);
   return { start: Math.min(range.start, count), end: Math.min(range.end, count) };
 }
 
@@ -105,6 +129,7 @@ interface RowActions {
   openFile(item: DownloadItem): void;
   openFolder(item: DownloadItem): void;
   remove(item: DownloadItem): void;
+  toggleSelect?(item: DownloadItem): void;
   changeUrl?(item: DownloadItem): void;
   retry?(item: DownloadItem): void;
   dragStart?(e: React.DragEvent, item: DownloadItem): void;
@@ -138,7 +163,7 @@ export function DownloadsView({
   category: Category | 'all';
   onAdd(url?: string): void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { downloads, queues, refreshQueues, toast } = useApp();
   const [selectedQueueId, setSelectedQueueId] = useState<string | 'all'>('all');
   const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
@@ -149,11 +174,58 @@ export function DownloadsView({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; item: DownloadItem } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [groupBy, setGroupBy] = useState<GroupByOption>(() => {
+    try {
+      const saved = localStorage.getItem('grabbit_dl_grouping') as GroupByOption | null;
+      if (saved === 'none' || saved === 'date' || saved === 'status' || saved === 'queue') return saved;
+    } catch {}
+    return 'date';
+  });
+  const [density, setDensity] = useState<DensityOption>(() => {
+    try {
+      const saved = localStorage.getItem('grabbit_dl_density') as DensityOption | null;
+      if (saved === 'comfortable' || saved === 'compact') return saved;
+    } catch {}
+    return 'comfortable';
+  });
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('grabbit_dl_collapsed_groups');
+      if (saved) return new Set(JSON.parse(saved));
+    } catch {}
+    return new Set<string>();
+  });
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  const viewMenuRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const undoBufferRef = useRef<{ items: DownloadItem[] } | null>(null);
+
+  useEffect(() => {
+    if (!showViewMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target as Node)) {
+        setShowViewMenu(false);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [showViewMenu]);
+
+  const toggleGroupCollapse = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      try {
+        localStorage.setItem('grabbit_dl_collapsed_groups', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const onSelect = (e: Event) => {
@@ -162,6 +234,7 @@ export function DownloadsView({
         setSelected(new Set([id]));
         setAnchor(id);
         setFocusedId(id);
+        setInspectingId(id);
       }
     };
     window.addEventListener('select-download', onSelect);
@@ -252,9 +325,152 @@ export function DownloadsView({
   }, [downloads]);
 
   const selectedItems = visible.filter((d) => selected.has(d.id));
-  const single = selectedItems.length === 1 ? selectedItems[0] : null;
-  const rows = useVirtualRows(tableRef, visible.length);
+  const single =
+    inspectingId && selected.has(inspectingId) && selected.size === 1
+      ? downloads.find((d) => d.id === inspectingId) ?? null
+      : null;
+  const rowHeight = density === 'compact' ? ROW_HEIGHT_COMPACT : ROW_HEIGHT_COMFORTABLE;
+  const rows = useVirtualRows(tableRef, visible.length, rowHeight);
   const queueNames = useMemo(() => new Map(queues.map((q) => [q.id, q.name])), [queues]);
+
+  const isAllSelected = visible.length > 0 && visible.every((d) => selected.has(d.id));
+  const isPartiallySelected = visible.some((d) => selected.has(d.id)) && !isAllSelected;
+
+  const toggleSelectAll = useCallback(() => {
+    if (isAllSelected) {
+      setSelected(new Set());
+      setInspectingId(null);
+    } else {
+      setSelected(new Set(visible.map((d) => d.id)));
+      setInspectingId(null);
+    }
+  }, [isAllSelected, visible]);
+
+  interface DownloadGroup {
+    id: string;
+    title: string;
+    items: DownloadItem[];
+    totalBytes: number;
+  }
+
+  const groups = useMemo<DownloadGroup[]>(() => {
+    if (groupBy === 'none') return [];
+
+    if (groupBy === 'date') {
+      const buckets: Record<'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older', DownloadItem[]> = {
+        today: [],
+        yesterday: [],
+        thisWeek: [],
+        thisMonth: [],
+        older: [],
+      };
+      for (const item of visible) {
+        const key = getDateGroupKey(item.createdAt);
+        buckets[key].push(item);
+      }
+      const order: Array<{ key: keyof typeof buckets; labelKey: MessageKey }> = [
+        { key: 'today', labelKey: 'dl.group.today' },
+        { key: 'yesterday', labelKey: 'dl.group.yesterday' },
+        { key: 'thisWeek', labelKey: 'dl.group.thisWeek' },
+        { key: 'thisMonth', labelKey: 'dl.group.thisMonth' },
+        { key: 'older', labelKey: 'dl.group.older' },
+      ];
+      return order
+        .filter((o) => buckets[o.key].length > 0)
+        .map((o) => {
+          const items = buckets[o.key];
+          const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
+          return {
+            id: o.key,
+            title: t(o.labelKey),
+            items,
+            totalBytes,
+          };
+        });
+    }
+
+    if (groupBy === 'status') {
+      const buckets: Record<StatusFilter, DownloadItem[]> = {
+        active: [],
+        queued: [],
+        completed: [],
+        failed: [],
+        all: [],
+      };
+      for (const item of visible) {
+        if (ACTIVE.includes(item.status)) buckets.active.push(item);
+        else if (item.status === 'queued' || item.status === 'paused') buckets.queued.push(item);
+        else if (item.status === 'completed') buckets.completed.push(item);
+        else if (item.status === 'error') buckets.failed.push(item);
+      }
+      const order: Array<{ key: StatusFilter; labelKey: MessageKey }> = [
+        { key: 'active', labelKey: 'filter.active' },
+        { key: 'queued', labelKey: 'filter.queued' },
+        { key: 'completed', labelKey: 'filter.completed' },
+        { key: 'failed', labelKey: 'filter.failed' },
+      ];
+      return order
+        .filter((o) => buckets[o.key].length > 0)
+        .map((o) => {
+          const items = buckets[o.key];
+          const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
+          return {
+            id: o.key,
+            title: t(o.labelKey),
+            items,
+            totalBytes,
+          };
+        });
+    }
+
+    if (groupBy === 'queue') {
+      const map = new Map<string, DownloadItem[]>();
+      for (const item of visible) {
+        const qId = item.queueId || 'main';
+        const list = map.get(qId);
+        if (list) list.push(item);
+        else map.set(qId, [item]);
+      }
+      const result: DownloadGroup[] = [];
+      if (map.has('main')) {
+        const items = map.get('main')!;
+        const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
+        result.push({
+          id: 'main',
+          title: queueNames.get('main') || t('queue.main'),
+          items,
+          totalBytes,
+        });
+      }
+      for (const q of queues) {
+        if (q.id === 'main') continue;
+        const items = map.get(q.id);
+        if (items && items.length > 0) {
+          const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
+          result.push({
+            id: q.id,
+            title: q.name,
+            items,
+            totalBytes,
+          });
+        }
+      }
+      for (const [qId, items] of map.entries()) {
+        if (qId !== 'main' && !queues.some((q) => q.id === qId)) {
+          const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
+          result.push({
+            id: qId,
+            title: queueNames.get(qId) || qId,
+            items,
+            totalBytes,
+          });
+        }
+      }
+      return result;
+    }
+
+    return [];
+  }, [groupBy, visible, t, queueNames, queues]);
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -277,6 +493,7 @@ export function DownloadsView({
       const b = visible.findIndex((d) => d.id === item.id);
       const [from, to] = a < b ? [a, b] : [b, a];
       setSelected(new Set(visible.slice(from, to + 1).map((d) => d.id)));
+      setInspectingId(null);
       return;
     }
     if (e.ctrlKey || e.metaKey) {
@@ -286,8 +503,10 @@ export function DownloadsView({
         else next.add(item.id);
         return next;
       });
+      setInspectingId(null);
     } else {
       setSelected(new Set([item.id]));
+      setInspectingId(item.id);
     }
     setAnchor(item.id);
     setFocusedId(item.id);
@@ -379,6 +598,14 @@ export function DownloadsView({
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea, select') || dialog) return;
 
+      if (e.key === 'Escape') {
+        if (selected.size > 0 || inspectingId) {
+          setSelected(new Set());
+          setInspectingId(null);
+        }
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -404,9 +631,11 @@ export function DownloadsView({
           const a = visible.findIndex((d) => d.id === anchor);
           const [from, to] = a < nextIdx ? [a, nextIdx] : [nextIdx, a];
           setSelected(new Set(visible.slice(from, to + 1).map((d) => d.id)));
+          setInspectingId(null);
         } else {
           setSelected(new Set([nextItem.id]));
           setAnchor(nextItem.id);
+          setInspectingId(nextItem.id);
         }
         return;
       }
@@ -418,6 +647,7 @@ export function DownloadsView({
           setFocusedId(first.id);
           setSelected(new Set([first.id]));
           setAnchor(first.id);
+          setInspectingId(first.id);
         }
         return;
       }
@@ -429,6 +659,7 @@ export function DownloadsView({
           setFocusedId(last.id);
           setSelected(new Set([last.id]));
           setAnchor(last.id);
+          setInspectingId(last.id);
         }
         return;
       }
@@ -452,6 +683,7 @@ export function DownloadsView({
       } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setSelected(new Set(visible.map((d) => d.id)));
+        setInspectingId(null);
       } else if (e.key === 'Enter' && single) {
         onDoubleClick(single);
       }
@@ -538,6 +770,15 @@ export function DownloadsView({
     remove: (item) => removeWithUndo([item]),
     changeUrl: (item) => setDialog({ kind: 'url', item }),
     retry: (item) => void run(() => api.downloads.retry([item.id])),
+    toggleSelect: (item) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(item.id)) next.delete(item.id);
+        else next.add(item.id);
+        return next;
+      });
+      setInspectingId(null);
+    },
     dragStart: (e, item) => {
       e.dataTransfer.setData('text/download-id', item.id);
       e.dataTransfer.effectAllowed = 'move';
@@ -584,6 +825,7 @@ export function DownloadsView({
       remove: (item) => latestActions.current.remove(item),
       changeUrl: (item) => latestActions.current.changeUrl?.(item),
       retry: (item) => latestActions.current.retry?.(item),
+      toggleSelect: (item) => latestActions.current.toggleSelect?.(item),
       dragStart: (e, item) => latestActions.current.dragStart?.(e, item),
       dragOver: (e, item) => latestActions.current.dragOver?.(e, item),
       drop: (e, item) => latestActions.current.drop?.(e, item),
@@ -594,11 +836,11 @@ export function DownloadsView({
   return (
     <div className="dl-layout">
       <div className="dl-head">
-        <div className="title-row">
+        <div className="dl-head-primary">
           <h1>{category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}</h1>
-          {counts.active > 0 && <ActiveStat count={counts.active} />}
+          <ActiveStat count={counts.active} />
           <div style={{ flex: 1 }} />
-          <div className="input-with-icon" style={{ width: 260 }}>
+          <div className="input-with-icon" style={{ width: 240 }}>
             <Search size={15} />
             <input
               ref={searchInputRef}
@@ -620,8 +862,71 @@ export function DownloadsView({
               </button>
             )}
           </div>
+          <button className="btn primary" onClick={() => onAdd()}>
+            <Plus size={16} /> <span className="hide-narrow">{t('dl.add')}</span>
+          </button>
+          <div className="divider" />
+          <button className="btn ghost" title={t('dl.resumeAll')} onClick={() => void run(() => api.downloads.resumeAll())}>
+            <Play size={15} /> <span className="hide-narrow">{t('dl.resumeAll')}</span>
+          </button>
+          <button className="btn ghost" title={t('dl.pauseAll')} onClick={() => void run(() => api.downloads.pauseAll())}>
+            <Pause size={15} /> <span className="hide-narrow">{t('dl.pauseAll')}</span>
+          </button>
+          <button className="btn ghost" disabled={counts.completed === 0} title={t('dl.clearCompleted')} onClick={() => void clearCompletedWithUndo()}>
+            <Inbox size={15} /> <span className="hide-narrow">{t('dl.clearCompleted')}</span>
+          </button>
+          <div className="popover-menu-wrap" ref={viewMenuRef}>
+            <button
+              className={`btn ghost ${showViewMenu ? 'active' : ''}`}
+              title={t('dl.viewOptions')}
+              onClick={() => setShowViewMenu((v) => !v)}
+            >
+              <SlidersHorizontal size={15} />
+              <span className="hide-narrow">{t('dl.viewOptions')}</span>
+            </button>
+            {showViewMenu && (
+              <div className="dropdown-popover">
+                <div className="dropdown-popover-header">{t('dl.groupBy')}</div>
+                {(['date', 'status', 'queue', 'none'] as GroupByOption[]).map((opt) => (
+                  <button
+                    key={opt}
+                    className={`dropdown-popover-item ${groupBy === opt ? 'active' : ''}`}
+                    onClick={() => {
+                      setGroupBy(opt);
+                      try {
+                        localStorage.setItem('grabbit_dl_grouping', opt);
+                      } catch {}
+                      setShowViewMenu(false);
+                    }}
+                  >
+                    <span>{t(`dl.group.${opt}` as MessageKey)}</span>
+                    {groupBy === opt && <span>✓</span>}
+                  </button>
+                ))}
+                <div className="dropdown-popover-divider" />
+                <div className="dropdown-popover-header">{t('dl.density')}</div>
+                {(['comfortable', 'compact'] as DensityOption[]).map((opt) => (
+                  <button
+                    key={opt}
+                    className={`dropdown-popover-item ${density === opt ? 'active' : ''}`}
+                    onClick={() => {
+                      setDensity(opt);
+                      try {
+                        localStorage.setItem('grabbit_dl_density', opt);
+                      } catch {}
+                      setShowViewMenu(false);
+                    }}
+                  >
+                    <span>{opt === 'comfortable' ? t('dl.densityComfortable') : t('dl.densityCompact')}</span>
+                    {density === opt && <span>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="queue-bar">
+
+        <div className="dl-head-secondary">
           <div className="queue-tabs" role="tablist">
             <button
               className={`queue-pill ${selectedQueueId === 'all' ? 'active' : ''}`}
@@ -702,36 +1007,9 @@ export function DownloadsView({
               <span>{t('queue.new')}</span>
             </button>
           </div>
-        </div>
-        <div className="toolbar">
-          <button className="btn primary" onClick={() => onAdd()}>
-            <Plus size={16} /> {t('dl.add')}
-          </button>
-          <div className="divider" />
-          <button className="btn" disabled={!selectedItems.some(canResume)} onClick={() => void run(() => api.downloads.resume(ids(selectedItems)))}>
-            <Play size={15} /> {t('dl.resume')}
-          </button>
-          <button className="btn" disabled={!selectedItems.some(canPause)} onClick={() => void run(() => api.downloads.pause(ids(selectedItems)))}>
-            <Pause size={15} /> {t('dl.pause')}
-          </button>
-          <button
-            className="btn"
-            disabled={selectedItems.length === 0}
-            onClick={() => removeWithUndo(selectedItems)}
-          >
-            <Trash2 size={15} /> {t('dl.remove')}
-          </button>
-          <div className="divider" />
-          <button className="btn ghost" onClick={() => void run(() => api.downloads.resumeAll())}>
-            <Play size={15} /> <span className="hide-narrow">{t('dl.resumeAll')}</span>
-          </button>
-          <button className="btn ghost" onClick={() => void run(() => api.downloads.pauseAll())}>
-            <Pause size={15} /> <span className="hide-narrow">{t('dl.pauseAll')}</span>
-          </button>
-          <button className="btn ghost" disabled={counts.completed === 0} onClick={() => void clearCompletedWithUndo()}>
-            <Inbox size={15} /> <span className="hide-narrow">{t('dl.clearCompleted')}</span>
-          </button>
-          <div className="grow" />
+
+          <div style={{ flex: 1 }} />
+
           <div className="segmented">
             {filters.map((f) => (
               <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>
@@ -755,11 +1033,16 @@ export function DownloadsView({
             </button>
           </div>
         ) : (
-          <table className="dl-table" role="grid" aria-label={category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}>
+          <table
+            className={`dl-table ${density === 'compact' ? 'compact' : ''}`}
+            role="grid"
+            aria-label={category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}
+          >
             <colgroup>
+              <col style={{ width: 38 }} />
               <col />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 210 }} />
+              <col style={{ width: 140 }} />
+              <col style={{ width: 200 }} />
               <col style={{ width: 104 }} />
               <col style={{ width: 92 }} />
               <col style={{ width: 96 }} className="hide-narrow" />
@@ -767,6 +1050,18 @@ export function DownloadsView({
             </colgroup>
             <thead>
               <tr role="row">
+                <th role="columnheader" className="check-col">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isPartiallySelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    aria-label={t('dl.selectAll')}
+                    title={isAllSelected ? t('dl.deselectAll') : t('dl.selectAll')}
+                  />
+                </th>
                 <th role="columnheader" className="sortable" onClick={() => toggleSort('name')}>
                   {t('dl.col.name')} {sortBy === 'name' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
@@ -787,25 +1082,96 @@ export function DownloadsView({
               </tr>
             </thead>
             <tbody role="rowgroup">
-              {rows.start > 0 && (
-                <tr className="dl-spacer" aria-hidden="true">
-                  <td colSpan={7} style={{ height: rows.start * ROW_HEIGHT }} />
-                </tr>
-              )}
-              {visible.slice(rows.start, rows.end).map((item) => (
-                <DownloadRow
-                  key={item.id}
-                  item={item}
-                  selected={selected.has(item.id)}
-                  isFocused={focusedId === item.id}
-                  queueName={selectedQueueId === 'all' ? queueNames.get(item.queueId || 'main') : undefined}
-                  actions={rowActions}
-                />
-              ))}
-              {rows.end < visible.length && (
-                <tr className="dl-spacer" aria-hidden="true">
-                  <td colSpan={7} style={{ height: (visible.length - rows.end) * ROW_HEIGHT }} />
-                </tr>
+              {groupBy === 'none' ? (
+                <>
+                  {rows.start > 0 && (
+                    <tr className="dl-spacer" aria-hidden="true">
+                      <td colSpan={8} style={{ height: rows.start * rowHeight }} />
+                    </tr>
+                  )}
+                  {visible.slice(rows.start, rows.end).map((item) => (
+                    <DownloadRow
+                      key={item.id}
+                      item={item}
+                      selected={selected.has(item.id)}
+                      isFocused={focusedId === item.id}
+                      queueName={selectedQueueId === 'all' ? queueNames.get(item.queueId || 'main') : undefined}
+                      actions={rowActions}
+                      density={density}
+                    />
+                  ))}
+                  {rows.end < visible.length && (
+                    <tr className="dl-spacer" aria-hidden="true">
+                      <td colSpan={8} style={{ height: (visible.length - rows.end) * rowHeight }} />
+                    </tr>
+                  )}
+                </>
+              ) : (
+                groups.map((grp) => {
+                  const isCollapsed = collapsedGroups.has(grp.id);
+                  return (
+                    <Fragment key={grp.id}>
+                      <tr className="group-header-row" role="row">
+                        <td colSpan={8}>
+                          <div className="group-header-content">
+                            <button
+                              type="button"
+                              className="group-collapse-btn"
+                              onClick={() => toggleGroupCollapse(grp.id)}
+                            >
+                              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                              <span>{grp.title}</span>
+                              <span className="group-count-pill">{grp.items.length}</span>
+                              {grp.totalBytes > 0 && (
+                                <span className="group-size-pill">({formatBytes(grp.totalBytes, language)})</span>
+                              )}
+                            </button>
+                            <div className="group-actions">
+                              {grp.items.some(canResume) && (
+                                <button
+                                  type="button"
+                                  className="btn ghost xs"
+                                  title={t('dl.resume')}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void run(() => api.downloads.resume(grp.items.filter(canResume).map((i) => i.id)));
+                                  }}
+                                >
+                                  <Play size={12} />
+                                </button>
+                              )}
+                              {grp.items.some(canPause) && (
+                                <button
+                                  type="button"
+                                  className="btn ghost xs"
+                                  title={t('dl.pause')}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void run(() => api.downloads.pause(grp.items.filter(canPause).map((i) => i.id)));
+                                  }}
+                                >
+                                  <Pause size={12} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      {!isCollapsed &&
+                        grp.items.map((item) => (
+                          <DownloadRow
+                            key={item.id}
+                            item={item}
+                            selected={selected.has(item.id)}
+                            isFocused={focusedId === item.id}
+                            queueName={selectedQueueId === 'all' && groupBy !== 'queue' ? queueNames.get(item.queueId || 'main') : undefined}
+                            actions={rowActions}
+                            density={density}
+                          />
+                        ))}
+                    </Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -813,11 +1179,117 @@ export function DownloadsView({
       </div>
 
       <AnimatePresence>
+        {selectedItems.length > 0 && !single && (
+          <motion.div
+            className="floating-selection-bar"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.16 }}
+          >
+            <div className="sel-count">
+              <span className="sel-badge">{selectedItems.length}</span>
+              <span>{t('dl.selectedCount', { count: selectedItems.length })}</span>
+            </div>
+            <div className="sel-divider" />
+            <div className="sel-actions">
+              {selectedItems.some(canResume) && (
+                <button
+                  className="btn sm"
+                  onClick={() => void run(() => api.downloads.resume(ids(selectedItems)))}
+                  title={t('dl.resume')}
+                >
+                  <Play size={13} /> {t('dl.resume')}
+                </button>
+              )}
+              {selectedItems.some(canPause) && (
+                <button
+                  className="btn sm"
+                  onClick={() => void run(() => api.downloads.pause(ids(selectedItems)))}
+                  title={t('dl.pause')}
+                >
+                  <Pause size={13} /> {t('dl.pause')}
+                </button>
+              )}
+              {selectedItems.some((d) => d.status === 'error') && (
+                <button
+                  className="btn sm"
+                  onClick={() => void run(() => api.downloads.retry(ids(selectedItems.filter((d) => d.status === 'error'))))}
+                  title={t('dl.retry')}
+                >
+                  <RotateCw size={13} /> {t('dl.retry')}
+                </button>
+              )}
+              <button
+                className="btn sm"
+                onClick={() => {
+                  const urls = selectedItems.map((i) => i.url).join('\n');
+                  void navigator.clipboard.writeText(urls);
+                  toast(t('dl.copied'), 'success');
+                }}
+                title={t('dl.copyLink')}
+              >
+                <Copy size={13} /> {t('dl.copyLink')}
+              </button>
+              {queues.length > 1 && (
+                <div className="sel-queue-move">
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const targetQueueId = e.target.value;
+                      if (!targetQueueId) return;
+                      void run(async () => {
+                        for (const id of ids(selectedItems)) {
+                          await api.queues.moveItem(id, targetQueueId);
+                        }
+                        toast(t('queue.items', { count: selectedItems.length }), 'info');
+                      });
+                      e.target.value = '';
+                    }}
+                  >
+                    <option value="" disabled>
+                      {t('queue.moveTo')}…
+                    </option>
+                    {queues.map((q) => (
+                      <option key={q.id} value={q.id}>
+                        {q.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <button
+                className="btn sm danger"
+                onClick={() => removeWithUndo(selectedItems)}
+                title={t('dl.remove')}
+              >
+                <Trash2 size={13} /> {t('dl.remove')}
+              </button>
+              <div className="sel-divider" />
+              <button
+                className="btn ghost sm icon"
+                onClick={() => {
+                  setSelected(new Set());
+                  setInspectingId(null);
+                }}
+                title={t('dl.deselectAll')}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {single && (
           <DetailsPanel
             key={single.id}
             item={single}
-            onClose={() => setSelected(new Set())}
+            onClose={() => {
+              setInspectingId(null);
+              setSelected(new Set());
+            }}
             onCopyUrl={() =>
               void run(async () => {
                 await api.downloads.copyUrl(single.id);
@@ -875,12 +1347,14 @@ const DownloadRow = memo(function DownloadRow({
   isFocused,
   queueName,
   actions,
+  density: _density = 'comfortable',
 }: {
   item: DownloadItem;
   selected: boolean;
   isFocused: boolean;
   queueName?: string;
   actions: RowActions;
+  density?: DensityOption;
 }) {
   const { t, language } = useI18n();
   const item = useLiveDownload(listed);
@@ -984,6 +1458,19 @@ const DownloadRow = memo(function DownloadRow({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
     >
+      <td
+        role="gridcell"
+        className="check-cell"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => actions.toggleSelect?.(item)}
+          aria-label={title}
+        />
+      </td>
       <td role="gridcell">
         <div className="name-cell">
           <FileIcon item={item} />
