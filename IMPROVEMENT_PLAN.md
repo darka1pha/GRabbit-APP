@@ -87,9 +87,20 @@ reachable from the LAN; `settings.json` contains no readable secrets.
 
 ---
 
-## Phase 3 — Desktop performance
+## Phase 3 — Desktop performance — [COMPLETED]
 
-### 3.1 Stop re-rendering the whole app twice a second — M
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 3.1 | Stop re-rendering the whole app twice a second | Done | Downloads live in an external store (`downloads-store.ts`) outside React; row components subscribe individually; main process pushes aggregate stats directly to avoid list iterations. |
+| 3.2 | Virtualise the downloads table | Done | In-house windowing hook (`useWindowedList`) renders only visible rows with constant row height at 60 fps. |
+| 3.3 | Send smaller progress updates | Done | Compact `DownloadProgressPatch` sent during flushes; whole items sent only on structural change; segment state sent only for watched items. |
+| 3.4 | Write segments straight into the final file | Done | Sparse `.gdownload` file allocated via `truncate()`; positional `FileHandle.write()` per segment; progress saved to `.gdownload.meta` sidecar; instantaneous completion rename; legacy `.grabbit-<id>` folder migration supported. |
+| 3.5 | Manager hot paths | Done | Cached error/pause status flags; `updateTrayTooltip` uses cached active count; O(1) Sets for queue ordering and item removal; per-queue active counters. |
+| 3.6 | Persistence that scales | Done | Split storage into `active.json` (debounced on ticks) and `history.json` (written on status changes/completions); automatic migration from legacy `downloads.json`; history capped to 5,000 items. |
+| 3.7 | Network engine | Done | `HostConnectionPool` caps concurrent connections per host (default 8); straggler detection drops connections running < 20% median speed after 6s; dynamic connection reduction on HTTP 429/503; multi-stage probe fallback (`bytes=0-0` → `HEAD` → `bytes=0-` → `GET`). |
+| 3.8 | Startup and bundle | Done | `SettingsView`, `RecognizeView`, and `AddDownloadDialog` lazy-loaded with `React.lazy()` / `<Suspense>`; `styles.css` modularized into per-view stylesheets under `styles/`; tool probes deferred until Settings opens; cold-start timing logged on launch. |
+
+### 3.1 Stop re-rendering the whole app twice a second — M (Done)
 `AppProvider` (`state.tsx`) exposes one context holding `downloads`. Every progress flush (250 ms)
 produces a new array, so `Shell`, the sidebar, Settings and every row re-render. In `App.tsx` the
 `active` array is rebuilt each render, which defeats the `useMemo` that depends on it, and the
@@ -102,18 +113,18 @@ paste/keydown effect has no dependency array so listeners are re-attached every 
   in `tick()`, so the title bar and sidebar never iterate the list.
 - Fix the effect dependency array and memoise `active`.
 
-### 3.2 Virtualise the downloads table — M
+### 3.2 Virtualise the downloads table — M (Done)
 `DownloadsView.tsx:464` maps every visible item into a `<tr>`. Add `@tanstack/react-virtual`
 (switch the table to a CSS-grid row layout so virtualisation works cleanly). Target: 10,000 items
 scroll at 60 fps.
 
-### 3.3 Send smaller progress updates — S
+### 3.3 Send smaller progress updates — S (Done)
 `onItemsChanged` ships whole `DownloadItem` objects, including `segments`, `headers` and `media`,
 for every active item four times a second. Send a compact progress patch
 (`id, receivedBytes, speed, eta, status, activeConnections`) and full items only on structural
 change. Send `segments` only while the Segment Inspector is open for that item.
 
-### 3.4 Write segments straight into the final file — L
+### 3.4 Write segments straight into the final file — L (Done)
 Today each segment goes to its own `.part` file and `assemble()` copies them all into
 `.gdownload` (`http-engine.ts:466-492`). That doubles disk writes and needs extra free space.
 
@@ -124,7 +135,7 @@ Today each segment goes to its own `.part` file and `assemble()` copies them all
 - Completion becomes a rename. Keep `planSegments`/`splitLargest` unchanged.
 - Migration: detect an old `.grabbit-<id>` part folder and finish it with the old path.
 
-### 3.5 Manager hot paths — S
+### 3.5 Manager hot paths — S (Done)
 - `tick()` scans every item for `hasError`/`hasPaused` twice a second; keep counters updated on
   status change instead.
 - `updateTrayTooltip()` calls `manager.list()` (allocates the full list) on every tick; use the
@@ -134,18 +145,18 @@ Today each segment goes to its own `.part` file and `assemble()` copies them all
   import — emit once per batch.
 - `pump()` recounts active-per-queue by filtering `running` per queue; keep a per-queue counter.
 
-### 3.6 Persistence that scales — M
+### 3.6 Persistence that scales — M (Done)
 `downloads.json` is rewritten in full every 5 s while anything is active, including all completed
 history. Split into `active.json` (small, written often) and an append-only history, or move to
 SQLite. Cap or archive history (setting: keep last N / N days).
 
-### 3.7 Network engine — M
+### 3.7 Network engine — M (Done)
 - Per-host connection cap (default 8–16) so several downloads from one host do not trip rate limits.
 - Drop and replace connections that are much slower than the item's median.
 - On repeated 429/503, reduce that item's connection count instead of only backing off.
 - Retry the probe with `HEAD`/`Range: bytes=0-0` variants for servers that reject `bytes=0-`.
 
-### 3.8 Startup and bundle — S
+### 3.8 Startup and bundle — S (Done)
 - Lazy-load `SettingsView`, `RecognizeView` and the modals (`React.lazy`).
 - `styles.css` is one 2,255-line file; split per view as part of the UI work.
 - Defer the yt-dlp/ffmpeg version probes until Settings opens (check current behaviour first).
