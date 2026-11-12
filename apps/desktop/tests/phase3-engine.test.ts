@@ -6,17 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AppSettings, DownloadItem } from '../src/shared/types';
-import { DEFAULT_APP_SETTINGS } from '../src/main/settings';
-import {
-  defaultHostPool,
-  HostConnectionPool,
-  httpRequest,
-} from '../src/main/downloads/http-client';
-import {
-  HttpDownloadTask,
-  probeUrl,
-  requiredFreeBytes,
-} from '../src/main/downloads/http-engine';
+import { defaultSettings } from '../src/main/settings';
+import { HostConnectionPool } from '../src/main/downloads/http-client';
+import { HttpDownloadTask, probeUrl } from '../src/main/downloads/http-engine';
 import { DownloadManager } from '../src/main/downloads/manager';
 import { RateLimiter } from '../src/main/downloads/throttle';
 
@@ -255,7 +247,7 @@ describe('DownloadManager active vs history persistence and capping', () => {
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'grabbit-mgr-'));
-    settings = { ...DEFAULT_APP_SETTINGS, downloadDir: dir, resumeOnStartup: false };
+    settings = { ...defaultSettings(), downloadDir: dir, resumeOnStartup: false };
   });
 
   afterAll(() => {
