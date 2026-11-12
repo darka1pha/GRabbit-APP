@@ -392,7 +392,7 @@ function initUpdateControls(): void {
           }
         } else {
           updateBannerEl.className = 'update-banner uptodate';
-          updateTextEl.textContent = `v${info?.currentVersion || '1.2.0'} • Click Reload to refresh`;
+          updateTextEl.textContent = `v${info?.currentVersion || '1.2.1'} • Click Reload to refresh`;
           downloadUpdateBtnEl.style.display = 'none';
         }
       }

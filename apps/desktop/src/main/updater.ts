@@ -18,7 +18,7 @@ export interface AutoUpdaterDeps {
 export class AutoUpdaterService {
   private status: UpdateStatusInfo = {
     state: 'idle',
-    version: typeof app?.getVersion === 'function' ? app.getVersion() : '1.2.0',
+    version: typeof app?.getVersion === 'function' ? app.getVersion() : '1.2.1',
   };
   private autoInstallRequested = false;
   private downloadedInstallerPath: string | null = null;
@@ -29,7 +29,7 @@ export class AutoUpdaterService {
   }
 
   private getCurrentVersion(): string {
-    return typeof app?.getVersion === 'function' ? app.getVersion() : '1.2.0';
+    return typeof app?.getVersion === 'function' ? app.getVersion() : '1.2.1';
   }
 
   private init(): void {

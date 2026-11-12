@@ -26,7 +26,7 @@ const GITHUB_RELEASES_PAGE = 'https://github.com/darka1pha/GRabbit-APP/releases/
 async function checkExtensionUpdate(autoInstall = true): Promise<ExtensionUpdateInfo> {
   const currentVersion =
     (typeof chrome !== 'undefined' && chrome.runtime?.getManifest ? chrome.runtime.getManifest().version : null) ||
-    '1.2.0';
+    '1.2.1';
 
   try {
     const controller = new AbortController();

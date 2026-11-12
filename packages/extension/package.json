@@ -1,6 +1,6 @@
 {
   "name": "@grabbit/extension",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "GRabbit Browser Companion Extension (IDM-style)",
   "private": true,
   "type": "module",

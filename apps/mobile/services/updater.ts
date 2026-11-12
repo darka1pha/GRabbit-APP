@@ -39,9 +39,9 @@ export class MobileUpdaterService {
 
   public getCurrentVersion(): string {
     try {
-      return Constants.expoConfig?.version || '1.2.0';
+      return Constants.expoConfig?.version || '1.2.1';
     } catch {
-      return '1.2.0';
+      return '1.2.1';
     }
   }
 

@@ -11,7 +11,7 @@ import { mobileRecognizer } from '../services/recognizer';
 
 vi.mock('expo-constants', () => ({
   default: {
-    expoConfig: { version: '1.2.0' },
+    expoConfig: { version: '1.2.1' },
   },
 }));
 
@@ -249,10 +249,10 @@ describe('Mobile App Desktop Feature Parity', () => {
       const IntentLauncher = await import('expo-intent-launcher');
       const startActivitySpy = vi.spyOn(IntentLauncher, 'startActivityAsync');
 
-      await mobileUpdater.launchApkInstaller('/mock/cache/GRabbit-v1.2.0.apk');
+      await mobileUpdater.launchApkInstaller('/mock/cache/GRabbit-v1.2.1.apk');
 
       expect(startActivitySpy).toHaveBeenCalledWith('android.intent.action.VIEW', {
-        data: 'content://com.grabbit.mobile.provider/mock/cache/GRabbit-v1.2.0.apk',
+        data: 'content://com.grabbit.mobile.provider/mock/cache/GRabbit-v1.2.1.apk',
         type: 'application/vnd.android.package-archive',
         flags: 1,
       });
@@ -263,7 +263,7 @@ describe('Mobile App Desktop Feature Parity', () => {
       const IntentLauncher = await import('expo-intent-launcher');
       const startActivitySpy = vi.spyOn(IntentLauncher, 'startActivityAsync');
 
-      (mobileUpdater as any).status.localUri = '/mock/cache/GRabbit-v1.2.0.apk';
+      (mobileUpdater as any).status.localUri = '/mock/cache/GRabbit-v1.2.1.apk';
       const res = await mobileUpdater.installDownloadedApk();
 
       expect(res.state).toBe('installing');

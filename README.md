@@ -18,16 +18,16 @@ A lightweight, 100% local 32-connection download manager, 4K social media grabbe
 
 ---
 
-## ⬇ Download Latest Release (`v1.2.0`)
+## ⬇ Download Latest Release (`v1.2.1`)
 
 All official builds are compiled automatically via GitHub Actions and published on the [**GitHub Releases**](https://github.com/darka1pha/GRabbit-APP/releases/latest) page:
 
 | Platform | Package Type | Requirements | Direct Download |
 | :--- | :--- | :--- | :--- |
-| **Windows Installer** *(Recommended)* | Full NSIS Setup (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-Setup-1.2.0.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.2.0.exe) |
-| **Windows Portable** | Zero-Install Standalone (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-1.2.0-portable.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.2.0-portable.exe) |
-| **Android Mobile App** | Universal APK (`.apk`) | Android 8.0+ / Xiaomi MIUI | [**Download `GRabbit-v1.2.0.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.0.apk) |
-| **Browser Extension** | Manifest V3 Unpacked (`.zip`) | Chrome, Edge, Brave, Opera | [**Download `GRabbit-Chrome-Extension-v1.2.0.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.0.zip) |
+| **Windows Installer** *(Recommended)* | Full NSIS Setup (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-Setup-1.2.1.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.2.1.exe) |
+| **Windows Portable** | Zero-Install Standalone (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-1.2.1-portable.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.2.1-portable.exe) |
+| **Android Mobile App** | Universal APK (`.apk`) | Android 8.0+ / Xiaomi MIUI | [**Download `GRabbit-v1.2.1.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.1.apk) |
+| **Browser Extension** | Manifest V3 Unpacked (`.zip`) | Chrome, Edge, Brave, Opera | [**Download `GRabbit-Chrome-Extension-v1.2.1.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.1.zip) |
 | **Checksums** | SHA-256 Hashes (`.txt`) | All Platforms | [**View `SHA256SUMS.txt`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/SHA256SUMS.txt) |
 
 > 📦 Browse all versions and release notes at **[github.com/darka1pha/GRabbit-APP/releases](https://github.com/darka1pha/GRabbit-APP/releases)**.
@@ -50,20 +50,20 @@ All official builds are compiled automatically via GitHub Actions and published 
 ## 📖 Quick Setup & Usage Guide
 
 ### 1. Windows Desktop App
-1. Download and run [**`GRabbit-Setup-1.2.0.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.2.0.exe) (or launch [**`GRabbit-1.2.0-portable.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.2.0-portable.exe)). Both `yt-dlp` and `FFmpeg` are bundled inside automatically.
+1. Download and run [**`GRabbit-Setup-1.2.1.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.2.1.exe) (or launch [**`GRabbit-1.2.1-portable.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.2.1-portable.exe)). Both `yt-dlp` and `FFmpeg` are bundled inside automatically.
 2. **Direct File Downloads:** Open **Downloads → + Add** and paste any direct file link (`.iso`, `.zip`, `.rar`, `.exe`, `.mp4`).
 3. **Social Video & Audio:** Open **Grab Media**, paste a YouTube, Instagram, TikTok, Spotify, or SoundCloud URL, and select your desired resolution or MP3/M4A audio format.
 4. **Global Quick Grab Shortcut:** Press `Ctrl + Alt + G` anywhere in Windows to open the floating Quick Grab bar without leaving your current window.
 
 ### 2. Chrome / Edge / Brave Extension (Unpacked Setup)
-1. Download [**`GRabbit-Chrome-Extension-v1.2.0.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.0.zip) and extract (unzip) it to a permanent folder on your computer.
+1. Download [**`GRabbit-Chrome-Extension-v1.2.1.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.1.zip) and extract (unzip) it to a permanent folder on your computer.
 2. Open `chrome://extensions` in your browser and enable **Developer mode** in the top-right corner.
 3. Click **Load unpacked** (top-left) and select the extracted folder (the folder containing `manifest.json`).
 4. Keep **GRabbit Desktop** running—the extension automatically connects to the local RPC bridge on `http://127.0.0.1:31542` and shows **🟢 Connected**.
 5. Hover over any web video to click **🐰 Download with GRabbit**, or right-click any link/page to send downloads directly to GRabbit.
 
 ### 3. Android Mobile App (`.apk`)
-1. Download [**`GRabbit-v1.2.0.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.0.apk) on your Android device and tap to install *(allow "Install unknown apps" if prompted)*.
+1. Download [**`GRabbit-v1.2.1.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.1.apk) on your Android device and tap to install *(allow "Install unknown apps" if prompted)*.
 2. **Share from Any App:** While watching a video in YouTube, Instagram, TikTok, or X, tap **Share → GRabbit** to inspect qualities and start downloading immediately.
 3. **Desktop Wi-Fi Sync (Optional):** Go to **Settings → Desktop RPC Bridge**, enter your PC's local LAN IP and port `31542`, and send heavy downloads straight from your phone to your PC.
 
