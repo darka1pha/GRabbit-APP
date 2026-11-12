@@ -1,0 +1,192 @@
+/* ------------------------------------------------------------------ queues */
+
+.queue-bar {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.queue-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.queue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.queue-pill:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.queue-pill.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.queue-tab-group {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: all 0.15s ease;
+  overflow: hidden;
+}
+
+.queue-tab-group:hover {
+  border-color: var(--border-strong);
+}
+
+.queue-tab-group.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.queue-pill-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.queue-tab-group.active .queue-pill-main {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.queue-tab-group:hover .queue-pill-main {
+  color: var(--text);
+}
+
+.queue-tab-group.active:hover .queue-pill-main {
+  color: var(--accent);
+}
+
+.queue-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.queue-dot.running {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.45);
+}
+
+.queue-dot.stopped {
+  background: var(--muted);
+  opacity: 0.45;
+}
+
+.queue-title {
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--surface-3);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-tab-group.active .queue-badge,
+.queue-pill.active .queue-badge {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.queue-btn-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+  margin-right: 2px;
+  transition: all 0.15s ease;
+}
+
+.queue-btn-action:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.queue-btn-action.running {
+  color: #10b981;
+}
+
+.queue-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.queue-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.queue-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  margin-inline-end: 4px;
+  vertical-align: middle;
+}

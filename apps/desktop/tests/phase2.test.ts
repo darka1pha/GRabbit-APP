@@ -101,10 +101,10 @@ describe('stall timeout', () => {
 });
 
 describe('free space estimate', () => {
-  it('needs the file once, plus every part except the first a second time', () => {
+  it('needs the file once without duplicating segments into parts', () => {
     const seg = (start: number, end: number) => ({ start, end, received: 0, part: '0' });
     expect(requiredFreeBytes([seg(0, 99)])).toBe(100);
-    expect(requiredFreeBytes([seg(0, 99), seg(100, 199), seg(200, 299), seg(300, 399)])).toBe(400 + 300);
+    expect(requiredFreeBytes([seg(0, 99), seg(100, 199), seg(200, 299), seg(300, 399)])).toBe(400);
     expect(requiredFreeBytes([{ start: 0, end: null, received: 0, part: '0' }])).toBe(0);
   });
 });

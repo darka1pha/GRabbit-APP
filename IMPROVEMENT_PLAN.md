@@ -7,26 +7,34 @@ Effort: **S** ≈ under a day, **M** ≈ 1–3 days, **L** ≈ a week or more.
 
 ## Order of work
 
-| Phase | Theme | Why this order |
-|---|---|---|
-| 1 | RPC bridge security | Remotely exploitable on the default configuration |
-| 2 | Correctness bugs | Features that silently do the wrong thing |
-| 3 | Desktop performance | Scales poorly past a few hundred items |
-| 4 | Mobile performance & honesty | Disk write on every progress event; simulated segments |
-| 5 | Desktop UI/UX | Keyboard, accessibility, i18n gaps, narrow layout |
-| 6 | Mobile UI/UX | Lists, background downloads, accessibility |
-| 7 | Extension | Permission footprint, per-page cost |
-| 8 | Tooling & release | Lint, lockfile, signing, cleanup |
-| 9 | New features | Only after the above |
+| Phase | Theme | Why this order | Status |
+|---|---|---|---|
+| 1 | RPC bridge security | Remotely exploitable on the default configuration | Done |
+| 2 | Correctness bugs | Features that silently do the wrong thing | Done |
+| 3 | Desktop performance | Scales poorly past a few hundred items | Done |
+| 4 | Mobile performance & honesty | Disk write on every progress event; simulated segments | Pending |
+| 5 | Desktop UI/UX | Keyboard, accessibility, i18n gaps, narrow layout | Pending |
+| 6 | Mobile UI/UX | Lists, background downloads, accessibility | Pending |
+| 7 | Extension | Permission footprint, per-page cost | Pending |
+| 8 | Tooling & release | Lint, lockfile, signing, cleanup | Pending |
+| 9 | New features | Only after the above | Pending |
 
 ---
 
-## Phase 1 — RPC bridge security (do first)
+## Phase 1 — RPC bridge security (do first) — [COMPLETED]
 
 The bridge in `apps/desktop/src/main/rpc-bridge.ts` is enabled by default, and `allowLan` defaults to
 `true` (`settings.ts:54`), so it listens on `0.0.0.0:31542` on a fresh install.
 
-### 1.1 Remove the Origin / client-header auth bypass — S
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 1.1 | Remove the Origin / client-header auth bypass | Done | Mandatory token comparison via `timingSafeEqual`; deleted Origin and `X-GRabbit-Client` auth bypass; dropped `?token=` query param. |
+| 1.2 | Default to loopback | Done | `allowLan` default set to `false`; warning shown when toggled on; non-loopback / non-LAN `Host` headers rejected to prevent DNS rebinding. |
+| 1.3 | Constrain what remote callers can ask for | Done | Ignored custom `directory` from RPC, enforced `settings.downloadDir`; sanitized filenames; added SSRF protections to prevent internal network scanning; restricted CORS to browser extensions. |
+| 1.4 | Protect secrets at rest | Done | Encrypted bridge token, Spotify client secret, and Instagram session ID at rest via Electron `safeStorage`. |
+| 1.5 | Validate IPC and RPC inputs | Done | Strict Zod schemas for all IPC and RPC calls (`@grabbit/schemas`), and validated `openPath` boundaries. |
+
+### 1.1 Remove the Origin / client-header auth bypass — S (Done)
 `authenticate()` (`rpc-bridge.ts:129-146`) accepts any request whose `Origin` starts with
 `chrome-extension://` or `moz-extension://`, with no token. `Origin` is only trustworthy when a browser
 sends it; any device on the LAN can set it with curl. Combined with `/downloads/add` accepting an
@@ -40,13 +48,13 @@ an attacker-chosen folder (for example the Startup folder).
   popup show a clear "paste token" state when `/ping` returns `authenticated: false`.
 - Tests: extend `tests/rpc-bridge.test.ts` with spoofed-Origin and missing-token cases expecting 401.
 
-### 1.2 Default to loopback — S
+### 1.2 Default to loopback — S (Done)
 - `allowLan` default → `false`; switching it on shows a one-line warning in Settings.
 - Migration: existing users keep their saved value; only the default changes.
 - Reject requests whose `Host` header is not `127.0.0.1`, `localhost`, or the machine's LAN IP
   (blocks DNS rebinding from web pages).
 
-### 1.3 Constrain what remote callers can ask for — M
+### 1.3 Constrain what remote callers can ask for — M (Done)
 - `/downloads/add` and `/batch`: ignore `directory` from RPC callers (or require it to resolve inside
   `settings.downloadDir`); run `fileName` through `sanitizeFilename`; cap batch size.
 - `/extension/update` (`rpc-bridge.ts:349-393`): fetches any URL and unzips it via PowerShell, and
@@ -58,11 +66,11 @@ an attacker-chosen folder (for example the Startup folder).
 - CORS: replace `Access-Control-Allow-Origin: *` with an echo of extension origins only.
 - Add a small per-IP rate limit and a cap on concurrent requests.
 
-### 1.4 Protect secrets at rest — S
+### 1.4 Protect secrets at rest — S (Done)
 `settings.json` stores the bridge token, Spotify client secret and Instagram session id in plain text.
 Encrypt those three fields with Electron `safeStorage`, with a one-time migration on load.
 
-### 1.5 Validate IPC and RPC inputs — M
+### 1.5 Validate IPC and RPC inputs — M (Done)
 `ipc.ts` passes renderer arguments straight to the manager (`any` on queue handlers). `@grabbit/schemas`
 (Zod) exists but is not used here. Parse every IPC and RPC payload with a schema; restrict `openPath`
 to paths the manager knows about.
@@ -72,24 +80,35 @@ reachable from the LAN; `settings.json` contains no readable secrets.
 
 ---
 
-## Phase 2 — Correctness bugs
+## Phase 2 — Correctness bugs — [COMPLETED]
 
-| # | Problem | Where | Fix | Effort |
-|---|---|---|---|---|
-| 2.1 | Scheduler only fires if the clock reads exactly `HH:MM` while the app is running. Launching at 02:05, or waking from sleep after the start time, skips the whole night. | `manager.ts:842-877` | Treat start/stop as a window: on each tick compute "should be running now" and apply the transition once per window. Handle windows that cross midnight. Add day-of-week selection. | M |
-| 2.2 | Per-queue `afterQueue` (`quit`/`sleep`/`shutdown`) is ignored: `checkQueueDrained` calls the global `onQueueDrained()`, which runs `settings.afterQueue` (default `none`). | `manager.ts:605-621`, `index.ts:130` | Pass the queue's action through the callback. Before sleep/shutdown, confirm no other queue is active and show a cancellable countdown dialog instead of a notification. | S |
-| 2.3 | Dead ternary: `defaultAudioFormat === 'mp3' ? 'video' : 'video'` — links sent from the browser always become video, even Spotify/SoundCloud. | `rpc-bridge.ts:428` | Pick audio for audio-only platforms, otherwise honour a `format` field from the caller. | S |
-| 2.4 | `saveSync` at quit can race an in-flight async write; both use the same `.tmp` path. `saveSync` also skips the `.bak` rotation. | `store.ts` | Track the in-flight promise; use a unique tmp name per write; fsync before rename. | S |
-| 2.5 | `store.load` trusts file contents; there is no schema version. | `store.ts`, `manager.ts:119` | Wrap documents as `{ version, data }`, validate with Zod, migrate by version. | M |
-| 2.6 | No free-space check; assembling parts needs up to ~2× the file size. A full disk surfaces late as `ENOSPC`. | `http-engine.ts` | Check free space after probe (`fs.statfs`); fail early with a clear message. Resolved more fully by 3.4. | S |
-| 2.7 | Stall timeout uses `req.setTimeout` only; verify it still fires for a response body that stops mid-stream, and add a test. | `http-client.ts:46` | Add an idle timer in `pump()` if the test shows a gap. | S |
-| 2.8 | Notifications, tray menu and several renderer strings are English-only although the app ships Persian. | `index.ts`, `App.tsx:315-318,240,384` | Move main-process strings into a shared message table keyed by `settings.language`. | S |
+| # | Problem | Where | Fix | Status | Effort |
+|---|---|---|---|---|---|
+| 2.1 | Scheduler only fires if the clock reads exactly `HH:MM` while the app is running. Launching at 02:05, or waking from sleep after the start time, skips the whole night. | `manager.ts:842-877` | Treat start/stop as a window: on each tick compute "should be running now" and apply the transition once per window. Handle windows that cross midnight. Add day-of-week selection. | Done | M |
+| 2.2 | Per-queue `afterQueue` (`quit`/`sleep`/`shutdown`) is ignored: `checkQueueDrained` calls the global `onQueueDrained()`, which runs `settings.afterQueue` (default `none`). | `manager.ts:605-621`, `index.ts:130` | Pass the queue's action through the callback. Before sleep/shutdown, confirm no other queue is active and show a cancellable countdown dialog instead of a notification. | Done | S |
+| 2.3 | Dead ternary: `defaultAudioFormat === 'mp3' ? 'video' : 'video'` — links sent from the browser always become video, even Spotify/SoundCloud. | `rpc-bridge.ts:428` | Pick audio for audio-only platforms, otherwise honour a `format` field from the caller. | Done | S |
+| 2.4 | `saveSync` at quit can race an in-flight async write; both use the same `.tmp` path. `saveSync` also skips the `.bak` rotation. | `store.ts` | Track the in-flight promise; use a unique tmp name per write; fsync before rename. | Done | S |
+| 2.5 | `store.load` trusts file contents; there is no schema version. | `store.ts`, `manager.ts:119` | Wrap documents as `{ version, data }`, validate with Zod, migrate by version. | Done | M |
+| 2.6 | No free-space check; assembling parts needs up to ~2× the file size. A full disk surfaces late as `ENOSPC`. | `http-engine.ts` | Check free space after probe (`fs.statfs`); fail early with a clear message. Resolved more fully by 3.4. | Done | S |
+| 2.7 | Stall timeout uses `req.setTimeout` only; verify it still fires for a response body that stops mid-stream, and add a test. | `http-client.ts:46` | Add an idle timer in `pump()` if the test shows a gap. | Done | S |
+| 2.8 | Notifications, tray menu and several renderer strings are English-only although the app ships Persian. | `index.ts`, `App.tsx:315-318,240,384` | Move main-process strings into a shared message table keyed by `settings.language`. | Done | S |
 
 ---
 
-## Phase 3 — Desktop performance
+## Phase 3 — Desktop performance — [COMPLETED]
 
-### 3.1 Stop re-rendering the whole app twice a second — M
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 3.1 | Stop re-rendering the whole app twice a second | Done | Downloads live in an external store (`downloads-store.ts`) outside React; row components subscribe individually; main process pushes aggregate stats directly to avoid list iterations. |
+| 3.2 | Virtualise the downloads table | Done | In-house windowing hook (`useWindowedList`) renders only visible rows with constant row height at 60 fps. |
+| 3.3 | Send smaller progress updates | Done | Compact `DownloadProgressPatch` sent during flushes; whole items sent only on structural change; segment state sent only for watched items. |
+| 3.4 | Write segments straight into the final file | Done | Sparse `.gdownload` file allocated via `truncate()`; positional `FileHandle.write()` per segment; progress saved to `.gdownload.meta` sidecar; instantaneous completion rename; legacy `.grabbit-<id>` folder migration supported. |
+| 3.5 | Manager hot paths | Done | Cached error/pause status flags; `updateTrayTooltip` uses cached active count; O(1) Sets for queue ordering and item removal; per-queue active counters. |
+| 3.6 | Persistence that scales | Done | Split storage into `active.json` (debounced on ticks) and `history.json` (written on status changes/completions); automatic migration from legacy `downloads.json`; history capped to 5,000 items. |
+| 3.7 | Network engine | Done | `HostConnectionPool` caps concurrent connections per host (default 8); straggler detection drops connections running < 20% median speed after 6s; dynamic connection reduction on HTTP 429/503; multi-stage probe fallback (`bytes=0-0` → `HEAD` → `bytes=0-` → `GET`). |
+| 3.8 | Startup and bundle | Done | `SettingsView`, `RecognizeView`, and `AddDownloadDialog` lazy-loaded with `React.lazy()` / `<Suspense>`; `styles.css` modularized into per-view stylesheets under `styles/`; tool probes deferred until Settings opens; cold-start timing logged on launch. |
+
+### 3.1 Stop re-rendering the whole app twice a second — M (Done)
 `AppProvider` (`state.tsx`) exposes one context holding `downloads`. Every progress flush (250 ms)
 produces a new array, so `Shell`, the sidebar, Settings and every row re-render. In `App.tsx` the
 `active` array is rebuilt each render, which defeats the `useMemo` that depends on it, and the
@@ -102,18 +121,18 @@ paste/keydown effect has no dependency array so listeners are re-attached every 
   in `tick()`, so the title bar and sidebar never iterate the list.
 - Fix the effect dependency array and memoise `active`.
 
-### 3.2 Virtualise the downloads table — M
+### 3.2 Virtualise the downloads table — M (Done)
 `DownloadsView.tsx:464` maps every visible item into a `<tr>`. Add `@tanstack/react-virtual`
 (switch the table to a CSS-grid row layout so virtualisation works cleanly). Target: 10,000 items
 scroll at 60 fps.
 
-### 3.3 Send smaller progress updates — S
+### 3.3 Send smaller progress updates — S (Done)
 `onItemsChanged` ships whole `DownloadItem` objects, including `segments`, `headers` and `media`,
 for every active item four times a second. Send a compact progress patch
 (`id, receivedBytes, speed, eta, status, activeConnections`) and full items only on structural
 change. Send `segments` only while the Segment Inspector is open for that item.
 
-### 3.4 Write segments straight into the final file — L
+### 3.4 Write segments straight into the final file — L (Done)
 Today each segment goes to its own `.part` file and `assemble()` copies them all into
 `.gdownload` (`http-engine.ts:466-492`). That doubles disk writes and needs extra free space.
 
@@ -124,7 +143,7 @@ Today each segment goes to its own `.part` file and `assemble()` copies them all
 - Completion becomes a rename. Keep `planSegments`/`splitLargest` unchanged.
 - Migration: detect an old `.grabbit-<id>` part folder and finish it with the old path.
 
-### 3.5 Manager hot paths — S
+### 3.5 Manager hot paths — S (Done)
 - `tick()` scans every item for `hasError`/`hasPaused` twice a second; keep counters updated on
   status change instead.
 - `updateTrayTooltip()` calls `manager.list()` (allocates the full list) on every tick; use the
@@ -134,18 +153,18 @@ Today each segment goes to its own `.part` file and `assemble()` copies them all
   import — emit once per batch.
 - `pump()` recounts active-per-queue by filtering `running` per queue; keep a per-queue counter.
 
-### 3.6 Persistence that scales — M
+### 3.6 Persistence that scales — M (Done)
 `downloads.json` is rewritten in full every 5 s while anything is active, including all completed
 history. Split into `active.json` (small, written often) and an append-only history, or move to
 SQLite. Cap or archive history (setting: keep last N / N days).
 
-### 3.7 Network engine — M
+### 3.7 Network engine — M (Done)
 - Per-host connection cap (default 8–16) so several downloads from one host do not trip rate limits.
 - Drop and replace connections that are much slower than the item's median.
 - On repeated 429/503, reduce that item's connection count instead of only backing off.
 - Retry the probe with `HEAD`/`Range: bytes=0-0` variants for servers that reject `bytes=0-`.
 
-### 3.8 Startup and bundle — S
+### 3.8 Startup and bundle — S (Done)
 - Lazy-load `SettingsView`, `RecognizeView` and the modals (`React.lazy`).
 - `styles.css` is one 2,255-line file; split per view as part of the UI work.
 - Defer the yt-dlp/ffmpeg version probes until Settings opens (check current behaviour first).

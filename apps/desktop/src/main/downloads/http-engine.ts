@@ -1,15 +1,16 @@
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { mkdir, open, rename, rm, stat, statfs, truncate } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, rm, stat, statfs, truncate, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
-import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import type { DownloadItem, SegmentState } from '../../shared/types';
 import { HttpStatusError, JobCancelledError } from '../media/errors';
 import { logger } from '../logger';
 import {
+  defaultHostPool,
   filenameFromContentDisposition,
   filenameFromUrl,
   headerValue,
+  HostConnectionPool,
   httpRequest,
   HttpResponse,
   parseContentRange,
@@ -29,6 +30,12 @@ export class ResourceChangedError extends Error {
   }
 }
 
+class StragglerError extends Error {
+  constructor() {
+    super('Straggler connection: throughput significantly below median');
+  }
+}
+
 export interface ProbeInfo {
   finalUrl: string;
   totalBytes: number | null;
@@ -39,11 +46,21 @@ export interface ProbeInfo {
   lastModified?: string;
 }
 
+export interface DownloadSidecarMeta {
+  version: 1;
+  url: string;
+  totalBytes: number | null;
+  etag?: string;
+  lastModified?: string;
+  segments: SegmentState[];
+}
+
 export interface HttpTaskContext {
   globalLimiter: RateLimiter;
   itemLimiter: RateLimiter;
   userAgent: string;
   maxRetries: number;
+  hostPool?: HostConnectionPool;
   /** First response of a fresh download: lets the manager pick the final name / folder. */
   onProbe(info: ProbeInfo): Promise<void> | void;
   /** Segments changed in a way worth saving (split, finished...). */
@@ -123,7 +140,7 @@ function analyzeResponse(res: HttpResponse): ProbeInfo {
   return { ...base, totalBytes, resumable: acceptsRanges && totalBytes !== null };
 }
 
-/** Buffers small network chunks into ~1 MB appends. */
+/** Buffers small network chunks into ~1 MB appends for legacy part files. */
 class PartWriter {
   private chunks: Buffer[] = [];
   private size = 0;
@@ -157,6 +174,50 @@ class PartWriter {
   }
 }
 
+/** Buffers small network chunks and writes them directly at the segment's file offset. */
+class SparseSegmentWriter {
+  private chunks: Buffer[] = [];
+  private size = 0;
+  private flushedBytes: number;
+
+  private constructor(
+    private handle: import('node:fs/promises').FileHandle,
+    private startPos: number,
+    initialReceived: number
+  ) {
+    this.flushedBytes = initialReceived;
+  }
+
+  static async open(path: string, startPos: number, initialReceived: number): Promise<SparseSegmentWriter> {
+    return new SparseSegmentWriter(await open(path, 'r+'), startPos, initialReceived);
+  }
+
+  async write(chunk: Buffer, onFlush?: () => Promise<void> | void): Promise<void> {
+    this.chunks.push(chunk);
+    this.size += chunk.length;
+    if (this.size >= WRITE_BUFFER_BYTES) await this.flush(onFlush);
+  }
+
+  async flush(onFlush?: () => Promise<void> | void): Promise<void> {
+    if (this.size === 0) return;
+    const data = this.chunks.length === 1 ? this.chunks[0] : Buffer.concat(this.chunks, this.size);
+    const writePos = this.startPos + this.flushedBytes;
+    this.chunks = [];
+    this.size = 0;
+    await this.handle.write(data, 0, data.length, writePos);
+    this.flushedBytes += data.length;
+    if (onFlush) await onFlush();
+  }
+
+  async close(onFlush?: () => Promise<void> | void): Promise<void> {
+    try {
+      await this.flush(onFlush);
+    } finally {
+      await this.handle.close();
+    }
+  }
+}
+
 function isFatal(err: unknown): boolean {
   if (err instanceof ResourceChangedError) return true;
   if (err instanceof HttpStatusError) return err.status >= 400 && err.status < 500 && ![408, 425, 429].includes(err.status);
@@ -172,13 +233,12 @@ function backoffMs(attempt: number, res?: HttpResponse): number {
 }
 
 /**
- * Bytes a download needs free in its folder. Parts are joined into one file at the end: the
- * first part is renamed and the others are copied after it, so all but the first exist twice.
+ * Bytes a download needs free in its folder. Segments are written directly into the pre-allocated
+ * sparse file, so only the file size itself is required (no duplicate part assembly).
  */
 export function requiredFreeBytes(segments: SegmentState[]): number {
   const lengths = segments.map((s) => segmentLength(s) ?? 0);
-  const total = lengths.reduce((sum, n) => sum + n, 0);
-  return total + (total - (lengths[0] ?? 0));
+  return lengths.reduce((sum, n) => sum + n, 0);
 }
 
 /** Fails early, with the same error a full disk gives later, when the folder clearly cannot hold the file. */
@@ -196,19 +256,16 @@ async function assertFreeSpace(directory: string, needed: number): Promise<void>
   }
 }
 
-/** Marks a folder hidden in Explorer (best effort). */
-function hideFolder(path: string): void {
-  if (process.platform !== 'win32') return;
-  spawn('attrib', ['+h', path], { windowsHide: true, stdio: 'ignore' }).on('error', () => undefined);
-}
-
 /**
- * One multi-connection HTTP download. Each segment downloads into its own part file inside a
- * hidden working folder; part file sizes are the source of truth when resuming. When a
- * connection finishes early it takes over half of the largest remaining segment.
+ * One multi-connection HTTP download. Segments are written straight into a sparse
+ * `${directory}/${fileName}.gdownload` file at their offsets. Progress is persisted
+ * in a small sidecar file (`.gdownload.meta`), making completion an instant rename.
+ * Also supports resuming legacy `.grabbit-<id>` part folders.
  */
 export class HttpDownloadTask {
   private active = new Set<SegmentState>();
+  private isLegacy = false;
+  private segmentSpeeds = new Map<string, { bytes: number; lastCheck: number; speed: number; startTime: number }>();
 
   constructor(
     private readonly item: DownloadItem,
@@ -217,6 +274,14 @@ export class HttpDownloadTask {
 
   get activeConnections(): number {
     return this.active.size;
+  }
+
+  public get targetPath(): string {
+    return join(this.item.directory, `${this.item.fileName}.gdownload`);
+  }
+
+  public get metaPath(): string {
+    return `${this.targetPath}.meta`;
   }
 
   public static partDir(item: Pick<DownloadItem, 'directory' | 'id'>): string {
@@ -238,7 +303,26 @@ export class HttpDownloadTask {
     return headers;
   }
 
-  /** Downloads every segment, then joins the parts into `${directory}/${fileName}.gdownload`. Returns that path. */
+  private async saveMeta(): Promise<void> {
+    if (this.isLegacy) return;
+    const meta: DownloadSidecarMeta = {
+      version: 1,
+      url: this.item.url,
+      totalBytes: this.item.totalBytes,
+      etag: this.item.etag,
+      lastModified: this.item.lastModified,
+      segments: this.item.segments ? this.item.segments.map((s) => ({ ...s })) : [],
+    };
+    const tmp = `${this.metaPath}.tmp`;
+    try {
+      await writeFile(tmp, JSON.stringify(meta), 'utf8');
+      await rename(tmp, this.metaPath);
+    } catch {
+      // Best effort sidecar write
+    }
+  }
+
+  /** Downloads every segment directly into `${directory}/${fileName}.gdownload`. Returns that path. */
   public async run(signal: AbortSignal): Promise<string> {
     const item = this.item;
     let adopted: HttpResponse | undefined;
@@ -287,20 +371,45 @@ export class HttpDownloadTask {
     if (item.totalBytes === null) item.totalBytes = item.receivedBytes;
     if (!segments.every(segmentDone)) throw new Error('Download ended before all data was received');
 
-    return this.assemble(signal);
+    if (this.isLegacy) {
+      return this.assemble(signal);
+    }
+
+    const target = this.targetPath;
+    const finalSize = (await stat(target)).size;
+    if (item.totalBytes !== null && finalSize !== item.totalBytes) {
+      const handle = await open(target, 'r+');
+      await handle.truncate(item.totalBytes);
+      await handle.close();
+    }
+    await rm(this.metaPath, { force: true });
+    return target;
   }
 
-  private async probe(signal: AbortSignal): Promise<HttpResponse> {
+  private async probe(signal: AbortSignal): Promise<HttpResponse | undefined> {
     const item = this.item;
     item.status = 'starting';
     this.ctx.onUpdate();
 
-    const res = await httpRequest(item.url, { headers: { ...this.baseHeaders(), Range: 'bytes=0-' }, signal });
-    if (res.status >= 400) {
-      res.body.resume();
-      throw new HttpStatusError(res.status);
+    let res: HttpResponse | undefined;
+    let fallbackInfo: ProbeInfo | undefined;
+
+    try {
+      res = await httpRequest(item.url, { headers: { ...this.baseHeaders(), Range: 'bytes=0-' }, signal });
+      if (res.status >= 400) {
+        res.body.resume();
+        res = undefined;
+      }
+    } catch (err) {
+      if (signal.aborted) throw new JobCancelledError();
+      res = undefined;
     }
-    const info = analyzeResponse(res);
+
+    if (!res) {
+      fallbackInfo = await probeUrl(item.url, this.baseHeaders());
+    }
+
+    const info = fallbackInfo ?? analyzeResponse(res!);
     item.totalBytes = info.totalBytes;
     item.resumable = info.resumable;
     item.mimeType = info.mimeType;
@@ -308,20 +417,25 @@ export class HttpDownloadTask {
     item.lastModified = info.lastModified;
     await this.ctx.onProbe(info);
 
-    const dir = HttpDownloadTask.partDir(item);
-    await rm(dir, { recursive: true, force: true });
-    await mkdir(dir, { recursive: true });
-    hideFolder(dir);
+    await mkdir(item.directory, { recursive: true });
+    const target = this.targetPath;
+    const handle = await open(target, existsSync(target) ? 'r+' : 'w+');
+    if (info.totalBytes && info.totalBytes > 0) {
+      await handle.truncate(info.totalBytes);
+    }
+    await handle.close();
 
     item.segments =
       info.resumable && info.totalBytes
         ? planSegments(info.totalBytes, item.connections)
         : [{ start: 0, end: info.totalBytes ? info.totalBytes - 1 : null, received: 0, part: '0' }];
 
+    await this.saveMeta();
+
     try {
       await assertFreeSpace(item.directory, requiredFreeBytes(item.segments));
     } catch (err) {
-      res.body.destroy();
+      res?.body.destroy();
       item.segments = undefined;
       throw err;
     }
@@ -331,8 +445,80 @@ export class HttpDownloadTask {
     return res;
   }
 
-  /** On resume the part files on disk are the truth (memory counts may include unflushed bytes). */
+  /** On resume the sidecar / files on disk are the truth. */
   private async syncWithDisk(): Promise<void> {
+    const item = this.item;
+    const legacyDir = HttpDownloadTask.partDir(item);
+
+    // Check for legacy .grabbit-<id> part folder
+    if (existsSync(legacyDir)) {
+      try {
+        const entries = await readdir(legacyDir);
+        if (entries.some((e) => e.endsWith('.part'))) {
+          this.isLegacy = true;
+          await this.syncLegacyParts();
+          return;
+        }
+      } catch {
+        // Fall through to modern sync
+      }
+    }
+
+    const target = this.targetPath;
+    const metaPath = this.metaPath;
+
+    let meta: DownloadSidecarMeta | null = null;
+    if (existsSync(metaPath)) {
+      try {
+        const raw = await readFile(metaPath, 'utf8');
+        meta = JSON.parse(raw) as DownloadSidecarMeta;
+      } catch {
+        meta = null;
+      }
+    }
+
+    if (meta && meta.version === 1 && meta.segments && existsSync(target)) {
+      const segMap = new Map(meta.segments.map((s) => [s.part, s]));
+      for (const seg of item.segments!) {
+        const stored = segMap.get(seg.part);
+        if (stored) {
+          seg.received = stored.received;
+          if (stored.end !== null) seg.end = stored.end;
+        }
+        const len = segmentLength(seg);
+        if (len !== null && seg.received > len) {
+          seg.received = len;
+        }
+      }
+    }
+
+    if (!item.resumable) {
+      for (const seg of item.segments!) {
+        seg.received = 0;
+      }
+      item.segments = item.segments!.slice(0, 1).map((s) => ({ ...s, start: 0, end: item.totalBytes ? item.totalBytes - 1 : null }));
+      await rm(target, { force: true });
+      await rm(metaPath, { force: true });
+      await mkdir(item.directory, { recursive: true });
+      const handle = await open(target, 'w+');
+      if (item.totalBytes && item.totalBytes > 0) await handle.truncate(item.totalBytes);
+      await handle.close();
+      await this.saveMeta();
+    } else if (existsSync(target) && item.totalBytes) {
+      try {
+        const currentSize = (await stat(target)).size;
+        if (currentSize < item.totalBytes) {
+          const handle = await open(target, 'r+');
+          await handle.truncate(item.totalBytes);
+          await handle.close();
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  private async syncLegacyParts(): Promise<void> {
     const item = this.item;
     const dir = HttpDownloadTask.partDir(item);
     await mkdir(dir, { recursive: true });
@@ -353,7 +539,6 @@ export class HttpDownloadTask {
     }
 
     if (!item.resumable) {
-      // The server can't continue: start over
       for (const seg of item.segments!) {
         seg.received = 0;
         await rm(this.partPath(seg), { force: true });
@@ -376,6 +561,7 @@ export class HttpDownloadTask {
     let seg: SegmentState | null | undefined = first;
     let response = adopted;
     while (!signal.aborted) {
+      if (this.active.size >= this.item.connections) return;
       seg = seg ?? this.nextSegment();
       if (!seg) return;
       this.active.add(seg);
@@ -401,8 +587,13 @@ export class HttpDownloadTask {
       let res: HttpResponse | undefined = response;
       response = undefined;
       const before = seg.received;
+      let releaseHost: (() => void) | undefined;
       try {
-        if (!res) res = await this.openSegment(seg, signal);
+        if (!res) {
+          const host = new URL(item.url).hostname;
+          releaseHost = await (this.ctx.hostPool ?? defaultHostPool).acquire(host, signal);
+          res = await this.openSegment(seg, signal);
+        }
         await this.pump(seg, res, signal);
 
         if (seg.end === null) {
@@ -415,7 +606,26 @@ export class HttpDownloadTask {
         throw Object.assign(new Error('Connection closed before the segment finished'), { code: 'ECONNRESET' });
       } catch (err) {
         if (signal.aborted) throw new JobCancelledError();
+        if (err instanceof StragglerError) {
+          logger.warn({ id: item.id, part: seg.part }, 'Straggler connection dropped; reconnecting segment');
+          attempt = 0;
+          await sleep(500, signal).catch(() => undefined);
+          continue;
+        }
         if (isFatal(err)) throw err;
+
+        if (err instanceof HttpStatusError && (err.status === 429 || err.status === 503)) {
+          const reduced = Math.max(1, Math.floor(item.connections / 2));
+          if (reduced < item.connections) {
+            logger.warn(
+              { id: item.id, from: item.connections, to: reduced, status: err.status },
+              'Reducing connection count due to server rate limit/busy'
+            );
+            item.connections = reduced;
+            this.ctx.onPersist();
+          }
+        }
+
         if (seg.received > before) attempt = 0; // progress was made: a fresh failure budget
         attempt++;
         if (attempt > this.ctx.maxRetries) throw err;
@@ -424,6 +634,8 @@ export class HttpDownloadTask {
         logger.warn({ id: item.id, part: seg.part, attempt, wait, err }, 'Segment failed, retrying');
         this.ctx.onUpdate();
         await sleep(wait, signal).catch(() => undefined);
+      } finally {
+        releaseHost?.();
       }
     }
   }
@@ -438,7 +650,9 @@ export class HttpDownloadTask {
       if (seg.received > 0) {
         item.receivedBytes -= seg.received;
         seg.received = 0;
-        await rm(this.partPath(seg), { force: true });
+        if (this.isLegacy) {
+          await rm(this.partPath(seg), { force: true });
+        }
       }
     } else {
       headers.Range = `bytes=${from}-${seg.end ?? ''}`;
@@ -471,31 +685,80 @@ export class HttpDownloadTask {
     return res;
   }
 
-  /** Streams the response into the segment's part file until the (possibly shrunk) segment end. */
+  /** Streams the response into the segment's file region until the (possibly shrunk) segment end. */
   private async pump(seg: SegmentState, res: HttpResponse, signal: AbortSignal): Promise<void> {
     const item = this.item;
-    const writer = await PartWriter.open(this.partPath(seg));
+    const segKey = seg.part;
+    const now = Date.now();
+    this.segmentSpeeds.set(segKey, { bytes: 0, lastCheck: now, speed: 0, startTime: now });
+
+    if (this.isLegacy) {
+      const writer = await PartWriter.open(this.partPath(seg));
+      try {
+        for await (const raw of res.body) {
+          const chunk = raw as Buffer;
+          await Promise.all([this.ctx.globalLimiter.take(chunk.length, signal), this.ctx.itemLimiter.take(chunk.length, signal)]);
+          if (signal.aborted) break;
+          const remaining = seg.end === null ? Infinity : seg.end - (seg.start + seg.received) + 1;
+          if (remaining <= 0) break;
+          const piece = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+          seg.received += piece.length;
+          item.receivedBytes += piece.length;
+          await writer.write(piece);
+          this.recordSegmentChunk(segKey, piece.length);
+          if (piece.length < chunk.length || segmentDone(seg)) break;
+        }
+      } finally {
+        this.segmentSpeeds.delete(segKey);
+        res.body.destroy();
+        await writer.close();
+      }
+      return;
+    }
+
+    const writer = await SparseSegmentWriter.open(this.targetPath, seg.start, seg.received);
     try {
       for await (const raw of res.body) {
         const chunk = raw as Buffer;
         await Promise.all([this.ctx.globalLimiter.take(chunk.length, signal), this.ctx.itemLimiter.take(chunk.length, signal)]);
         if (signal.aborted) break;
-        // seg.end may have moved down (split) while we waited
         const remaining = seg.end === null ? Infinity : seg.end - (seg.start + seg.received) + 1;
         if (remaining <= 0) break;
         const piece = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
         seg.received += piece.length;
         item.receivedBytes += piece.length;
-        await writer.write(piece);
+        await writer.write(piece, () => this.saveMeta());
+        this.recordSegmentChunk(segKey, piece.length);
         if (piece.length < chunk.length || segmentDone(seg)) break;
       }
     } finally {
+      this.segmentSpeeds.delete(segKey);
       res.body.destroy();
-      await writer.close();
+      await writer.close(() => this.saveMeta());
     }
   }
 
-  /** Joins the parts in byte order into `<file>.gdownload` and returns its path. */
+  private recordSegmentChunk(segKey: string, bytes: number): void {
+    const tracker = this.segmentSpeeds.get(segKey);
+    if (!tracker) return;
+    tracker.bytes += bytes;
+    const now = Date.now();
+    const elapsed = (now - tracker.lastCheck) / 1000;
+    if (elapsed >= 2) {
+      tracker.speed = tracker.bytes / elapsed;
+      tracker.bytes = 0;
+      tracker.lastCheck = now;
+      if (this.active.size >= 3 && now - tracker.startTime >= 6000) {
+        const speeds = [...this.segmentSpeeds.values()].map((s) => s.speed).sort((a, b) => a - b);
+        const median = speeds[Math.floor(speeds.length / 2)] ?? 0;
+        if (median > 50 * 1024 && tracker.speed < 0.2 * median) {
+          throw new StragglerError();
+        }
+      }
+    }
+  }
+
+  /** Joins legacy parts in byte order into `<file>.gdownload` and returns its path. */
   private async assemble(signal: AbortSignal): Promise<string> {
     const item = this.item;
     item.status = 'processing';
@@ -508,7 +771,7 @@ export class HttpDownloadTask {
       expected = (seg.end ?? 0) + 1;
     }
 
-    const target = join(item.directory, `${item.fileName}.gdownload`);
+    const target = this.targetPath;
     await rm(target, { force: true });
     await rename(this.partPath(segments[0]), target);
     for (const seg of segments.slice(1)) {
@@ -524,17 +787,61 @@ export class HttpDownloadTask {
     return target;
   }
 
-  /** Deletes the working folder of an item (used on remove / restart). */
-  public static async discardParts(item: Pick<DownloadItem, 'directory' | 'id'>): Promise<void> {
+  /** Deletes the working files/folders of an item (used on remove / restart). */
+  public static async discardParts(item: Pick<DownloadItem, 'directory' | 'fileName' | 'id'>): Promise<void> {
     const dir = HttpDownloadTask.partDir(item);
     if (existsSync(dir)) await rm(dir, { recursive: true, force: true });
+    const target = join(item.directory, `${item.fileName}.gdownload`);
+    const meta = `${target}.meta`;
+    if (existsSync(target)) await rm(target, { force: true });
+    if (existsSync(meta)) await rm(meta, { force: true });
   }
 }
 
-/** Quick look at a URL for the "Add download" dialog: name, size and resume support. */
+/** Quick look at a URL with multi-stage fallback: Range 0-0 -> HEAD -> Range 0- -> GET. */
 export async function probeUrl(url: string, headers: Record<string, string>): Promise<ProbeInfo> {
+  const baseHeaders = { Accept: '*/*', 'Accept-Encoding': 'identity', ...headers };
+
+  // Try 1: Range bytes=0-0
+  try {
+    const res = await httpRequest(url, {
+      headers: { ...baseHeaders, Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    res.body.destroy();
+    if (res.status < 400) return analyzeResponse(res);
+  } catch (err) {
+    if (err instanceof JobCancelledError) throw err;
+  }
+
+  // Try 2: HEAD request
+  try {
+    const res = await httpRequest(url, {
+      method: 'HEAD',
+      headers: baseHeaders,
+      signal: AbortSignal.timeout(20_000),
+    });
+    res.body.destroy();
+    if (res.status < 400) return analyzeResponse(res);
+  } catch (err) {
+    if (err instanceof JobCancelledError) throw err;
+  }
+
+  // Try 3: Range bytes=0-
+  try {
+    const res = await httpRequest(url, {
+      headers: { ...baseHeaders, Range: 'bytes=0-' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    res.body.destroy();
+    if (res.status < 400) return analyzeResponse(res);
+  } catch (err) {
+    if (err instanceof JobCancelledError) throw err;
+  }
+
+  // Try 4: Plain GET request
   const res = await httpRequest(url, {
-    headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...headers, Range: 'bytes=0-0' },
+    headers: baseHeaders,
     signal: AbortSignal.timeout(20_000),
   });
   res.body.destroy();

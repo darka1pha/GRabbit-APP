@@ -1,0 +1,122 @@
+:root {
+  --bg: #f4f5f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f7;
+  --surface-3: #e7eaf2;
+  --border: #e2e5ee;
+  --border-strong: #cfd4e1;
+  --text: #171a24;
+  --text-2: #424859;
+  --muted: #6c7287;
+  --accent: #6b5bff;
+  --accent-hover: #5a49f2;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(107, 91, 255, 0.11);
+  --accent-2: #ff5c8a;
+  --success: #12a150;
+  --success-soft: rgba(18, 161, 80, 0.12);
+  --warning: #c77700;
+  --warning-soft: rgba(199, 119, 0, 0.12);
+  --danger: #d92d3a;
+  --danger-soft: rgba(217, 45, 58, 0.1);
+  --info: #2f7cf6;
+  --row-hover: #f6f7fb;
+  --row-selected: rgba(107, 91, 255, 0.09);
+  --shadow-sm: 0 1px 2px rgba(20, 24, 40, 0.06);
+  --shadow: 0 8px 28px rgba(20, 24, 40, 0.12);
+  --shadow-lg: 0 24px 64px rgba(20, 24, 40, 0.22);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --radius-lg: 14px;
+  --titlebar: 40px;
+  --sidebar: 228px;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Tahoma, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0e1016;
+  --surface: #151821;
+  --surface-2: #1b1f2a;
+  --surface-3: #232836;
+  --border: #252a37;
+  --border-strong: #343b4d;
+  --text: #e8eaf1;
+  --text-2: #c2c7d6;
+  --muted: #8a90a5;
+  --accent: #8576ff;
+  --accent-hover: #9587ff;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(133, 118, 255, 0.16);
+  --accent-2: #ff6f98;
+  --success: #34c77b;
+  --success-soft: rgba(52, 199, 123, 0.14);
+  --warning: #f0a53b;
+  --warning-soft: rgba(240, 165, 59, 0.14);
+  --danger: #ff5c68;
+  --danger-soft: rgba(255, 92, 104, 0.13);
+  --info: #5b9bff;
+  --row-hover: #1a1e28;
+  --row-selected: rgba(133, 118, 255, 0.14);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+a {
+  color: var(--accent);
+}
