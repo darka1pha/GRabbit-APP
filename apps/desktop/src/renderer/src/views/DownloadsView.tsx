@@ -31,6 +31,7 @@ import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '
 import { ContextMenu, FileIcon, MenuEntry, Modal, ProgressBar } from '../components/ui';
 import { QueueConfigModal } from '../components/QueueConfigModal';
 import { downloadStore, useDownloadsAggregate, useLiveDownload, useSegmentWatch } from '../downloads-store';
+import { Sparkline } from '../components/Sparkline';
 
 export type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
 
@@ -104,6 +105,11 @@ interface RowActions {
   openFile(item: DownloadItem): void;
   openFolder(item: DownloadItem): void;
   remove(item: DownloadItem): void;
+  changeUrl?(item: DownloadItem): void;
+  retry?(item: DownloadItem): void;
+  dragStart?(e: React.DragEvent, item: DownloadItem): void;
+  dragOver?(e: React.DragEvent, item: DownloadItem): void;
+  drop?(e: React.DragEvent, item: DownloadItem): void;
 }
 
 /** Speed and count of active downloads in the page header. */
@@ -142,9 +148,25 @@ export function DownloadsView({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; item: DownloadItem } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const tableRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const undoBufferRef = useRef<{ items: DownloadItem[] } | null>(null);
+
+  useEffect(() => {
+    const onSelect = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) {
+        setSelected(new Set([id]));
+        setAnchor(id);
+        setFocusedId(id);
+      }
+    };
+    window.addEventListener('select-download', onSelect);
+    return () => window.removeEventListener('select-download', onSelect);
+  }, []);
 
   const toggleSort = (col: 'added' | 'name' | 'size' | 'progress' | 'speed') => {
     if (sortBy === col) {
@@ -268,6 +290,7 @@ export function DownloadsView({
       setSelected(new Set([item.id]));
     }
     setAnchor(item.id);
+    setFocusedId(item.id);
   }
 
   function onDoubleClick(item: DownloadItem) {
@@ -275,12 +298,157 @@ export function DownloadsView({
     else if (canResume(item)) void run(() => api.downloads.resume([item.id]));
   }
 
-  // Keyboard: Delete, Ctrl+A, Enter
+  const removeWithUndo = useCallback(
+    (targets: DownloadItem[]) => {
+      const targetIds = targets.map((t) => t.id);
+      undoBufferRef.current = { items: targets.slice() };
+      void run(async () => {
+        await api.downloads.remove(targetIds, false);
+        toast(t('dl.confirmRemove', { count: targetIds.length }), 'info', {
+          label: t('common.undo'),
+          run: () => {
+            const buf = undoBufferRef.current;
+            if (!buf || buf.items.length === 0) return;
+            const http = buf.items
+              .filter((i) => i.kind === 'http')
+              .map((i) => ({
+                url: i.url,
+                fileName: i.fileName,
+                category: i.category,
+                directory: i.directory,
+                connections: i.connections,
+                queueId: i.queueId,
+                startPaused: true,
+              }));
+            const media = buf.items
+              .filter((i) => i.kind === 'media' && i.media)
+              .map((i) => ({
+                platform: i.media!.platform,
+                mediaId: i.media!.mediaId,
+                format: i.media!.format,
+                qualityId: i.media!.qualityId,
+                url: i.url,
+                title: i.media!.title,
+                author: i.media!.author,
+                thumbnailUrl: i.media!.thumbnailUrl,
+                directory: i.directory,
+                queueId: i.queueId,
+                startPaused: true,
+              }));
+            if (http.length > 0) void api.downloads.addHttp(http);
+            if (media.length > 0) void api.downloads.addMedia(media);
+            toast(t('dl.undone'), 'success');
+          },
+        });
+      });
+    },
+    [run, t, toast]
+  );
+
+  const clearCompletedWithUndo = useCallback(() => {
+    const completed = downloads.filter((d) => d.status === 'completed');
+    if (completed.length === 0) return;
+    undoBufferRef.current = { items: completed.slice() };
+    void run(async () => {
+      await api.downloads.clearCompleted();
+      toast(t('dl.clearedCompleted'), 'info', {
+        label: t('common.undo'),
+        run: () => {
+          const buf = undoBufferRef.current;
+          if (!buf || buf.items.length === 0) return;
+          const http = buf.items
+            .filter((i) => i.kind === 'http')
+            .map((i) => ({
+              url: i.url,
+              fileName: i.fileName,
+              category: i.category,
+              directory: i.directory,
+              connections: i.connections,
+              queueId: i.queueId,
+              startPaused: true,
+            }));
+          if (http.length > 0) void api.downloads.addHttp(http);
+          toast(t('dl.undone'), 'success');
+        },
+      });
+    });
+  }, [downloads, run, t, toast]);
+
+  // Keyboard: Arrow keys, Home, End, Space, Delete, Ctrl+A, Ctrl+F, Enter
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea, select') || dialog) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (visible.length === 0) return;
+        const currentId = focusedId ?? anchor ?? selectedItems[0]?.id;
+        const currentIdx = visible.findIndex((d) => d.id === currentId);
+        let nextIdx = currentIdx;
+        if (e.key === 'ArrowDown') {
+          nextIdx = currentIdx < visible.length - 1 ? (currentIdx >= 0 ? currentIdx + 1 : 0) : 0;
+        } else {
+          nextIdx = currentIdx > 0 ? currentIdx - 1 : visible.length - 1;
+        }
+        const nextItem = visible[nextIdx];
+        if (!nextItem) return;
+
+        setFocusedId(nextItem.id);
+        if (e.shiftKey && anchor) {
+          const a = visible.findIndex((d) => d.id === anchor);
+          const [from, to] = a < nextIdx ? [a, nextIdx] : [nextIdx, a];
+          setSelected(new Set(visible.slice(from, to + 1).map((d) => d.id)));
+        } else {
+          setSelected(new Set([nextItem.id]));
+          setAnchor(nextItem.id);
+        }
+        return;
+      }
+
+      if (e.key === 'Home') {
+        e.preventDefault();
+        if (visible.length > 0) {
+          const first = visible[0];
+          setFocusedId(first.id);
+          setSelected(new Set([first.id]));
+          setAnchor(first.id);
+        }
+        return;
+      }
+
+      if (e.key === 'End') {
+        e.preventDefault();
+        if (visible.length > 0) {
+          const last = visible[visible.length - 1];
+          setFocusedId(last.id);
+          setSelected(new Set([last.id]));
+          setAnchor(last.id);
+        }
+        return;
+      }
+
+      if (e.key === ' ' && selectedItems.length > 0) {
+        e.preventDefault();
+        if (selectedItems.some(canResume)) {
+          void run(() => api.downloads.resume(ids(selectedItems)));
+        } else if (selectedItems.some(canPause)) {
+          void run(() => api.downloads.pause(ids(selectedItems)));
+        }
+        return;
+      }
+
       if (e.key === 'Delete' && selectedItems.length > 0) {
-        setDialog({ kind: 'remove', ids: ids(selectedItems), deleteFiles: e.shiftKey });
+        if (e.shiftKey) {
+          setDialog({ kind: 'remove', ids: ids(selectedItems), deleteFiles: true });
+        } else {
+          removeWithUndo(selectedItems);
+        }
       } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setSelected(new Set(visible.map((d) => d.id)));
@@ -367,7 +535,43 @@ export function DownloadsView({
     toggle: (item) => void run(() => (canResume(item) ? api.downloads.resume([item.id]) : api.downloads.pause([item.id]))),
     openFile: (item) => void run(() => api.downloads.openFile(item.id)),
     openFolder: (item) => void run(() => api.downloads.showInFolder(item.id)),
-    remove: (item) => setDialog({ kind: 'remove', ids: [item.id], deleteFiles: false }),
+    remove: (item) => removeWithUndo([item]),
+    changeUrl: (item) => setDialog({ kind: 'url', item }),
+    retry: (item) => void run(() => api.downloads.retry([item.id])),
+    dragStart: (e, item) => {
+      e.dataTransfer.setData('text/download-id', item.id);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    dragOver: (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    },
+    drop: (e, targetItem) => {
+      e.preventDefault();
+      const sourceId = e.dataTransfer.getData('text/download-id');
+      if (!sourceId || sourceId === targetItem.id) return;
+      const targetQueueId = targetItem.queueId || 'main';
+      const sourceItem = downloads.find((d) => d.id === sourceId);
+      if (!sourceItem) return;
+
+      if ((sourceItem.queueId || 'main') !== targetQueueId) {
+        void run(async () => {
+          await api.queues.moveItem(sourceId, targetQueueId);
+          toast(t('queue.items', { count: 1 }), 'info');
+        });
+        return;
+      }
+
+      const queueItems = inQueue.filter((d) => (d.queueId || 'main') === targetQueueId);
+      const order = queueItems.map((d) => d.id);
+      const srcIdx = order.indexOf(sourceId);
+      const dstIdx = order.indexOf(targetItem.id);
+      if (srcIdx >= 0 && dstIdx >= 0) {
+        order.splice(srcIdx, 1);
+        order.splice(dstIdx, 0, sourceId);
+        void run(() => api.queues.reorder(targetQueueId, order));
+      }
+    },
   };
   const rowActions = useMemo<RowActions>(
     () => ({
@@ -378,6 +582,11 @@ export function DownloadsView({
       openFile: (item) => latestActions.current.openFile(item),
       openFolder: (item) => latestActions.current.openFolder(item),
       remove: (item) => latestActions.current.remove(item),
+      changeUrl: (item) => latestActions.current.changeUrl?.(item),
+      retry: (item) => latestActions.current.retry?.(item),
+      dragStart: (e, item) => latestActions.current.dragStart?.(e, item),
+      dragOver: (e, item) => latestActions.current.dragOver?.(e, item),
+      drop: (e, item) => latestActions.current.drop?.(e, item),
     }),
     []
   );
@@ -392,6 +601,8 @@ export function DownloadsView({
           <div className="input-with-icon" style={{ width: 260 }}>
             <Search size={15} />
             <input
+              ref={searchInputRef}
+              id="dl-search-input"
               className="input"
               value={query}
               placeholder={t('dl.searchPlaceholder')}
@@ -411,9 +622,11 @@ export function DownloadsView({
           </div>
         </div>
         <div className="queue-bar">
-          <div className="queue-tabs">
+          <div className="queue-tabs" role="tablist">
             <button
               className={`queue-pill ${selectedQueueId === 'all' ? 'active' : ''}`}
+              role="tab"
+              aria-selected={selectedQueueId === 'all'}
               onClick={() => setSelectedQueueId('all')}
             >
               <Layers size={14} />
@@ -423,9 +636,30 @@ export function DownloadsView({
             {queues.map((q) => {
               const isSelected = selectedQueueId === q.id;
               return (
-                <div key={q.id} className={`queue-tab-group ${isSelected ? 'active' : ''}`}>
+                <div
+                  key={q.id}
+                  className={`queue-tab-group ${isSelected ? 'active' : ''}`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const draggedId = e.dataTransfer.getData('text/download-id');
+                    if (!draggedId) return;
+                    const toMove = selected.has(draggedId) ? Array.from(selected) : [draggedId];
+                    void run(async () => {
+                      for (const id of toMove) {
+                        await api.queues.moveItem(id, q.id);
+                      }
+                      toast(t('queue.items', { count: toMove.length }), 'info');
+                    });
+                  }}
+                >
                   <button
                     className="queue-pill-main"
+                    role="tab"
+                    aria-selected={isSelected}
                     onClick={() => setSelectedQueueId(q.id)}
                     title={q.name}
                   >
@@ -483,7 +717,7 @@ export function DownloadsView({
           <button
             className="btn"
             disabled={selectedItems.length === 0}
-            onClick={() => setDialog({ kind: 'remove', ids: ids(selectedItems), deleteFiles: false })}
+            onClick={() => removeWithUndo(selectedItems)}
           >
             <Trash2 size={15} /> {t('dl.remove')}
           </button>
@@ -494,7 +728,7 @@ export function DownloadsView({
           <button className="btn ghost" onClick={() => void run(() => api.downloads.pauseAll())}>
             <Pause size={15} /> <span className="hide-narrow">{t('dl.pauseAll')}</span>
           </button>
-          <button className="btn ghost" disabled={counts.completed === 0} onClick={() => void run(() => api.downloads.clearCompleted())}>
+          <button className="btn ghost" disabled={counts.completed === 0} onClick={() => void clearCompletedWithUndo()}>
             <Inbox size={15} /> <span className="hide-narrow">{t('dl.clearCompleted')}</span>
           </button>
           <div className="grow" />
@@ -521,7 +755,7 @@ export function DownloadsView({
             </button>
           </div>
         ) : (
-          <table className="dl-table">
+          <table className="dl-table" role="grid" aria-label={category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}>
             <colgroup>
               <col />
               <col style={{ width: 150 }} />
@@ -532,27 +766,27 @@ export function DownloadsView({
               <col style={{ width: 112 }} />
             </colgroup>
             <thead>
-              <tr>
-                <th className="sortable" onClick={() => toggleSort('name')}>
+              <tr role="row">
+                <th role="columnheader" className="sortable" onClick={() => toggleSort('name')}>
                   {t('dl.col.name')} {sortBy === 'name' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
-                <th className="sortable" onClick={() => toggleSort('size')}>
+                <th role="columnheader" className="sortable" onClick={() => toggleSort('size')}>
                   {t('dl.col.size')} {sortBy === 'size' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
-                <th className="sortable" onClick={() => toggleSort('progress')}>
+                <th role="columnheader" className="sortable" onClick={() => toggleSort('progress')}>
                   {t('dl.col.progress')} {sortBy === 'progress' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
-                <th className="sortable" onClick={() => toggleSort('speed')}>
+                <th role="columnheader" className="sortable" onClick={() => toggleSort('speed')}>
                   {t('dl.col.speed')} {sortBy === 'speed' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
-                <th>{t('dl.col.eta')}</th>
-                <th className="hide-narrow sortable" onClick={() => toggleSort('added')}>
+                <th role="columnheader">{t('dl.col.eta')}</th>
+                <th role="columnheader" className="hide-narrow sortable" onClick={() => toggleSort('added')}>
                   {t('dl.col.added')} {sortBy === 'added' && <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                 </th>
-                <th />
+                <th role="columnheader" />
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {rows.start > 0 && (
                 <tr className="dl-spacer" aria-hidden="true">
                   <td colSpan={7} style={{ height: rows.start * ROW_HEIGHT }} />
@@ -563,6 +797,7 @@ export function DownloadsView({
                   key={item.id}
                   item={item}
                   selected={selected.has(item.id)}
+                  isFocused={focusedId === item.id}
                   queueName={selectedQueueId === 'all' ? queueNames.get(item.queueId || 'main') : undefined}
                   actions={rowActions}
                 />
@@ -637,11 +872,13 @@ export function DownloadsView({
 const DownloadRow = memo(function DownloadRow({
   item: listed,
   selected,
+  isFocused,
   queueName,
   actions,
 }: {
   item: DownloadItem;
   selected: boolean;
+  isFocused: boolean;
   queueName?: string;
   actions: RowActions;
 }) {
@@ -660,7 +897,49 @@ const DownloadRow = memo(function DownloadRow({
 
   let sub: React.ReactNode;
   if (item.status === 'error') {
-    sub = <span style={{ color: 'var(--danger)' }}>{errorText(t, { code: item.errorCode, message: item.error })}</span>;
+    const isExpired = item.errorCode === 'HTTP_401' || item.errorCode === 'HTTP_403' || item.errorCode === 'HTTP_410';
+    const isFullDisk = item.errorCode === 'ENOSPC';
+    sub = (
+      <span className="error-sub-row" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--danger)' }}>{errorText(t, { code: item.errorCode, message: item.error })}</span>
+        {isExpired && (
+          <button
+            type="button"
+            className="btn ghost xs"
+            style={{ padding: '1px 6px', fontSize: 11, height: 20 }}
+            title={t('dl.newLinkHint')}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => actions.changeUrl?.(item)}
+          >
+            <Link size={11} /> {t('dl.refreshLink')}
+          </button>
+        )}
+        {isFullDisk && (
+          <button
+            type="button"
+            className="btn ghost xs"
+            style={{ padding: '1px 6px', fontSize: 11, height: 20 }}
+            title={t('dl.savedTo')}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => actions.openFolder(item)}
+          >
+            <FolderOpen size={11} /> {t('dl.changeFolder')}
+          </button>
+        )}
+        {!isExpired && !isFullDisk && (
+          <button
+            type="button"
+            className="btn ghost xs"
+            style={{ padding: '1px 6px', fontSize: 11, height: 20 }}
+            title={t('dl.retry')}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => actions.retry?.(item)}
+          >
+            <RotateCw size={11} /> {t('dl.retry')}
+          </button>
+        )}
+      </span>
+    );
   } else if (item.status === 'downloading' && item.kind === 'http') {
     sub = (
       <>
@@ -692,8 +971,20 @@ const DownloadRow = memo(function DownloadRow({
           : '—';
 
   return (
-    <tr className={selected ? 'dl-row selected' : 'dl-row'} onMouseDown={onClick} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}>
-      <td>
+    <tr
+      role="row"
+      aria-selected={selected}
+      tabIndex={isFocused ? 0 : -1}
+      draggable={item.status !== 'completed'}
+      onDragStart={(e) => actions.dragStart?.(e, item)}
+      onDragOver={(e) => actions.dragOver?.(e, item)}
+      onDrop={(e) => actions.drop?.(e, item)}
+      className={selected ? 'dl-row selected' : 'dl-row'}
+      onMouseDown={onClick}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
+    >
+      <td role="gridcell">
         <div className="name-cell">
           <FileIcon item={item} />
           <div className="name-text">
@@ -708,8 +999,8 @@ const DownloadRow = memo(function DownloadRow({
           </div>
         </div>
       </td>
-      <td className="small">{size}</td>
-      <td>
+      <td role="gridcell" className="small">{size}</td>
+      <td role="gridcell">
         <div className="progress-cell">
           <ProgressBar
             value={f * 100}
@@ -719,10 +1010,10 @@ const DownloadRow = memo(function DownloadRow({
           <span className="pct">{formatPercent(f, language)}</span>
         </div>
       </td>
-      <td className="small">{active ? formatSpeed(item.speed, language) : ''}</td>
-      <td className="small">{active ? formatEta(item.eta, language) : ''}</td>
-      <td className="small muted hide-narrow">{formatDate(item.createdAt, language)}</td>
-      <td>
+      <td role="gridcell" className="small">{active ? formatSpeed(item.speed, language) : ''}</td>
+      <td role="gridcell" className="small">{active ? formatEta(item.eta, language) : ''}</td>
+      <td role="gridcell" className="small muted hide-narrow">{formatDate(item.createdAt, language)}</td>
+      <td role="gridcell">
         <div className="row-actions">
           {item.status === 'completed' ? (
             <button
@@ -774,6 +1065,12 @@ function DetailsPanel({
   const item = useLiveDownload(listed);
   // The segment map needs per-segment progress, which is only sent for watched downloads
   useSegmentWatch(item.kind === 'http' && item.status !== 'completed' ? item.id : null);
+  const [speedHistory, setSpeedHistory] = useState<number[]>([]);
+  useEffect(() => {
+    if (item.status === 'downloading') {
+      setSpeedHistory((prev) => [...prev, item.speed ?? 0].slice(-25));
+    }
+  }, [item.speed, item.status]);
   const total = item.totalBytes ?? 0;
   const where = item.filePath ?? `${item.directory}\\${item.fileName}`;
   return (
@@ -830,6 +1127,15 @@ function DetailsPanel({
             {item.totalBytes === null && item.status === 'queued' ? t('dl.unknown') : item.resumable ? t('dl.yes') : t('dl.no')}
             {' · '}
             {t('dl.connections', { active: item.activeConnections, total: item.connections })}
+          </dd>
+        </dl>
+      )}
+      {item.status === 'downloading' && (
+        <dl className="kv full">
+          <dt>{t('dl.col.speed')}</dt>
+          <dd style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span>{formatSpeed(item.speed, language) || '0 B/s'}</span>
+            <Sparkline data={speedHistory} width={130} height={20} />
           </dd>
         </dl>
       )}
@@ -1090,21 +1396,21 @@ function SegmentInspectorModal({ item: listed, onClose }: { item: DownloadItem; 
       onClose={onClose}
       footer={
         <button className="btn primary" onClick={onClose}>
-          {t('common.cancel') ?? 'Close'}
+          {t('common.close')}
         </button>
       }
     >
       <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         <div className="card card-pad" style={{ flex: 1, minWidth: 130, padding: '10px 14px' }}>
           <div className="small muted">{t('dl.connections', { active: activeCount, total: totalConn })}</div>
-          <b style={{ fontSize: 16 }}>{activeCount} / {totalConn} active</b>
+          <b style={{ fontSize: 16 }}>{activeCount} / {totalConn} {t('dl.statusActive')}</b>
         </div>
         <div className="card card-pad" style={{ flex: 1, minWidth: 130, padding: '10px 14px' }}>
           <div className="small muted">{t('dl.threads')}</div>
-          <b style={{ fontSize: 16 }}>{segments.length} parts</b>
+          <b style={{ fontSize: 16 }}>{t('dl.parts', { count: segments.length })}</b>
         </div>
         <div className="card card-pad" style={{ flex: 1, minWidth: 130, padding: '10px 14px' }}>
-          <div className="small muted">Speed</div>
+          <div className="small muted">{t('dl.col.speed')}</div>
           <b style={{ fontSize: 16 }}>{formatSpeed(item.speed, language) || '0 B/s'}</b>
         </div>
       </div>
@@ -1139,8 +1445,8 @@ function SegmentInspectorModal({ item: listed, onClose }: { item: DownloadItem; 
             <tr>
               <th>{t('dl.thread')}</th>
               <th>{t('dl.range')}</th>
-              <th>Progress</th>
-              <th>Status</th>
+              <th>{t('dl.col.progress')}</th>
+              <th>{t('status.ready')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1166,11 +1472,11 @@ function SegmentInspectorModal({ item: listed, onClose }: { item: DownloadItem; 
                   </td>
                   <td>
                     {isDone ? (
-                      <span className="badge success">Done</span>
+                      <span className="badge success">{t('dl.statusDone')}</span>
                     ) : isAct ? (
-                      <span className="badge accent">Active</span>
+                      <span className="badge accent">{t('dl.statusActive')}</span>
                     ) : (
-                      <span className="badge">Waiting</span>
+                      <span className="badge">{t('dl.statusWait')}</span>
                     )}
                   </td>
                 </tr>

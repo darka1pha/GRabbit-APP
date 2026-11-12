@@ -337,6 +337,8 @@ export interface AppSettings {
     instagramSessionId: string;
   };
   extension: ExtensionSettings;
+  /** Whether the user has completed the initial onboarding wizard. */
+  onboarded?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +518,9 @@ export interface GrabbitApi {
     getPathForFile(file: File): string;
     onClipboardLink(listener: (link: ClipboardLink) => void): () => void;
     onNavigate(listener: (view: string) => void): () => void;
+    toggleMiniMode(enable?: boolean): Promise<boolean>;
+    isMiniMode(): Promise<boolean>;
+    onMiniModeChanged(listener: (isMini: boolean) => void): () => void;
   };
 }
 
@@ -576,4 +581,7 @@ export const IPC = {
   openPath: 'app:open-path',
   clipboardLink: 'app:clipboard-link',
   navigate: 'app:navigate',
+  toggleMiniMode: 'app:toggle-mini-mode',
+  isMiniMode: 'app:is-mini-mode',
+  miniModeChanged: 'app:mini-mode-changed',
 } as const;

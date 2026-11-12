@@ -61,6 +61,8 @@ export interface IpcDeps {
   dataDir: string;
   updater: AutoUpdaterService;
   grabPill: GrabPillManager;
+  toggleMiniMode?(enable?: boolean): boolean;
+  isMiniMode?(): boolean;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -256,6 +258,14 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ------------------------------------------------------------ shell
+  handle(IPC.toggleMiniMode, [optional(z.boolean())], (enable?: boolean) => {
+    return deps.toggleMiniMode ? deps.toggleMiniMode(enable) : false;
+  });
+
+  handle(IPC.isMiniMode, [], () => {
+    return deps.isMiniMode ? deps.isMiniMode() : false;
+  });
+
   handle(IPC.openExternal, [z.string().min(1).max(8192)], async (url: string) => {
     if (!isHttpUrl(url) && !url.startsWith('spotify:')) throw new Error('Only web links can be opened');
     await shell.openExternal(url);

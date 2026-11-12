@@ -94,6 +94,9 @@ const api: GrabbitApi = {
     getPathForFile: (file) => webUtils.getPathForFile(file),
     onClipboardLink: (listener) => subscribe(IPC.clipboardLink, listener),
     onNavigate: (listener) => subscribe(IPC.navigate, listener),
+    toggleMiniMode: (enable) => invoke(IPC.toggleMiniMode, enable),
+    isMiniMode: () => invoke(IPC.isMiniMode),
+    onMiniModeChanged: (listener) => subscribe(IPC.miniModeChanged, listener),
   },
 };
 

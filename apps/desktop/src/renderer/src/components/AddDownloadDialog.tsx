@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, CircleAlert, Download, FileText, FolderOpen, LoaderCircle, Plus, X, Zap } from 'lucide-react';
-import { CATEGORIES, type Category, type ChecksumAlgorithm, type ProbeResult } from '../../../shared/types';
+import { CATEGORIES, type Category, type ChecksumAlgorithm, type DownloadItem, type ProbeResult } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
 import { api, useApp } from '../state';
 import { formatBytes, isHttpUrl, looksLikeMediaPage } from '../format';
 import { Modal } from './ui';
+import { DuplicateDialog } from './DuplicateDialog';
 
 const CATEGORY_FOLDERS: Record<Category, string> = {
   video: 'Video',
@@ -44,7 +45,7 @@ export function AddDownloadDialog({
   onOpenInGrab(url: string): void;
 }) {
   const { t, language } = useI18n();
-  const { settings, queues, toast } = useApp();
+  const { settings, queues, downloads, toast } = useApp();
   const [text, setText] = useState(initialUrl ?? '');
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
@@ -61,6 +62,8 @@ export function AddDownloadDialog({
   const [speedLimit, setSpeedLimit] = useState(0);
   const [checksum, setChecksum] = useState('');
   const [busy, setBusy] = useState(false);
+  const [duplicateItem, setDuplicateItem] = useState<DownloadItem | null>(null);
+  const [allowDuplicate, setAllowDuplicate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFileLoad(file: File) {
@@ -124,8 +127,15 @@ export function AddDownloadDialog({
   const algorithm = digestAlgorithm(checksum);
   const showMediaHint = single && looksLikeMediaPage(single) && probe?.mimeType?.startsWith('text/html');
 
-  async function submit(startPaused: boolean) {
+  async function submit(startPaused: boolean, forceDuplicate = false) {
     if (urls.length === 0) return;
+    if (single && !forceDuplicate && !allowDuplicate) {
+      const existing = downloads.find((d) => d.url === single || d.url === probe?.finalUrl);
+      if (existing) {
+        setDuplicateItem(existing);
+        return;
+      }
+    }
     setBusy(true);
     try {
       const added = await api.downloads.addHttp(
@@ -398,6 +408,35 @@ export function AddDownloadDialog({
             </div>
           )}
         </>
+      )}
+
+      {duplicateItem && single && (
+        <DuplicateDialog
+          existingItem={duplicateItem}
+          newUrl={single}
+          onViewExisting={() => {
+            setDuplicateItem(null);
+            onClose();
+            window.dispatchEvent(new CustomEvent('select-download', { detail: duplicateItem.id }));
+          }}
+          onDownloadAgain={() => {
+            setDuplicateItem(null);
+            setAllowDuplicate(true);
+            void submit(false, true);
+          }}
+          onRefreshLink={async () => {
+            try {
+              await api.downloads.changeUrl(duplicateItem.id, single);
+              await api.downloads.resume([duplicateItem.id]);
+              toast(t('dl.copied'), 'success');
+              setDuplicateItem(null);
+              onClose();
+            } catch (err) {
+              toast(errorText(t, err), 'error');
+            }
+          }}
+          onClose={() => setDuplicateItem(null)}
+        />
       )}
     </Modal>
   );

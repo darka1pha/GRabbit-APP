@@ -157,6 +157,7 @@ export const SettingsPatchSchema = z
     resumeOnStartup: z.boolean(),
     startOnBoot: z.boolean(),
     startMinimized: z.boolean(),
+    onboarded: z.boolean(),
     globalShortcut: z.object({ enabled: z.boolean(), accelerator: text(120) }).partial(),
     updates: z.object({ autoCheck: z.boolean(), autoDownload: z.boolean() }).partial(),
     userAgent: text(1024),

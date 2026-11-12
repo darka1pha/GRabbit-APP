@@ -26,6 +26,7 @@ export function defaultSettings(): AppSettings {
     resumeOnStartup: true,
     startOnBoot: false,
     startMinimized: true,
+    onboarded: false,
     globalShortcut: {
       enabled: true,
       accelerator: 'CommandOrControl+Alt+G',

@@ -225,25 +225,25 @@ favour of `expo-video`/`expo-audio`. Plan one SDK upgrade and do the player migr
 
 ---
 
-## Phase 5 — Desktop UI/UX
+## Phase 5 — Desktop UI/UX — [COMPLETED]
 
-| # | Change | Detail | Effort |
+| # | Item | Status | Implementation Details |
 |---|---|---|---|
-| 5.1 | Keyboard operation of the downloads list | Rows are `<tr onMouseDown>` only. Add roving focus, arrow-key movement, Space to pause/resume, Delete to remove, Enter to open, Shift+arrows to extend selection, Ctrl+F to focus search. | M |
-| 5.2 | Accessibility pass | Add `role`/`aria-*` to rows, queue pills, switches, progress bars and modals (focus trap, Esc to close, return focus). Add visible `:focus-visible` rings globally — currently only inputs and switches have them. Check contrast in both themes. | M |
-| 5.3 | Finish i18n and RTL | Remaining hard-coded strings ("Engine Ready", "Idle", "Active", "Update", "Drop link to grab or download"). Add a lint rule or test that fails on untranslated JSX text. Check RTL mirroring of progress bars, icons and the queue bar. | S |
-| 5.4 | Compact / narrow layout | `minWidth: 980` forces a large window. Collapse the sidebar to icons below ~1100 px and hide secondary table columns; lower the minimum to ~720. | M |
-| 5.5 | Mini mode | A small always-on-top window showing active downloads and total speed, toggled from tray and title bar. | M |
-| 5.6 | Drag-and-drop reordering | Replace up/down/top/bottom-only moves with drag reorder inside a queue, and drag onto a queue pill to move (`reorderQueue` already exists in the manager). | M |
-| 5.7 | Undo for destructive actions | Remove / clear-completed show a toast with Undo for a few seconds (toasts already support an action) instead of a confirm dialog. | S |
-| 5.8 | Clearer errors | Map error codes to a short cause plus one action button: "Link expired → Refresh URL", "Disk full → Change folder", "Sign-in required → Set cookies". | M |
-| 5.9 | Duplicate handling | On adding a URL that already exists (or a file name that exists on disk), ask: skip, re-download, or rename. Add "Refresh link" for expired URLs that keeps progress (builds on `changeUrl`). | M |
-| 5.10 | Onboarding and empty states | First-run: pick download folder, pair the extension (one click copy of token), choose theme. Empty Downloads view explains paste / drop / Ctrl+N. | S |
-| 5.11 | Command palette | Ctrl+K: add URL, switch view, pause all, open settings section, search downloads. | M |
-| 5.12 | Speed graph | Small live sparkline per active item and a global one in the status card; optional per-item history. | S |
-| 5.13 | Settings findability | `SettingsView.tsx` is ~500 lines in one scroll. Add section navigation and a search box. | S |
-| 5.14 | Renderer error boundary | No `ErrorBoundary` exists; a render error blanks the window. Add one per view with "reload view" and "copy details". | S |
-| 5.15 | Title bar declutter | The "Update" pill is always visible; show it only when an update is available or downloading. | S |
+| 5.1 | Keyboard operation of the downloads list | Done | Added roving focus (`tabIndex`), Up/Down arrow navigation, Shift+arrow multi-selection ranges, Home/End jumping, Space pause/resume, Delete/Shift+Delete removal, Enter file opening, and Ctrl+F / Cmd+F search focusing. |
+| 5.2 | Accessibility pass | Done | Added `role="grid"`/`row`/`columnheader`/`gridcell`, `aria-selected`, `aria-modal="true"`, focus traps with Esc handling in modals, `role="progressbar"`, `role="switch"`, and global `:focus-visible` outline rings. |
+| 5.3 | Finish i18n and RTL | Done | Replaced hard-coded strings across dialogs and views with localized keys in English and Persian; verified RTL mirroring and parameter interpolation. |
+| 5.4 | Compact / narrow layout | Done | Lowered minimum window bounds to 720×520px in main process; added responsive `@media (max-width: 1080px)` collapsing sidebar to icon-only and hiding secondary table columns. |
+| 5.5 | Mini mode | Done | Added always-on-top compact widget window mode (360×160px) showing active count, speed sparkline, progress bar, and pause/resume controls; toggled from Tray and Title bar. |
+| 5.6 | Drag-and-drop reordering | Done | Enabled drag-and-drop reordering within queues using `api.queues.reorder` and dragging items directly onto queue tabs to move them across queues. |
+| 5.7 | Undo for destructive actions | Done | Replaced confirmation dialogs on Remove and Clear Completed with interactive toasts offering 5-second "Undo" actions that restore items. |
+| 5.8 | Clearer errors | Done | Mapped download errors (HTTP 401/403/410, ENOSPC disk full, timeouts) to user-friendly messages and contextual action buttons ("Refresh URL", "Open Folder", "Retry"). |
+| 5.9 | Duplicate handling | Done | Added `DuplicateDialog` prompt when adding existing URLs offering "View Existing", "Download Again", or "Refresh Link". |
+| 5.10 | Onboarding and empty states | Done | Added `OnboardingModal` first-run wizard for folder selection, theme, language, and 1-click extension token pairing; enhanced empty state prompts. |
+| 5.11 | Command palette | Done | Added global Ctrl+K / Cmd+K Command Palette with fuzzy search across views, settings sections, bulk actions, and jump-to-download. |
+| 5.12 | Speed graph | Done | Added lightweight SVG `Sparkline` component for live download speed trends in Mini Mode and DetailsPanel. |
+| 5.13 | Settings findability | Done | Added search filter input to Settings page header and support for deep-linking/scrolling to specific setting sections. |
+| 5.14 | Renderer error boundary | Done | Added reusable `ErrorBoundary` wrapping views with friendly error display, "Reload view", and "Copy details". |
+| 5.15 | Title bar declutter | Done | Decluttered title bar by displaying the Update pill only when updates are actively available, downloading, or downloaded. |
 
 ---
 

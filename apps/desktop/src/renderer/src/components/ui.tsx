@@ -20,10 +20,60 @@ export function Modal({
   footer?: ReactNode;
   size?: 'sm' | 'lg';
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const prevActiveRef = useRef<Element | null>(null);
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    prevActiveRef.current = document.activeElement;
+
+    // Focus first interactive element or modal container
+    const el = modalRef.current;
+    if (el) {
+      const focusable = el.querySelectorAll<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length > 0) {
+        focusable[0].focus();
+      } else {
+        el.focus();
+      }
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && modalRef.current) {
+        const focusable = Array.from(
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (prevActiveRef.current && (prevActiveRef.current as HTMLElement).focus) {
+        (prevActiveRef.current as HTMLElement).focus();
+      }
+    };
   }, [onClose]);
 
   return (
@@ -36,6 +86,8 @@ export function Modal({
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <motion.div
+        ref={modalRef}
+        tabIndex={-1}
         className={`modal ${size ?? ''}`}
         role="dialog"
         aria-modal="true"
@@ -213,7 +265,13 @@ export function ProgressBar({
 }) {
   const pct = Math.max(0, Math.min(100, value));
   return (
-    <div className={`progress ${state ?? ''} ${indeterminate ? 'indeterminate' : ''}`}>
+    <div
+      role="progressbar"
+      aria-valuenow={indeterminate ? undefined : Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      className={`progress ${state ?? ''} ${indeterminate ? 'indeterminate' : ''}`}
+    >
       {indeterminate ? (
         <div style={{ width: `${pct}%` }} />
       ) : (
@@ -256,7 +314,7 @@ export function DayPicker({ value, onChange }: { value: number[] | undefined; on
 export function Switch({ checked, onChange, label }: { checked: boolean; onChange(v: boolean): void; label?: string }) {
   return (
     <label className="switch" aria-label={label}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input type="checkbox" role="switch" aria-checked={checked} checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span />
     </label>
   );

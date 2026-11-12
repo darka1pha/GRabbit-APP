@@ -261,13 +261,41 @@ function applyTheme(): void {
   }
 }
 
+let isMini = false;
+let normalBounds: Electron.Rectangle | null = null;
+
+function toggleMiniMode(enable?: boolean): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const target = enable !== undefined ? enable : !isMini;
+  if (target === isMini) return isMini;
+  isMini = target;
+  if (isMini) {
+    normalBounds = mainWindow.getBounds();
+    mainWindow.setAlwaysOnTop(true, 'floating');
+    mainWindow.setMinimumSize(320, 140);
+    mainWindow.setSize(360, 160, true);
+    mainWindow.setResizable(false);
+  } else {
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setResizable(true);
+    mainWindow.setMinimumSize(720, 520);
+    if (normalBounds) {
+      mainWindow.setBounds(normalBounds, true);
+    } else {
+      mainWindow.setSize(1280, 820, true);
+    }
+  }
+  mainWindow.webContents.send(IPC.miniModeChanged, isMini);
+  return isMini;
+}
+
 function createWindow(): void {
   const colors = themeColors();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 980,
-    minHeight: 620,
+    minWidth: 720,
+    minHeight: 520,
     show: false,
     title: 'GRabbit',
     icon: appIcon(),
@@ -332,6 +360,13 @@ function buildTrayMenu(): void {
     Menu.buildFromTemplate([
       { label: text('tray.open'), click: () => showWindow() },
       { label: `${text('tray.pill')} (${accelerator})`, click: () => grabPill.show() },
+      {
+        label: text('tray.miniMode'),
+        click: () => {
+          showWindow();
+          toggleMiniMode(true);
+        },
+      },
       { label: text('tray.grab'), click: () => showWindow('grab') },
       { label: text('tray.downloads'), click: () => showWindow('downloads') },
       { type: 'separator' },
@@ -434,6 +469,8 @@ app.whenReady().then(() => {
     dataDir,
     updater,
     grabPill,
+    toggleMiniMode,
+    isMiniMode: () => isMini,
   });
 
   settings.onChange((next, previous) => {

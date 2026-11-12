@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, Radio, RotateCw, Settings, Sun, Wrench } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, Radio, RotateCw, Search, Settings, Sun, Wrench, X } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
@@ -64,13 +64,23 @@ function LazyInput({
   );
 }
 
-export function SettingsView() {
+export function SettingsView({ initialSection }: { initialSection?: string } = {}) {
   const { t } = useI18n();
   const { settings, updateSettings, toast } = useApp();
   const [tools, setTools] = useState<ToolInfo | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (initialSection) {
+      setTimeout(() => {
+        const targetId = initialSection.startsWith('sec-') ? initialSection : `sec-${initialSection}`;
+        document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [initialSection]);
 
   useEffect(() => {
     void api.tools.info().then(setTools);
@@ -94,7 +104,29 @@ export function SettingsView() {
     <div className="page">
       <div className="page-narrow">
         <div className="page-header" style={{ flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1>{t('set.title')}</h1>
+          <div className="row" style={{ alignItems: 'center', gap: 14 }}>
+            <h1>{t('set.title')}</h1>
+            <div className="input-with-icon" style={{ width: 220 }}>
+              <Search size={14} />
+              <input
+                className="input sm"
+                value={searchQuery}
+                placeholder={t('set.searchSettings')}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={searchQuery ? { paddingInlineEnd: 24 } : undefined}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="input-clear-btn"
+                  title={t('common.clear')}
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
           <div className="settings-jumpbar">
             {[
               { id: 'sec-general', label: t('set.general') },
