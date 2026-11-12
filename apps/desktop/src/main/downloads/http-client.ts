@@ -32,6 +32,8 @@ export interface HttpRequestOptions {
   method?: 'GET' | 'HEAD';
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /** Drop the connection after this long without data, before or during the response body. */
+  stallTimeoutMs?: number;
 }
 
 function requestOnce(url: URL, options: HttpRequestOptions): Promise<IncomingMessage> {
@@ -43,7 +45,7 @@ function requestOnce(url: URL, options: HttpRequestOptions): Promise<IncomingMes
       agent: isHttps ? agents.https : agents.http,
       signal: options.signal,
     });
-    req.setTimeout(STALL_TIMEOUT_MS, () => {
+    req.setTimeout(options.stallTimeoutMs ?? STALL_TIMEOUT_MS, () => {
       req.destroy(Object.assign(new Error('Connection timed out'), { code: 'ETIMEDOUT' }));
     });
     req.once('response', resolve);

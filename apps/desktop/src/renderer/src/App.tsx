@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AudioLines,
@@ -14,15 +14,18 @@ import {
   Sun,
 } from 'lucide-react';
 import { CATEGORIES, type Category, type ClipboardLink, type UpdateStatusInfo } from '../../shared/types';
-import { createTranslator, I18nContext, type MessageKey } from './i18n';
+import { createTranslator, I18nContext, useI18n, type MessageKey } from './i18n';
 import { api, AppProvider, useApp } from './state';
+import { useDownloadsAggregate } from './downloads-store';
 import { formatSpeed, isHttpUrl, looksLikeDirectFile } from './format';
 import { CategoryIcon, ProgressBar, Toasts } from './components/ui';
 import { AddDownloadDialog } from './components/AddDownloadDialog';
 import { GrabView } from './views/GrabView';
 import { DownloadsView } from './views/DownloadsView';
-import { RecognizeView } from './views/RecognizeView';
-import { SettingsView } from './views/SettingsView';
+
+// Views that are not on screen at launch load when first opened
+const RecognizeView = lazy(() => import('./views/RecognizeView').then((m) => ({ default: m.RecognizeView })));
+const SettingsView = lazy(() => import('./views/SettingsView').then((m) => ({ default: m.SettingsView })));
 import iconUrl from './assets/icon.png';
 
 type View = 'grab' | 'downloads' | 'recognize' | 'settings';
@@ -36,6 +39,55 @@ function useSystemDark(): boolean {
     return () => mq.removeEventListener('change', onChange);
   }, []);
   return dark;
+}
+
+/** Total speed and active count in the title bar. Subscribes on its own so the shell does not re-render with it. */
+function SpeedPill({ onClick }: { onClick(): void }) {
+  const { t, language } = useI18n();
+  const { active, speed } = useDownloadsAggregate();
+  return (
+    <AnimatePresence initial={false}>
+      {active > 0 && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.9, y: -4 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.9, y: -4 }}
+          transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+          className="speed-pill btn ghost"
+          onClick={onClick}
+          title={t('nav.speed')}
+        >
+          <Gauge size={13} /> {formatSpeed(speed, language) || '…'} · {active}
+        </motion.button>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** The status card at the bottom of the sidebar. */
+function SidebarStatus({ rpcEnabled, rpcPort, onOpen }: { rpcEnabled: boolean; rpcPort: number; onOpen(active: boolean): void }) {
+  const { t, language } = useI18n();
+  const { active, speed, percent } = useDownloadsAggregate();
+  return (
+    <div className="sidebar-status-card" onClick={() => onOpen(active > 0)}>
+      <div className="sidebar-status-row">
+        <span className="sidebar-status-label">
+          <Gauge size={13} />
+          {active > 0 ? t('status.active', { count: active }) : t('status.ready')}
+        </span>
+        <b className="sidebar-status-speed">{active > 0 ? formatSpeed(speed, language) || '0 B/s' : t('status.idle')}</b>
+      </div>
+      {active > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <ProgressBar value={percent ?? 0} indeterminate={!percent} />
+        </div>
+      )}
+      <div className="sidebar-status-meta">
+        <span className={`rpc-dot ${rpcEnabled ? 'on' : 'off'}`} />
+        <span>{rpcEnabled ? `${t('status.rpcBridge')} :${rpcPort}` : t('set.extensionDisabled')}</span>
+      </div>
+    </div>
+  );
 }
 
 function Shell() {
@@ -98,13 +150,15 @@ function Shell() {
   );
 
   // Ctrl+V anywhere outside a text field grabs the pasted link; Ctrl+N opens "Add download"
+  const handleLinkRef = useRef(handleLink);
+  handleLinkRef.current = handleLink;
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest('input, textarea')) return;
       const text = e.clipboardData?.getData('text')?.trim();
       if (text && isHttpUrl(text)) {
         e.preventDefault();
-        handleLink(text);
+        handleLinkRef.current(text);
       }
     };
     const onKey = (e: KeyboardEvent) => {
@@ -119,25 +173,16 @@ function Shell() {
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('keydown', onKey);
     };
-  });
+  }, []);
 
-  const active = downloads.filter((d) => d.status === 'downloading' || d.status === 'starting' || d.status === 'processing');
-  const totalSpeed = active.reduce((s, d) => s + d.speed, 0);
-  const unfinished = downloads.filter((d) => d.status !== 'completed').length;
-  const activeProgress = useMemo(() => {
-    if (active.length === 0) return 0;
-    let sum = 0;
-    for (const d of active) {
-      if (d.totalBytes && d.totalBytes > 0) sum += Math.min(100, (d.receivedBytes / d.totalBytes) * 100);
-      else if (d.percent !== undefined) sum += d.percent;
-    }
-    return Math.round(sum / active.length);
-  }, [active]);
-
-  const categoryCounts = useMemo(() => {
+  const { unfinished, categoryCounts } = useMemo(() => {
     const counts = new Map<Category, number>();
-    for (const d of downloads) counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
-    return counts;
+    let pending = 0;
+    for (const d of downloads) {
+      counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
+      if (d.status !== 'completed') pending++;
+    }
+    return { unfinished: pending, categoryCounts: counts };
   }, [downloads]);
 
   if (!settings) return null;
@@ -237,7 +282,7 @@ function Shell() {
                   ? `${updateStatus.progressPercent ?? 0}%`
                   : updateStatus?.state === 'downloaded'
                   ? t('set.restartAndInstall')
-                  : 'Update'}
+                  : t('app.update')}
               </span>
             </button>
             <button
@@ -255,21 +300,7 @@ function Shell() {
             >
               {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
             </button>
-            <AnimatePresence initial={false}>
-              {active.length > 0 && (
-                <motion.button
-                  initial={{ opacity: 0, scale: 0.9, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.9, y: -4 }}
-                  transition={{ type: 'spring', damping: 22, stiffness: 300 }}
-                  className="speed-pill btn ghost"
-                  onClick={() => setView('downloads')}
-                  title={t('nav.speed')}
-                >
-                  <Gauge size={13} /> {formatSpeed(totalSpeed, language) || '…'} · {active.length}
-                </motion.button>
-              )}
-            </AnimatePresence>
+            <SpeedPill onClick={() => setView('downloads')} />
           </div>
         </header>
 
@@ -308,30 +339,11 @@ function Shell() {
 
           <div className="grow" />
 
-          <div className="sidebar-status-card" onClick={() => setView(active.length > 0 ? 'downloads' : 'settings')}>
-            <div className="sidebar-status-row">
-              <span className="sidebar-status-label">
-                <Gauge size={13} />
-                {active.length > 0 ? `${active.length} Active` : 'Engine Ready'}
-              </span>
-              <b className="sidebar-status-speed">
-                {active.length > 0 ? formatSpeed(totalSpeed, language) || '0 B/s' : 'Idle'}
-              </b>
-            </div>
-            {active.length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <ProgressBar value={activeProgress} indeterminate={activeProgress === 0} />
-              </div>
-            )}
-            <div className="sidebar-status-meta">
-              <span className={`rpc-dot ${settings.extension.enabled ? 'on' : 'off'}`} />
-              <span>
-                {settings.extension.enabled
-                  ? `RPC Bridge :${settings.extension.port}`
-                  : t('set.extensionDisabled')}
-              </span>
-            </div>
-          </div>
+          <SidebarStatus
+            rpcEnabled={settings.extension.enabled}
+            rpcPort={settings.extension.port}
+            onOpen={(busy) => setView(busy ? 'downloads' : 'settings')}
+          />
 
           {navItem('settings', <Settings size={17} />, t('nav.settings'))}
         </nav>
@@ -359,8 +371,10 @@ function Shell() {
                 />
               )}
               {view === 'downloads' && <DownloadsView category={category} onAdd={(url) => setAddDialog({ url })} />}
-              {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
-              {view === 'settings' && <SettingsView />}
+              <Suspense fallback={null}>
+                {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
+                {view === 'settings' && <SettingsView />}
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </main>
@@ -381,7 +395,7 @@ function Shell() {
                 transition={{ type: 'spring', damping: 20, stiffness: 300 }}
               >
                 <Download size={32} />
-                <b>Drop link to grab or download</b>
+                <b>{t('app.dropLink')}</b>
               </motion.div>
             </motion.div>
           )}

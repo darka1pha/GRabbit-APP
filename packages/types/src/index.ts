@@ -176,12 +176,43 @@ export interface DownloadItem {
   queueId?: string;
 }
 
+/**
+ * The fields of a download that change while it runs. Sent several times a second instead of
+ * the whole item; anything else about an item arrives as a full `DownloadItem`.
+ */
+export interface DownloadProgressPatch {
+  id: string;
+  status: DownloadStatus;
+  totalBytes: number | null;
+  receivedBytes: number;
+  speed: number;
+  eta: number | null;
+  percent?: number;
+  activeConnections: number;
+  retries: number;
+  /** Current stage of a media job. */
+  stage?: string;
+  /** Only for downloads the renderer asked to watch (segment map / inspector). */
+  segments?: SegmentState[];
+}
+
+/** Totals across all running downloads, for the title bar, sidebar and tray. */
+export interface DownloadsAggregate {
+  active: number;
+  /** Bytes per second across active downloads. */
+  speed: number;
+  /** 0..100 across active downloads, or null when unknown / nothing is active. */
+  percent: number | null;
+}
+
 export interface DownloadQueueScheduler {
   enabled: boolean;
   /** 'HH:MM', local time */
   startTime: string;
   /** 'HH:MM', or '' for no stop time */
   stopTime: string;
+  /** Weekdays (0 = Sunday … 6 = Saturday) the schedule starts on. Missing or empty = every day. */
+  days?: number[];
 }
 
 export type QueueAfterAction = 'none' | 'stopQueue' | 'quit' | 'sleep' | 'shutdown';
@@ -293,6 +324,8 @@ export interface AppSettings {
     startTime: string;
     /** HH:MM, or '' for no stop time. */
     stopTime: string;
+    /** Weekdays (0 = Sunday … 6 = Saturday) the schedule starts on. Missing or empty = every day. */
+    days?: number[];
   };
   media: {
     defaultAudioFormat: 'mp3' | 'm4a';
@@ -432,7 +465,13 @@ export interface GrabbitApi {
     openFile(id: string): Promise<void>;
     showInFolder(id: string): Promise<void>;
     copyUrl(id: string): Promise<void>;
+    /** Whole items: new downloads and anything other than running progress. */
     onChanged(listener: (items: DownloadItem[]) => void): () => void;
+    /** Running progress of active downloads. */
+    onProgress(listener: (patches: DownloadProgressPatch[]) => void): () => void;
+    onAggregate(listener: (aggregate: DownloadsAggregate) => void): () => void;
+    /** Which downloads should have live segment data in their progress updates. */
+    watchSegments(ids: string[]): Promise<void>;
     onRemoved(listener: (ids: string[]) => void): () => void;
     /** New queue order after a move. */
     onOrderChanged(listener: (ids: string[]) => void): () => void;
@@ -506,6 +545,9 @@ export const IPC = {
   downloadsShowInFolder: 'downloads:show-in-folder',
   downloadsCopyUrl: 'downloads:copy-url',
   downloadsChanged: 'downloads:changed',
+  downloadsProgress: 'downloads:progress',
+  downloadsAggregate: 'downloads:aggregate',
+  downloadsWatchSegments: 'downloads:watch-segments',
   downloadsRemoved: 'downloads:removed',
   downloadsOrder: 'downloads:order',
   queuesList: 'queues:list',

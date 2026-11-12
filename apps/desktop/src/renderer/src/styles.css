@@ -1120,6 +1120,19 @@ table.dl-table {
 .dl-table tbody tr {
   cursor: default;
 }
+/* Fixed row height: the list is virtualised (ROW_HEIGHT in DownloadsView.tsx) */
+.dl-table tbody tr.dl-row td {
+  height: 56px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+.dl-table tbody tr.dl-spacer td,
+.dl-table tbody tr.dl-spacer:hover td {
+  padding: 0;
+  border: 0;
+  background: none;
+}
 .dl-table tbody tr:hover td {
   background: var(--row-hover);
 }

@@ -117,10 +117,13 @@ export const AddMediaDownloadRequestSchema = z.object({
   queueId: opt(IdSchema),
 });
 
+export const WeekdaysSchema = z.array(z.number().int().min(0).max(6)).max(7);
+
 export const QueueSchedulerSchema = z.object({
   enabled: z.boolean(),
   startTime: TimeOfDaySchema,
   stopTime: TimeOfDaySchema,
+  days: opt(WeekdaysSchema),
 });
 
 /** Fields a caller may set when creating or editing a queue (never `id` or `order`). */
@@ -160,7 +163,7 @@ export const SettingsPatchSchema = z
     proxy: text(2048),
     afterQueue: z.enum(['none', 'quit', 'sleep', 'shutdown']),
     scheduler: z
-      .object({ enabled: z.boolean(), startTime: TimeOfDaySchema, stopTime: TimeOfDaySchema })
+      .object({ enabled: z.boolean(), startTime: TimeOfDaySchema, stopTime: TimeOfDaySchema, days: WeekdaysSchema })
       .partial(),
     media: z
       .object({
@@ -218,3 +221,51 @@ export function describeIssue(error: z.ZodError): string {
 }
 
 export { z, ZodError, type ZodTypeAny } from 'zod';
+
+// ---------------------------------------------------------------------------
+// Stored state (downloads.json / queues.json)
+//
+// Checked when the files are read back: an entry that is damaged or was
+// written by something else is dropped instead of crashing the app later.
+// Fields these schemas do not know are kept, so newer files stay readable.
+// ---------------------------------------------------------------------------
+
+const StoredSegmentSchema = z.object({
+  start: count,
+  end: z.number().finite().nonnegative().nullable(),
+  received: count,
+  part: z.string(),
+});
+
+export const StoredDownloadItemSchema = z
+  .object({
+    id: IdSchema,
+    kind: z.enum(['http', 'media']),
+    url: z.string().min(1),
+    fileName: z.string().min(1),
+    directory: z.string().min(1),
+    category: CategorySchema,
+    status: z.enum(['queued', 'starting', 'downloading', 'processing', 'paused', 'completed', 'error']),
+    totalBytes: z.number().finite().nonnegative().nullable(),
+    receivedBytes: count,
+    resumable: z.boolean(),
+    connections: z.number().finite(),
+    retries: z.number().finite().catch(0),
+    createdAt: z.number().finite().catch(0),
+    segments: z.array(StoredSegmentSchema).optional(),
+    headers: z.record(z.string()).optional(),
+    queueId: z.string().optional(),
+  })
+  .passthrough();
+
+export const StoredQueueSchema = z
+  .object({
+    id: IdSchema,
+    name: z.string(),
+    enabled: z.boolean(),
+    maxConcurrent: z.number().finite().transform((n) => Math.min(16, Math.max(1, Math.round(n)))),
+    scheduler: QueueSchedulerSchema.optional().catch(undefined),
+    afterQueue: z.enum(['none', 'stopQueue', 'quit', 'sleep', 'shutdown']).optional().catch(undefined),
+    order: z.array(z.string()).catch([]),
+  })
+  .passthrough();

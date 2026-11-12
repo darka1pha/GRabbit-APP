@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { mkdir, open, rename, rm, stat, truncate } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat, statfs, truncate } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
@@ -171,6 +171,31 @@ function backoffMs(attempt: number, res?: HttpResponse): number {
   return base / 2 + Math.random() * (base / 2);
 }
 
+/**
+ * Bytes a download needs free in its folder. Parts are joined into one file at the end: the
+ * first part is renamed and the others are copied after it, so all but the first exist twice.
+ */
+export function requiredFreeBytes(segments: SegmentState[]): number {
+  const lengths = segments.map((s) => segmentLength(s) ?? 0);
+  const total = lengths.reduce((sum, n) => sum + n, 0);
+  return total + (total - (lengths[0] ?? 0));
+}
+
+/** Fails early, with the same error a full disk gives later, when the folder clearly cannot hold the file. */
+async function assertFreeSpace(directory: string, needed: number): Promise<void> {
+  if (needed <= 0) return;
+  let free: number;
+  try {
+    const info = await statfs(directory);
+    free = info.bavail * info.bsize;
+  } catch {
+    return; // Unknown (network share, old filesystem): let the download try
+  }
+  if (free < needed) {
+    throw Object.assign(new Error(`Not enough free disk space: ${needed} bytes needed, ${free} available`), { code: 'ENOSPC' });
+  }
+}
+
 /** Marks a folder hidden in Explorer (best effort). */
 function hideFolder(path: string): void {
   if (process.platform !== 'win32') return;
@@ -292,6 +317,14 @@ export class HttpDownloadTask {
       info.resumable && info.totalBytes
         ? planSegments(info.totalBytes, item.connections)
         : [{ start: 0, end: info.totalBytes ? info.totalBytes - 1 : null, received: 0, part: '0' }];
+
+    try {
+      await assertFreeSpace(item.directory, requiredFreeBytes(item.segments));
+    } catch (err) {
+      res.body.destroy();
+      item.segments = undefined;
+      throw err;
+    }
 
     // A 200 answer to "bytes=0-" is the whole file; if we split, segment 0 keeps reading it
     // and simply stops at its own end.

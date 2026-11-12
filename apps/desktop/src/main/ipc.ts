@@ -187,6 +187,8 @@ export function registerIpc(deps: IpcDeps): void {
     clipboard.writeText(item.url);
   });
 
+  handle(IPC.downloadsWatchSegments, [IdListSchema], (ids: string[]) => manager.watchSegments(ids));
+
   // ------------------------------------------------------------ queues
   handle(IPC.queuesList, [], () => manager.listQueues());
   handle(IPC.queuesCreate, [z.string().max(120), optional(QueuePatchSchema)], (name: string, options?: Partial<DownloadQueue>) => manager.createQueue(name, options));
