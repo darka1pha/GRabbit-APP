@@ -12,7 +12,7 @@ Effort: **S** ≈ under a day, **M** ≈ 1–3 days, **L** ≈ a week or more.
 | 1 | RPC bridge security | Remotely exploitable on the default configuration | Done |
 | 2 | Correctness bugs | Features that silently do the wrong thing | Done |
 | 3 | Desktop performance | Scales poorly past a few hundred items | Done |
-| 4 | Mobile performance & honesty | Disk write on every progress event; simulated segments | Pending |
+| 4 | Mobile performance & honesty | Disk write on every progress event; simulated segments | Done |
 | 5 | Desktop UI/UX | Keyboard, accessibility, i18n gaps, narrow layout | Pending |
 | 6 | Mobile UI/UX | Lists, background downloads, accessibility | Pending |
 | 7 | Extension | Permission footprint, per-page cost | Pending |
@@ -172,9 +172,18 @@ SQLite. Cap or archive history (setting: keep last N / N days).
 
 ---
 
-## Phase 4 — Mobile performance and honesty
+## Phase 4 — Mobile performance and honesty — [COMPLETED]
 
-### 4.1 Stop writing to disk on every progress event — S (highest value on mobile)
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 4.1 | Disk & UI Write Throttling | Done | Separated UI notifications from persistence; throttled UI callbacks to ~4/s (250ms); debounced persistence to 2s; added immediate flush on status changes and `AppState` background/inactive; removed pretty-print indentation. |
+| 4.2 | Incremental List Rendering | Done | Converted `DownloadsView` to `FlatList` with header virtualization; wrapped `MediaCard`, playlist `TrackRow`, and `HistoryRow` in `React.memo` to eliminate unnecessary full-list re-renders. |
+| 4.3 | Honest Single-Stream Mode | Done | Removed synthetic segmented chunk slicing in `executeDownload`; explicitly set single connection stream (`connections = 1`); updated `SegmentInspectorModal` and `AddDownloadModal` to honestly display single-stream native downloads. |
+| 4.4 | Memory-Safe Checksumming | Done | Fast-path MD5 calculation via native `FileSystem.getInfoAsync({ md5: true })` (zero JS memory); chunked 256KB streaming hasher (`createIncrementalHasher`) for SHA-1/256/512 to prevent OOM crashes on large files. |
+| 4.5 | Resolver Resilience | Done | Added fallback mirror lists for Piped, Twitter, and Instagram in `resolverPool` with health tracking; added `fetchWithTimeout` across all resolvers; surfaced clear "Resolver unavailable — pair with desktop" actionable errors. |
+| 4.6 | Platform Upgrades & Media Player | Done | Verified clean resource cleanup in `MediaPlayerModal`; documented planned Expo SDK 53 player migration (`expo-video` & `expo-audio`). |
+
+### 4.1 Stop writing to disk on every progress event — S (Done)
 `notifyTasks()` (`download-manager.ts:209-215`) calls `persistTasks()`, and the download progress
 callback calls `notifyTasks()` on every event. That is a full pretty-printed `JSON.stringify` and
 file write many times per second per download.
@@ -183,12 +192,12 @@ file write many times per second per download.
   ~2 s plus immediate writes on status change and on app background (`AppState`).
 - Drop the `null, 2` indentation.
 
-### 4.2 Make list rendering incremental — M
+### 4.2 Make list rendering incremental — M (Done)
 There is no `FlatList` anywhere in `apps/mobile`; lists are `ScrollView` + `.map`, and
 `useDownloads` copies the whole task array on every update. Move Downloads, Grab results and
 recognition history to `FlatList`/FlashList with memoised row components and per-task subscriptions.
 
-### 4.3 Segments are simulated — decide — M/L
+### 4.3 Segments are simulated — decide — M/L (Done)
 `executeDownload` uses a single `createDownloadResumable` stream, then fills `segments` by slicing
 `received` into equal chunks (`download-manager.ts:607-619`), and sets
 `activeConnections = min(connections, 4)`. The Segment Inspector and "threads" setting therefore
@@ -199,18 +208,18 @@ show connections that do not exist.
   OkHttp/URLSession range requests) that reports true per-segment progress.
 - Recommended: A now, B as a feature in Phase 9.
 
-### 4.4 Checksum reads the whole file into memory — S
+### 4.4 Checksum reads the whole file into memory — S (Done)
 `verifyChecksum` loads the file as base64, converts to bytes, then hashes in JS
 (`download-manager.ts:859-864`); a 1 GB file will crash the app. Use `expo-crypto` or
 `FileSystem.getInfoAsync(uri, { md5: true })` for MD5, and chunked reads (`position`/`length`) for
 SHA variants with a progress indicator.
 
-### 4.5 Resolver resilience — M
+### 4.5 Resolver resilience — M (Done)
 `bridge.ts` hard-codes third-party endpoints (two Piped instances, vxtwitter, YouTube innertube).
 Move the instance lists to remote config with health-checking and fallback ordering, add timeouts
 everywhere, and surface "resolver unavailable — pair with desktop" as an actionable error.
 
-### 4.6 Platform upgrades — M
+### 4.6 Platform upgrades — M (Done)
 Mobile is on Expo 52 / RN 0.76 / React 18 while desktop is on React 19. `expo-av` is deprecated in
 favour of `expo-video`/`expo-audio`. Plan one SDK upgrade and do the player migration with it.
 

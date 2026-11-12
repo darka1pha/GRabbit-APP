@@ -31,7 +31,7 @@ interface MediaCardProps {
   onVerifyChecksum?: (task: MobileDownloadTask) => void;
 }
 
-export function MediaCard({
+function MediaCardComponent({
   task,
   queueName,
   onPause,
@@ -516,3 +516,5 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+
+export const MediaCard = React.memo(MediaCardComponent);

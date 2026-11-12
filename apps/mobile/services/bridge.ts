@@ -48,6 +48,73 @@ export interface MobileBridgeConfig {
 const MOBILE_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 
+export const DEFAULT_RESOLVER_ENDPOINTS = {
+  piped: [
+    'https://pipedapi.kavin.rocks',
+    'https://api.piped.private.coffee',
+    'https://piped-api.lunar.icu',
+    'https://pipedapi.tokhmi.xyz',
+  ],
+  twitter: [
+    'https://api.vxtwitter.com',
+    'https://api.fxtwitter.com',
+    'https://api.fixupx.com',
+  ],
+  instagram: [
+    'https://www.ddinstagram.com',
+    'https://www.kkinstagram.com',
+  ],
+};
+
+class ResolverEndpointPool {
+  private lastHealthyMirror: Map<string, string> = new Map();
+
+  getOrdered(category: 'piped' | 'twitter' | 'instagram', defaultList: string[]): string[] {
+    const healthy = this.lastHealthyMirror.get(category);
+    if (!healthy) return [...defaultList];
+    return [healthy, ...defaultList.filter((m) => m !== healthy)];
+  }
+
+  markSuccess(category: 'piped' | 'twitter' | 'instagram', mirror: string) {
+    this.lastHealthyMirror.set(category, mirror);
+  }
+
+  markFailure(category: 'piped' | 'twitter' | 'instagram', mirror: string) {
+    if (this.lastHealthyMirror.get(category) === mirror) {
+      this.lastHealthyMirror.delete(category);
+    }
+  }
+}
+
+export const resolverPool = new ResolverEndpointPool();
+
+export async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs = 8000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (init?.signal) {
+    if (init.signal.aborted) {
+      clearTimeout(timeoutId);
+      throw new Error('Aborted');
+    }
+    init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
+  try {
+    const res = await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export function extractYouTubeVideoId(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -117,19 +184,23 @@ export class MobileBridgeService {
     }
     try {
       const rpcUrl = `http://${desktopBridge.host}:${desktopBridge.port}/downloads/add`;
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-GRabbit-Token': desktopBridge.token,
+      const res = await fetchWithTimeout(
+        rpcUrl,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-GRabbit-Token': desktopBridge.token,
+          },
+          body: JSON.stringify({
+            url,
+            fileName: options?.fileName,
+            referrer: options?.referrer,
+            startPaused: options?.startPaused,
+          }),
         },
-        body: JSON.stringify({
-          url,
-          fileName: options?.fileName,
-          referrer: options?.referrer,
-          startPaused: options?.startPaused,
-        }),
-      });
+        2500
+      );
       const data = await res.json();
       if (res.ok && data?.success) {
         return { success: true };
@@ -157,15 +228,19 @@ export class MobileBridgeService {
     if (desktopBridge.enabled && desktopBridge.host) {
       try {
         const rpcUrl = `http://${desktopBridge.host}:${desktopBridge.port}/media/resolve`;
-        const res = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-GRabbit-Token': desktopBridge.token,
+        const res = await fetchWithTimeout(
+          rpcUrl,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-GRabbit-Token': desktopBridge.token,
+            },
+            body: JSON.stringify({ url: normalizedUrl }),
+            signal,
           },
-          body: JSON.stringify({ url: normalizedUrl }),
-          signal,
-        });
+          2500
+        );
         if (res.ok) {
           const data = await res.json();
           const meta: PlatformMetadata | undefined = data?.metadata ?? (data?.items ? data : undefined);
@@ -188,7 +263,13 @@ export class MobileBridgeService {
     }
 
     // 3. Standalone on-device resolution with real stream extraction
-    return this.resolveStandalone(normalizedUrl, platform, signal);
+    try {
+      return await this.resolveStandalone(normalizedUrl, platform, signal);
+    } catch (err: any) {
+      throw new Error(
+        `Resolver unavailable — pair with desktop. Standalone extractor could not resolve ${PLATFORM_NAMES[platform] || platform}: ${err?.message || 'Remote mirrors unreachable'}. Connect to GRabbit Desktop in Settings for full yt-dlp extraction.`
+      );
+    }
   }
 
   /**
@@ -213,19 +294,23 @@ export class MobileBridgeService {
     if (desktopBridge.enabled && desktopBridge.host) {
       try {
         const rpcUrl = `http://${desktopBridge.host}:${desktopBridge.port}/media/stream`;
-        const res = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-GRabbit-Token': desktopBridge.token,
+        const res = await fetchWithTimeout(
+          rpcUrl,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-GRabbit-Token': desktopBridge.token,
+            },
+            body: JSON.stringify({
+              url,
+              format: option.format,
+              qualityId: option.qualityId,
+            }),
+            signal,
           },
-          body: JSON.stringify({
-            url,
-            format: option.format,
-            qualityId: option.qualityId,
-          }),
-          signal,
-        });
+          2500
+        );
         if (res.ok) {
           const data = await res.json();
           if (data?.streamUrl) {
@@ -266,7 +351,7 @@ export class MobileBridgeService {
     }
 
     throw new Error(
-      `Could not extract a direct media stream from ${PLATFORM_NAMES[platform] || platform}. Connect to GRabbit Desktop RPC Bridge in Settings for full yt-dlp extraction.`
+      `Resolver unavailable — pair with desktop. Could not extract a direct media stream from ${PLATFORM_NAMES[platform] || platform}. Connect to GRabbit Desktop RPC Bridge in Settings for full yt-dlp extraction.`
     );
   }
 
@@ -337,31 +422,35 @@ export class MobileBridgeService {
       for (const client of clients) {
         if (extractedOptions.length > 0) break;
         try {
-          const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'User-Agent': client.userAgent,
-            },
-            body: JSON.stringify({
-              videoId,
-              context: {
-                client: {
-                  clientName: client.clientName,
-                  clientVersion: client.clientVersion,
-                  hl: 'en',
-                  gl: 'US',
-                  ...(client.androidSdkVersion ? { androidSdkVersion: client.androidSdkVersion } : {}),
-                  ...(client.deviceMake ? { deviceMake: client.deviceMake, deviceModel: client.deviceModel } : {}),
-                  osName: client.osName,
-                  osVersion: client.osVersion,
-                },
+          const res = await fetchWithTimeout(
+            'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': client.userAgent,
               },
-              contentCheckOk: true,
-              racyCheckOk: true,
-            }),
-            signal,
-          });
+              body: JSON.stringify({
+                videoId,
+                context: {
+                  client: {
+                    clientName: client.clientName,
+                    clientVersion: client.clientVersion,
+                    hl: 'en',
+                    gl: 'US',
+                    ...(client.androidSdkVersion ? { androidSdkVersion: client.androidSdkVersion } : {}),
+                    ...(client.deviceMake ? { deviceMake: client.deviceMake, deviceModel: client.deviceModel } : {}),
+                    osName: client.osName,
+                    osVersion: client.osVersion,
+                  },
+                },
+                contentCheckOk: true,
+                racyCheckOk: true,
+              }),
+              signal,
+            },
+            7000
+          );
 
           if (res.ok) {
             const data = await res.json();
@@ -433,15 +522,13 @@ export class MobileBridgeService {
 
       // Fallback to Piped API if Innertube didn't return direct URLs
       if (extractedOptions.length === 0) {
-        const pipedHosts = [
-          'https://pipedapi.kavin.rocks',
-          'https://api.piped.private.coffee',
-        ];
+        const pipedHosts = resolverPool.getOrdered('piped', DEFAULT_RESOLVER_ENDPOINTS.piped);
         for (const host of pipedHosts) {
           if (extractedOptions.length > 0) break;
           try {
-            const res = await fetch(`${host}/streams/${videoId}`, { signal });
+            const res = await fetchWithTimeout(`${host}/streams/${videoId}`, { signal }, 6000);
             if (res.ok) {
+              resolverPool.markSuccess('piped', host);
               const data = await res.json();
               if (data.title) title = data.title;
               if (data.uploader) author = data.uploader;
@@ -470,9 +557,11 @@ export class MobileBridgeService {
                   directStreamUrl: audioStreams[0].url,
                 });
               }
+            } else {
+              resolverPool.markFailure('piped', host);
             }
           } catch {
-            // ignore
+            resolverPool.markFailure('piped', host);
           }
         }
       }
@@ -482,7 +571,7 @@ export class MobileBridgeService {
     if (title === 'YouTube Video') {
       try {
         const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-        const res = await fetch(oembedUrl, { signal });
+        const res = await fetchWithTimeout(oembedUrl, { signal }, 5000);
         if (res.ok) {
           const data = await res.json();
           if (data.title) title = data.title;
@@ -531,7 +620,7 @@ export class MobileBridgeService {
 
     try {
       const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
-      const res = await fetch(apiUrl, { signal });
+      const res = await fetchWithTimeout(apiUrl, { signal }, 7000);
       if (res.ok) {
         const json = await res.json();
         const d = json?.data;
@@ -623,27 +712,38 @@ export class MobileBridgeService {
     try {
       const parsed = new URL(url);
       const apiPath = parsed.pathname;
-      const res = await fetch(`https://api.vxtwitter.com${apiPath}`, { signal });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.text) title = data.text.split('\n')[0].slice(0, 90) || title;
-        if (data.user_name) author = `${data.user_name} (@${data.user_screen_name || ''})`;
-        const mediaList: any[] = data.media_extended || [];
-        for (const m of mediaList) {
-          if ((m.type === 'video' || m.type === 'gif') && m.url) {
-            if (!thumbnailUrl && m.thumbnail_url) thumbnailUrl = m.thumbnail_url;
-            if (!durationSeconds && m.duration_millis) {
-              durationSeconds = Math.round(m.duration_millis / 1000);
+      const twitterHosts = resolverPool.getOrdered('twitter', DEFAULT_RESOLVER_ENDPOINTS.twitter);
+      for (const host of twitterHosts) {
+        if (options.length > 0) break;
+        try {
+          const res = await fetchWithTimeout(`${host}${apiPath}`, { signal }, 6000);
+          if (res.ok) {
+            resolverPool.markSuccess('twitter', host);
+            const data = await res.json();
+            if (data.text) title = data.text.split('\n')[0].slice(0, 90) || title;
+            if (data.user_name) author = `${data.user_name} (@${data.user_screen_name || ''})`;
+            const mediaList: any[] = data.media_extended || [];
+            for (const m of mediaList) {
+              if ((m.type === 'video' || m.type === 'gif') && m.url) {
+                if (!thumbnailUrl && m.thumbnail_url) thumbnailUrl = m.thumbnail_url;
+                if (!durationSeconds && m.duration_millis) {
+                  durationSeconds = Math.round(m.duration_millis / 1000);
+                }
+                const height = m.size?.height || 720;
+                options.push({
+                  format: 'video',
+                  qualityId: `${height}p`,
+                  label: `${height}p MP4`,
+                  extension: 'mp4',
+                  directStreamUrl: m.url,
+                });
+              }
             }
-            const height = m.size?.height || 720;
-            options.push({
-              format: 'video',
-              qualityId: `${height}p`,
-              label: `${height}p MP4`,
-              extension: 'mp4',
-              directStreamUrl: m.url,
-            });
+          } else {
+            resolverPool.markFailure('twitter', host);
           }
+        } catch {
+          resolverPool.markFailure('twitter', host);
         }
       }
     } catch {
@@ -686,10 +786,14 @@ export class MobileBridgeService {
 
     try {
       const cleanUrl = url.split('?')[0].replace(/\/$/, '');
-      const res = await fetch(`${cleanUrl}.json`, {
-        headers: { 'User-Agent': MOBILE_USER_AGENT },
-        signal,
-      });
+      const res = await fetchWithTimeout(
+        `${cleanUrl}.json`,
+        {
+          headers: { 'User-Agent': MOBILE_USER_AGENT },
+          signal,
+        },
+        7000
+      );
       if (res.ok) {
         const json = await res.json();
         const post = json?.[0]?.data?.children?.[0]?.data;
@@ -750,31 +854,46 @@ export class MobileBridgeService {
 
     try {
       const parsed = new URL(url);
-      const embedUrl = `https://www.ddinstagram.com${parsed.pathname}`;
-      const res = await fetch(embedUrl, {
-        headers: { 'User-Agent': 'TelegramBot (like TwitterBot)' },
-        signal,
-      });
-      if (res.ok) {
-        const html = await res.text();
-        const videoMatch = /<meta\s+property=["']og:video(?::secure_url)?["']\s+content=["']([^"']+)["']/i.exec(html);
-        const titleMatch = /<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i.exec(html);
-        const imageMatch = /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i.exec(html);
-        const authorMatch = /<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i.exec(html);
+      const igHosts = resolverPool.getOrdered('instagram', DEFAULT_RESOLVER_ENDPOINTS.instagram);
+      for (const host of igHosts) {
+        if (options.length > 0) break;
+        try {
+          const embedUrl = `${host}${parsed.pathname}`;
+          const res = await fetchWithTimeout(
+            embedUrl,
+            {
+              headers: { 'User-Agent': 'TelegramBot (like TwitterBot)' },
+              signal,
+            },
+            6000
+          );
+          if (res.ok) {
+            resolverPool.markSuccess('instagram', host);
+            const html = await res.text();
+            const videoMatch = /<meta\s+property=["']og:video(?::secure_url)?["']\s+content=["']([^"']+)["']/i.exec(html);
+            const titleMatch = /<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i.exec(html);
+            const imageMatch = /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i.exec(html);
+            const authorMatch = /<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i.exec(html);
 
-        if (titleMatch?.[1]) title = titleMatch[1].slice(0, 90);
-        if (authorMatch?.[1]) author = authorMatch[1];
-        if (imageMatch?.[1]) thumbnailUrl = imageMatch[1].replace(/&amp;/g, '&');
-        if (videoMatch?.[1]) {
-          const directUrl = videoMatch[1].replace(/&amp;/g, '&');
-          const fullUrl = directUrl.startsWith('http') ? directUrl : `https://www.ddinstagram.com${directUrl}`;
-          options.push({
-            format: 'video',
-            qualityId: '1080p',
-            label: 'Original Reel (MP4)',
-            extension: 'mp4',
-            directStreamUrl: fullUrl,
-          });
+            if (titleMatch?.[1]) title = titleMatch[1].slice(0, 90);
+            if (authorMatch?.[1]) author = authorMatch[1];
+            if (imageMatch?.[1]) thumbnailUrl = imageMatch[1].replace(/&amp;/g, '&');
+            if (videoMatch?.[1]) {
+              const directUrl = videoMatch[1].replace(/&amp;/g, '&');
+              const fullUrl = directUrl.startsWith('http') ? directUrl : `${host}${directUrl}`;
+              options.push({
+                format: 'video',
+                qualityId: '1080p',
+                label: 'Original Reel (MP4)',
+                extension: 'mp4',
+                directStreamUrl: fullUrl,
+              });
+            }
+          } else {
+            resolverPool.markFailure('instagram', host);
+          }
+        } catch {
+          resolverPool.markFailure('instagram', host);
         }
       }
     } catch {
@@ -812,9 +931,10 @@ export class MobileBridgeService {
     let thumbnailUrl: string | undefined;
 
     try {
-      const oembedRes = await fetch(
+      const oembedRes = await fetchWithTimeout(
         `https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(url)}`,
-        { signal }
+        { signal },
+        6000
       );
       if (oembedRes.ok) {
         const data = await oembedRes.json();
@@ -864,15 +984,19 @@ export class MobileBridgeService {
   ): Promise<{ streamUrl: string; sizeBytes?: number; durationSeconds?: number } | null> {
     if (!query || query === 'Spotify Track' || query === 'SoundCloud Track') return null;
     try {
-      const searchRes = await fetch('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context: { client: { clientName: 'WEB', clientVersion: '2.20240726.00.00', hl: 'en', gl: 'US' } },
-          query: `${query} official audio`,
-        }),
-        signal,
-      });
+      const searchRes = await fetchWithTimeout(
+        'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context: { client: { clientName: 'WEB', clientVersion: '2.20240726.00.00', hl: 'en', gl: 'US' } },
+            query: `${query} official audio`,
+          }),
+          signal,
+        },
+        7000
+      );
       if (!searchRes.ok) return null;
       const searchData = await searchRes.json();
       const sections =
@@ -914,9 +1038,10 @@ export class MobileBridgeService {
 
     // 1. Try Spotify oEmbed first (fast, reliable JSON with title & thumbnail)
     try {
-      const oembedRes = await fetch(
+      const oembedRes = await fetchWithTimeout(
         `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`,
-        { signal }
+        { signal },
+        6000
       );
       if (oembedRes.ok) {
         const oembed = await oembedRes.json();
@@ -929,7 +1054,7 @@ export class MobileBridgeService {
 
     // 2. Also scrape track page HTML for artist / album details
     try {
-      const res = await fetch(url, { signal });
+      const res = await fetchWithTimeout(url, { signal }, 6000);
       if (res.ok) {
         const html = await res.text();
         const details = parseTrackPage(html);
