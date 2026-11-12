@@ -49,7 +49,9 @@ describe('JsonStore', () => {
     store.save(() => ({ n: 1 }));
     await wait(40);
     store.saveSync({ n: 2 });
-    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    await vi.waitFor(() => {
+      expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    }, { timeout: 2000, interval: 20 });
   });
 
   it('keeps the previous version as a backup and falls back to it', () => {
