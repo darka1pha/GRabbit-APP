@@ -34,7 +34,7 @@ export function SegmentInspectorModal({ visible, task, onClose }: SegmentInspect
             <View style={{ flex: 1, marginRight: 8 }}>
               <View style={styles.headerTitleRow}>
                 <Ionicons name="pulse" size={20} color="#38bdf8" />
-                <Text style={styles.title}>Connection Threads Map</Text>
+                <Text style={styles.title}>Stream Inspector</Text>
               </View>
               <Text style={styles.subtitle} numberOfLines={1}>
                 {task.title}
@@ -49,19 +49,19 @@ export function SegmentInspectorModal({ visible, task, onClose }: SegmentInspect
             {/* Stat Cards */}
             <View style={styles.statGrid}>
               <View style={styles.statCard}>
-                <Text style={styles.statLabel}>Connections</Text>
-                <Text style={styles.statValue}>
-                  {activeConn} / {totalConn}
-                </Text>
+                <Text style={styles.statLabel}>Connection Mode</Text>
+                <Text style={styles.statValue}>1 Stream</Text>
                 <Text style={styles.statSub}>
                   {task.status === 'downloading' ? 'Active' : task.status}
                 </Text>
               </View>
 
               <View style={styles.statCard}>
-                <Text style={styles.statLabel}>Thread Parts</Text>
-                <Text style={styles.statValue}>{segments.length}</Text>
-                <Text style={styles.statSub}>Chunks</Text>
+                <Text style={styles.statLabel}>Progress</Text>
+                <Text style={styles.statValue}>
+                  {total > 0 ? Math.min(100, Math.round(((task.receivedBytes || 0) / total) * 100)) : 0}%
+                </Text>
+                <Text style={styles.statSub}>Continuous</Text>
               </View>
 
               <View style={styles.statCard}>
@@ -119,74 +119,71 @@ export function SegmentInspectorModal({ visible, task, onClose }: SegmentInspect
               </View>
             </View>
 
-            {/* Detailed Thread Table */}
+            {/* Detailed Stream Connection Card */}
             <View style={styles.threadsCard}>
-              <Text style={styles.sectionTitle}>Individual Thread Breakdown</Text>
+              <Text style={styles.sectionTitle}>Stream Connection Details</Text>
 
-              {segments.map((s, idx) => {
-                const segLen = s.end !== null ? s.end - s.start + 1 : Math.floor(total / segments.length);
-                const pct = segLen > 0 ? Math.min(100, Math.round((s.received / segLen) * 100)) : 0;
-                const isDone = segLen > 0 && s.received >= segLen;
-                const isAct = task.status === 'downloading' && !isDone && s.received > 0;
-
-                return (
-                  <View key={s.part || idx} style={styles.threadRow}>
-                    <View style={styles.threadInfo}>
-                      <View style={styles.threadTitleRow}>
-                        <Text style={styles.threadPartName}>Part {idx + 1}</Text>
-                        <View
-                          style={[
-                            styles.badge,
-                            isDone
-                              ? styles.badgeDone
-                              : isAct
-                              ? styles.badgeActive
-                              : styles.badgeWaiting,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.badgeText,
-                              isDone
-                                ? styles.badgeTextDone
-                                : isAct
-                                ? styles.badgeTextActive
-                                : styles.badgeTextWaiting,
-                            ]}
-                          >
-                            {isDone ? 'Done' : isAct ? 'Active' : 'Waiting'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <Text style={styles.threadRange}>
-                        {formatBytes(s.start)} → {s.end !== null ? formatBytes(s.end) : '—'}
+              <View style={styles.threadRow}>
+                <View style={styles.threadInfo}>
+                  <View style={styles.threadTitleRow}>
+                    <Text style={styles.threadPartName}>Primary HTTP Stream</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        task.status === 'completed'
+                          ? styles.badgeDone
+                          : task.status === 'downloading'
+                          ? styles.badgeActive
+                          : styles.badgeWaiting,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          task.status === 'completed'
+                            ? styles.badgeTextDone
+                            : task.status === 'downloading'
+                            ? styles.badgeTextActive
+                            : styles.badgeTextWaiting,
+                        ]}
+                      >
+                        {task.status === 'completed' ? 'Done' : task.status === 'downloading' ? 'Streaming' : task.status}
                       </Text>
-
-                      {/* Progress line */}
-                      <View style={styles.threadProgressContainer}>
-                        <View style={styles.threadProgressBar}>
-                          <View
-                            style={[
-                              styles.threadProgressFill,
-                              {
-                                width: `${pct}%`,
-                                backgroundColor: isDone ? '#22c55e' : '#0284c7',
-                              },
-                            ]}
-                          />
-                        </View>
-                        <View style={styles.threadProgressLabelRow}>
-                          <Text style={styles.threadProgressBytes}>
-                            {formatBytes(s.received)} / {formatBytes(segLen)}
-                          </Text>
-                          <Text style={styles.threadProgressPct}>{pct}%</Text>
-                        </View>
-                      </View>
                     </View>
                   </View>
-                );
-              })}
+
+                  <Text style={styles.threadRange}>
+                    0 B → {formatBytes(task.totalBytes)}
+                  </Text>
+
+                  {/* Progress line */}
+                  <View style={styles.threadProgressContainer}>
+                    <View style={styles.threadProgressBar}>
+                      <View
+                        style={[
+                          styles.threadProgressFill,
+                          {
+                            width: `${total > 0 ? Math.min(100, Math.round(((task.receivedBytes || 0) / total) * 100)) : 0}%`,
+                            backgroundColor: task.status === 'completed' ? '#22c55e' : '#0284c7',
+                          },
+                        ]}
+                      />
+                    </View>
+                    <View style={styles.threadProgressLabelRow}>
+                      <Text style={styles.threadProgressBytes}>
+                        {formatBytes(task.receivedBytes)} / {formatBytes(task.totalBytes)}
+                      </Text>
+                      <Text style={styles.threadProgressPct}>
+                        {total > 0 ? Math.min(100, Math.round(((task.receivedBytes || 0) / total) * 100)) : 0}%
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={{ fontSize: 11, color: '#64748b', marginTop: 10, lineHeight: 16 }}>
+                    Mobile runs an honest single HTTP stream with byte-range resume capability to preserve battery life and memory. Multi-connection segmented chunk engines are supported on GRabbit Desktop.
+                  </Text>
+                </View>
+              </View>
             </View>
           </ScrollView>
 

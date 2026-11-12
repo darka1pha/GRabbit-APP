@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  FlatList,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Category, CATEGORIES, DownloadQueue } from '@grabbit/types';
@@ -133,225 +135,272 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     return map;
   }, [tasks]);
 
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header with Title & Speed */}
-      <View style={styles.topHeader}>
-        <View>
-          <Text style={styles.viewTitle}>Downloads Manager</Text>
-          <Text style={styles.viewSubtitle}>
-            {counts.all} tasks • {counts.active} downloading
-          </Text>
-        </View>
+  const keyExtractor = useCallback((item: MobileDownloadTask) => item.id, []);
 
-        {counts.active > 0 && (
-          <View style={styles.speedBadge}>
-            <Ionicons name="speedometer-outline" size={14} color="#38bdf8" />
-            <Text style={styles.speedText}>{formatSpeed(totalSpeed) || '0 B/s'}</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Search Input */}
-      <View style={styles.searchRow}>
-        <Ionicons name="search" size={16} color="#64748b" />
-        <TextInput
-          style={styles.searchInput}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search downloads by name, link, or author..."
-          placeholderTextColor="#64748b"
+  const renderItem = useCallback(
+    ({ item }: { item: MobileDownloadTask }) => {
+      const queue = queues.find((q) => q.id === (item.queueId || 'main'));
+      return (
+        <MediaCard
+          task={item}
+          queueName={selectedQueueId === 'all' ? queue?.name : undefined}
+          onPause={pauseDownload}
+          onResume={resumeDownload}
+          onCancel={cancelDownload}
+          onPlay={onPlayMedia}
+          onSaveToLibrary={saveToLibrary}
+          onDelete={deleteDownload}
+          onInspectSegments={(task) => setInspectTask(task)}
+          onMoveQueue={(task) => setMoveQueueTask(task)}
+          onVerifyChecksum={(task) => setChecksumTask(task)}
         />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClearBtn}>
-            <Ionicons name="close-circle" size={16} color="#94a3b8" />
-          </TouchableOpacity>
-        )}
-      </View>
+      );
+    },
+    [
+      queues,
+      selectedQueueId,
+      pauseDownload,
+      resumeDownload,
+      cancelDownload,
+      onPlayMedia,
+      saveToLibrary,
+      deleteDownload,
+    ]
+  );
 
-      {/* Multiple Queues Bar */}
-      <View style={styles.sectionBlock}>
-        <View style={styles.sectionRow}>
-          <Text style={styles.sectionLabel}>Download Queues</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-          {/* All Queues Pill */}
-          <TouchableOpacity
-            style={[styles.queueTab, selectedQueueId === 'all' && styles.queueTabActive]}
-            onPress={() => setSelectedQueueId('all')}
-          >
-            <Ionicons name="layers-outline" size={14} color={selectedQueueId === 'all' ? '#ffffff' : '#94a3b8'} />
-            <Text style={[styles.queueTabText, selectedQueueId === 'all' && styles.queueTabTextActive]}>
-              All
+  const renderHeader = useMemo(() => {
+    return (
+      <View style={{ gap: 14 }}>
+        {/* Header with Title & Speed */}
+        <View style={styles.topHeader}>
+          <View>
+            <Text style={styles.viewTitle}>Downloads Manager</Text>
+            <Text style={styles.viewSubtitle}>
+              {counts.all} tasks • {counts.active} downloading
             </Text>
-            <View style={styles.badgeCount}>
-              <Text style={styles.badgeCountText}>{queueCounts['all'] || 0}</Text>
+          </View>
+
+          {counts.active > 0 && (
+            <View style={styles.speedBadge}>
+              <Ionicons name="speedometer-outline" size={14} color="#38bdf8" />
+              <Text style={styles.speedText}>{formatSpeed(totalSpeed) || '0 B/s'}</Text>
             </View>
-          </TouchableOpacity>
+          )}
+        </View>
 
-          {/* Individual Queue Pills */}
-          {queues.map((q) => {
-            const isSelected = selectedQueueId === q.id;
-            return (
-              <View key={q.id} style={[styles.queueTabGroup, isSelected && styles.queueTabGroupActive]}>
-                <TouchableOpacity
-                  style={styles.queueTabMain}
-                  onPress={() => setSelectedQueueId(q.id)}
-                >
-                  <View
-                    style={[
-                      styles.queueDot,
-                      { backgroundColor: q.enabled ? '#22c55e' : '#64748b' },
-                    ]}
-                  />
-                  <Text style={[styles.queueTabText, isSelected && styles.queueTabTextActive]}>
-                    {q.name}
-                  </Text>
-                  <View style={styles.badgeCount}>
-                    <Text style={styles.badgeCountText}>{queueCounts[q.id] || 0}</Text>
-                  </View>
-                </TouchableOpacity>
+        {/* Search Input */}
+        <View style={styles.searchRow}>
+          <Ionicons name="search" size={16} color="#64748b" />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search downloads by name, link, or author..."
+            placeholderTextColor="#64748b"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClearBtn}>
+              <Ionicons name="close-circle" size={16} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
+        </View>
 
-                {/* Queue Start/Stop Button */}
-                <TouchableOpacity
-                  style={styles.queueActionBtn}
-                  onPress={() => (q.enabled ? stopQueue(q.id) : startQueue(q.id))}
-                >
-                  <Ionicons
-                    name={q.enabled ? 'pause' : 'play'}
-                    size={12}
-                    color={q.enabled ? '#eab308' : '#38bdf8'}
-                  />
-                </TouchableOpacity>
-
-                {/* Queue Settings Trigger */}
-                <TouchableOpacity
-                  style={styles.queueActionBtn}
-                  onPress={() => setQueueModalConfig({ visible: true, queue: q })}
-                >
-                  <Ionicons name="settings-outline" size={12} color="#94a3b8" />
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-
-          {/* New Queue Button */}
-          <TouchableOpacity
-            style={styles.addQueueBtn}
-            onPress={() => setQueueModalConfig({ visible: true, queue: null })}
-          >
-            <Ionicons name="add" size={15} color="#38bdf8" />
-            <Text style={styles.addQueueText}>New Queue</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-
-      {/* Category Filter Chips Bar */}
-      <View style={styles.sectionBlock}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-          <TouchableOpacity
-            style={[styles.categoryChip, selectedCategory === 'all' && styles.categoryChipActive]}
-            onPress={() => setSelectedCategory('all')}
-          >
-            <Text style={[styles.categoryChipText, selectedCategory === 'all' && styles.categoryChipTextActive]}>
-              All ({categoryCounts['all'] || 0})
-            </Text>
-          </TouchableOpacity>
-          {CATEGORIES.map((cat) => (
+        {/* Multiple Queues Bar */}
+        <View style={styles.sectionBlock}>
+          <View style={styles.sectionRow}>
+            <Text style={styles.sectionLabel}>Download Queues</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
+            {/* All Queues Pill */}
             <TouchableOpacity
-              key={cat}
-              style={[styles.categoryChip, selectedCategory === cat && styles.categoryChipActive]}
-              onPress={() => setSelectedCategory(cat)}
+              style={[styles.queueTab, selectedQueueId === 'all' && styles.queueTabActive]}
+              onPress={() => setSelectedQueueId('all')}
             >
-              <Text style={[styles.categoryChipText, selectedCategory === cat && styles.categoryChipTextActive]}>
-                {cat[0].toUpperCase() + cat.slice(1)} ({categoryCounts[cat] || 0})
+              <Ionicons name="layers-outline" size={14} color={selectedQueueId === 'all' ? '#ffffff' : '#94a3b8'} />
+              <Text style={[styles.queueTabText, selectedQueueId === 'all' && styles.queueTabTextActive]}>
+                All
+              </Text>
+              <View style={styles.badgeCount}>
+                <Text style={styles.badgeCountText}>{queueCounts['all'] || 0}</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Individual Queue Pills */}
+            {queues.map((q) => {
+              const isSelected = selectedQueueId === q.id;
+              return (
+                <View key={q.id} style={[styles.queueTabGroup, isSelected && styles.queueTabGroupActive]}>
+                  <TouchableOpacity
+                    style={styles.queueTabMain}
+                    onPress={() => setSelectedQueueId(q.id)}
+                  >
+                    <View
+                      style={[
+                        styles.queueDot,
+                        { backgroundColor: q.enabled ? '#22c55e' : '#64748b' },
+                      ]}
+                    />
+                    <Text style={[styles.queueTabText, isSelected && styles.queueTabTextActive]}>
+                      {q.name}
+                    </Text>
+                    <View style={styles.badgeCount}>
+                      <Text style={styles.badgeCountText}>{queueCounts[q.id] || 0}</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Queue Start/Stop Button */}
+                  <TouchableOpacity
+                    style={styles.queueActionBtn}
+                    onPress={() => (q.enabled ? stopQueue(q.id) : startQueue(q.id))}
+                  >
+                    <Ionicons
+                      name={q.enabled ? 'pause' : 'play'}
+                      size={12}
+                      color={q.enabled ? '#eab308' : '#38bdf8'}
+                    />
+                  </TouchableOpacity>
+
+                  {/* Queue Settings Trigger */}
+                  <TouchableOpacity
+                    style={styles.queueActionBtn}
+                    onPress={() => setQueueModalConfig({ visible: true, queue: q })}
+                  >
+                    <Ionicons name="settings-outline" size={12} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+
+            {/* New Queue Button */}
+            <TouchableOpacity
+              style={styles.addQueueBtn}
+              onPress={() => setQueueModalConfig({ visible: true, queue: null })}
+            >
+              <Ionicons name="add" size={15} color="#38bdf8" />
+              <Text style={styles.addQueueText}>New Queue</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+
+        {/* Category Filter Chips Bar */}
+        <View style={styles.sectionBlock}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
+            <TouchableOpacity
+              style={[styles.categoryChip, selectedCategory === 'all' && styles.categoryChipActive]}
+              onPress={() => setSelectedCategory('all')}
+            >
+              <Text style={[styles.categoryChipText, selectedCategory === 'all' && styles.categoryChipTextActive]}>
+                All ({categoryCounts['all'] || 0})
+              </Text>
+            </TouchableOpacity>
+            {CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                style={[styles.categoryChip, selectedCategory === cat && styles.categoryChipActive]}
+                onPress={() => setSelectedCategory(cat)}
+              >
+                <Text style={[styles.categoryChipText, selectedCategory === cat && styles.categoryChipTextActive]}>
+                  {cat[0].toUpperCase() + cat.slice(1)} ({categoryCounts[cat] || 0})
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Action Toolbar */}
+        <View style={styles.toolbar}>
+          <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalVisible(true)}>
+            <Ionicons name="add" size={16} color="#ffffff" />
+            <Text style={styles.addBtnText}>Add Download</Text>
+          </TouchableOpacity>
+
+          <View style={styles.toolbarDivider} />
+
+          <TouchableOpacity style={styles.toolBtn} onPress={resumeAll}>
+            <Ionicons name="play" size={14} color="#38bdf8" />
+            <Text style={styles.toolBtnText}>Resume All</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.toolBtn} onPress={pauseAll}>
+            <Ionicons name="pause" size={14} color="#eab308" />
+            <Text style={styles.toolBtnText}>Pause All</Text>
+          </TouchableOpacity>
+
+          {counts.failed > 0 && (
+            <TouchableOpacity style={styles.toolBtn} onPress={retryFailed}>
+              <Ionicons name="refresh" size={14} color="#ef4444" />
+              <Text style={styles.toolBtnText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+
+          {counts.completed > 0 && (
+            <TouchableOpacity style={styles.toolBtn} onPress={clearCompleted}>
+              <Ionicons name="trash-outline" size={14} color="#94a3b8" />
+              <Text style={styles.toolBtnText}>Clear Done</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Status Segment Filters */}
+        <View style={styles.statusSegment}>
+          {(['all', 'active', 'queued', 'completed', 'failed'] as StatusFilter[]).map((f) => (
+            <TouchableOpacity
+              key={f}
+              style={[styles.statusBtn, statusFilter === f && styles.statusBtnActive]}
+              onPress={() => setStatusFilter(f)}
+            >
+              <Text style={[styles.statusBtnText, statusFilter === f && styles.statusBtnTextActive]}>
+                {f[0].toUpperCase() + f.slice(1)} ({counts[f]})
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
       </View>
+    );
+  }, [
+    counts,
+    totalSpeed,
+    searchQuery,
+    selectedQueueId,
+    queueCounts,
+    queues,
+    selectedCategory,
+    categoryCounts,
+    resumeAll,
+    pauseAll,
+    retryFailed,
+    clearCompleted,
+    statusFilter,
+    stopQueue,
+    startQueue,
+  ]);
 
-      {/* Action Toolbar */}
-      <View style={styles.toolbar}>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalVisible(true)}>
-          <Ionicons name="add" size={16} color="#ffffff" />
-          <Text style={styles.addBtnText}>Add Download</Text>
-        </TouchableOpacity>
-
-        <View style={styles.toolbarDivider} />
-
-        <TouchableOpacity style={styles.toolBtn} onPress={resumeAll}>
-          <Ionicons name="play" size={14} color="#38bdf8" />
-          <Text style={styles.toolBtnText}>Resume All</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.toolBtn} onPress={pauseAll}>
-          <Ionicons name="pause" size={14} color="#eab308" />
-          <Text style={styles.toolBtnText}>Pause All</Text>
-        </TouchableOpacity>
-
-        {counts.failed > 0 && (
-          <TouchableOpacity style={styles.toolBtn} onPress={retryFailed}>
-            <Ionicons name="refresh" size={14} color="#ef4444" />
-            <Text style={styles.toolBtnText}>Retry</Text>
-          </TouchableOpacity>
-        )}
-
-        {counts.completed > 0 && (
-          <TouchableOpacity style={styles.toolBtn} onPress={clearCompleted}>
-            <Ionicons name="trash-outline" size={14} color="#94a3b8" />
-            <Text style={styles.toolBtnText}>Clear Done</Text>
-          </TouchableOpacity>
-        )}
+  const renderEmpty = useCallback(() => {
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="cloud-download-outline" size={48} color="#334155" />
+        <Text style={styles.emptyTitle}>No downloads found</Text>
+        <Text style={styles.emptySubtitle}>
+          Tap "Add Download" above or grab links from YouTube, Spotify, and direct URLs!
+        </Text>
       </View>
+    );
+  }, []);
 
-      {/* Status Segment Filters */}
-      <View style={styles.statusSegment}>
-        {(['all', 'active', 'queued', 'completed', 'failed'] as StatusFilter[]).map((f) => (
-          <TouchableOpacity
-            key={f}
-            style={[styles.statusBtn, statusFilter === f && styles.statusBtnActive]}
-            onPress={() => setStatusFilter(f)}
-          >
-            <Text style={[styles.statusBtnText, statusFilter === f && styles.statusBtnTextActive]}>
-              {f[0].toUpperCase() + f.slice(1)} ({counts[f]})
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Tasks List */}
-      <View style={styles.tasksList}>
-        {filteredTasks.map((t) => {
-          const queue = queues.find((q) => q.id === (t.queueId || 'main'));
-          return (
-            <MediaCard
-              key={t.id}
-              task={t}
-              queueName={selectedQueueId === 'all' ? queue?.name : undefined}
-              onPause={pauseDownload}
-              onResume={resumeDownload}
-              onCancel={cancelDownload}
-              onPlay={onPlayMedia}
-              onSaveToLibrary={saveToLibrary}
-              onDelete={deleteDownload}
-              onInspectSegments={(task) => setInspectTask(task)}
-              onMoveQueue={(task) => setMoveQueueTask(task)}
-              onVerifyChecksum={(task) => setChecksumTask(task)}
-            />
-          );
-        })}
-
-        {filteredTasks.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="cloud-download-outline" size={48} color="#334155" />
-            <Text style={styles.emptyTitle}>No downloads found</Text>
-            <Text style={styles.emptySubtitle}>
-              Tap "Add Download" above or grab links from YouTube, Spotify, and direct URLs!
-            </Text>
-          </View>
-        )}
-      </View>
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={filteredTasks}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
+        contentContainerStyle={styles.content}
+        initialNumToRender={8}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === 'android'}
+      />
 
       {/* Add Direct Download Modal */}
       <AddDownloadModal
@@ -397,7 +446,7 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
         task={checksumTask}
         onClose={() => setChecksumTask(null)}
       />
-    </ScrollView>
+    </View>
   );
 }
 

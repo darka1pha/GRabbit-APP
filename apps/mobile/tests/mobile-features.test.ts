@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { base64ToBytes, compareSemver, md5Hex, sha1Hex, sha256Hex } from '@grabbit/utils';
+import * as FileSystem from 'expo-file-system';
+import { base64ToBytes, compareSemver, md5Hex, sha1Hex, sha256Hex, createIncrementalHasher } from '@grabbit/utils';
 import { detectCategory, mobileDownloadManager } from '../services/download-manager';
-import { extractYouTubeVideoId, mobileBridge } from '../services/bridge';
+import { extractYouTubeVideoId, mobileBridge, resolverPool } from '../services/bridge';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { mobileRecognizer } from '../services/recognizer';
 
-// Mock expo-file-system and expo-media-library
+// Mock react-native, expo-file-system and expo-media-library
+vi.mock('react-native', () => ({
+  AppState: {
+    addEventListener: vi.fn().mockReturnValue({ remove: vi.fn() }),
+  },
+  Platform: {
+    OS: 'android',
+  },
+}));
+
 vi.mock('expo-file-system', () => ({
   documentDirectory: '/mock/grabbit/',
   cacheDirectory: '/mock/cache/',
@@ -195,6 +205,129 @@ describe('Mobile App Desktop Feature Parity', () => {
       expect(compareSemver('v2.0.0', '1.9.9')).toBe(1);
       expect(compareSemver('1.0.0', '1.0.0')).toBe(0);
       expect(compareSemver('1.0.0', '1.2.0')).toBe(-1);
+    });
+  });
+
+  describe('Phase 4 Mobile Performance & Resilience', () => {
+    it('creates honest single-stream download tasks', async () => {
+      const id = await mobileDownloadManager.startDownload(
+        {
+          id: 'test-1',
+          title: 'Test Song',
+          platform: 'youtube',
+          url: 'https://youtube.com/watch?v=123',
+          isDownloadable: true,
+          availableOptions: [],
+        },
+        {
+          format: 'audio',
+          qualityId: 'mp3',
+          extension: 'mp3',
+          label: 'Audio MP3',
+          directStreamUrl: 'https://example.com/audio.mp3',
+          estimatedSizeBytes: 1000,
+        }
+      );
+      const task = mobileDownloadManager.getTask(id);
+      expect(task).toBeDefined();
+      expect(task?.connections).toBe(1);
+      expect(task?.activeConnections).toBe(0);
+      expect(task?.segments.length).toBe(1);
+      expect(task?.segments[0].start).toBe(0);
+    });
+
+    it('manages fallback ordering and failure recording in resolverPool', () => {
+      const mirrors = ['https://m1.com', 'https://m2.com', 'https://m3.com'];
+      expect(resolverPool.getOrdered('twitter', mirrors)).toEqual(mirrors);
+
+      resolverPool.markSuccess('twitter', 'https://m2.com');
+      expect(resolverPool.getOrdered('twitter', mirrors)).toEqual([
+        'https://m2.com',
+        'https://m1.com',
+        'https://m3.com',
+      ]);
+
+      resolverPool.markFailure('twitter', 'https://m2.com');
+      expect(resolverPool.getOrdered('twitter', mirrors)).toEqual(mirrors);
+    });
+
+    it('produces actionable error directing users to pair with desktop when resolver fails', async () => {
+      // Ensure desktop bridge is disabled for this test to test standalone failure message
+      mobileSettingsManager.updateSettings({
+        desktopBridge: {
+          enabled: false,
+          host: '',
+          port: 31589,
+          token: '',
+        },
+      });
+
+      await expect(
+        mobileBridge.resolveDirectStreamUrl(
+          'https://unknown-service.com/video/123',
+          'generic',
+          {
+            format: 'video',
+            qualityId: '1080p',
+            extension: 'mp4',
+            label: '1080p',
+          }
+        )
+      ).rejects.toThrow(/Resolver unavailable — pair with desktop/i);
+    });
+
+    it('verifies checksum via incremental hasher without loading entire file at once', async () => {
+      const id = await mobileDownloadManager.startHttpDownload({
+        url: 'https://example.com/test.bin',
+        fileName: 'test.bin',
+        startPaused: true,
+      });
+      const task = mobileDownloadManager.getTask(id);
+      expect(task).toBeDefined();
+      if (task) {
+        task.status = 'completed';
+        task.receivedBytes = 3;
+      }
+
+      // Mock FileSystem.getInfoAsync returning size & exists
+      vi.spyOn(FileSystem, 'getInfoAsync').mockImplementation(async (_uri: string, opts?: any) => {
+        if (opts?.md5) {
+          return { exists: true, md5: '900150983cd24fb0d6963f7d28e17f72', size: 3 } as any;
+        }
+        return { exists: true, size: 3 } as any;
+      });
+
+      // 1. MD5 fast-path
+      const md5Result = await mobileDownloadManager.verifyChecksum(id, 'md5', '900150983cd24fb0d6963f7d28e17f72');
+      expect(md5Result.actual).toBe('900150983cd24fb0d6963f7d28e17f72');
+      expect(md5Result.verified).toBe(true);
+
+      // 2. Incremental SHA-256 chunked reading
+      vi.spyOn(FileSystem, 'readAsStringAsync').mockResolvedValue('YWJj'); // "abc"
+      const shaResult = await mobileDownloadManager.verifyChecksum(id, 'sha256');
+      expect(shaResult.actual).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    });
+
+    it('supports chunked streaming hashes for MD5, SHA-1, and SHA-256', () => {
+      // Stream "The quick brown fox jumps over the lazy dog" in arbitrary small chunks
+      const text = 'The quick brown fox jumps over the lazy dog';
+      const fullBytes = new TextEncoder().encode(text);
+
+      const md5Hasher = createIncrementalHasher('md5');
+      const sha1Hasher = createIncrementalHasher('sha1');
+      const sha256Hasher = createIncrementalHasher('sha256');
+
+      // Feed in 7-byte chunks
+      for (let i = 0; i < fullBytes.length; i += 7) {
+        const slice = fullBytes.subarray(i, i + 7);
+        md5Hasher.update(slice);
+        sha1Hasher.update(slice);
+        sha256Hasher.update(slice);
+      }
+
+      expect(md5Hasher.digestHex()).toBe('9e107d9d372bb6826bd81d3542a419d6');
+      expect(sha1Hasher.digestHex()).toBe('2fd4e1c67a2d28fced849ee1bb76e7391b93eb12');
+      expect(sha256Hasher.digestHex()).toBe('d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592');
     });
   });
 });

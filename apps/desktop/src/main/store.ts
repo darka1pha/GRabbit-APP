@@ -79,7 +79,7 @@ export class JsonStore<T> {
       // The swap itself is synchronous (two quick renames), so saveSync can never run in the middle of it
       this.swapIn(tmp);
     } finally {
-      await rm(tmp, { force: true }).catch(() => undefined);
+      await rm(tmp, { force: true, maxRetries: 3, retryDelay: 50 }).catch(() => undefined);
     }
   }
 
@@ -100,7 +100,7 @@ export class JsonStore<T> {
       }
       this.swapIn(tmp);
     } finally {
-      rmSync(tmp, { force: true });
+      rmSync(tmp, { force: true, maxRetries: 3, retryDelay: 50 });
     }
   }
 

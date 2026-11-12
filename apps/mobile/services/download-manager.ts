@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
+import { AppState, AppStateStatus } from 'react-native';
 import {
   PlatformId,
   MediaFormat,
@@ -12,8 +13,7 @@ import {
   ProbeResult,
   AddHttpDownloadRequest,
 } from '@grabbit/types';
-import { computeSegments } from '@grabbit/core';
-import { base64ToBytes, computeHashHex } from '@grabbit/utils';
+import { base64ToBytes, createIncrementalHasher } from '@grabbit/utils';
 import { mobileSettingsManager } from './settings-manager';
 import { mobileBridge } from './bridge';
 
@@ -87,6 +87,10 @@ class MobileDownloadManager {
   private taskListeners: Set<DownloadListener> = new Set();
   private queueListeners: Set<QueueListener> = new Set();
   private speedTracking: Map<string, { lastBytes: number; lastTime: number }> = new Map();
+  private lastProgressNotifyTime: Map<string, number> = new Map();
+  private persistTasksTimer: any = null;
+  private persistQueuesTimer: any = null;
+  private appStateSubscription: any = null;
   private scheduleTimer: any = null;
   private isLoaded = false;
 
@@ -96,6 +100,17 @@ class MobileDownloadManager {
       this.startSchedulerTicker();
       this.pumpQueues();
     });
+
+    // Flush any pending disk writes immediately when app transitions to background or inactive
+    try {
+      this.appStateSubscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+        if (state === 'background' || state === 'inactive') {
+          this.flushPendingPersists();
+        }
+      });
+    } catch {
+      // In headless or test environments where AppState may not be available
+    }
   }
 
   private initDefaultQueues() {
@@ -156,10 +171,13 @@ class MobileDownloadManager {
         const parsed: MobileDownloadTask[] = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           for (const t of parsed) {
-            // Re-map tasks; if it was downloading when exited, mark as queued or paused
+            // Re-map tasks; if it was downloading when exited, mark as paused
             if (t.status === 'downloading') {
               t.status = 'paused';
             }
+            // Ensure single-stream representation on mobile
+            t.connections = 1;
+            t.activeConnections = 0;
             this.tasks.set(t.id, t);
           }
         }
@@ -172,12 +190,16 @@ class MobileDownloadManager {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // High-Performance Persistence (Debounced + Flush on Status Transitions)
+  // -------------------------------------------------------------------------
+
   private async persistTasks() {
     try {
       await this.ensureDir();
       const tasksPath = `${this.getBaseDir()}tasks.json`;
       const arr = Array.from(this.tasks.values());
-      await FileSystem.writeAsStringAsync(tasksPath, JSON.stringify(arr, null, 2));
+      await FileSystem.writeAsStringAsync(tasksPath, JSON.stringify(arr));
     } catch (err) {
       console.warn('Failed to persist tasks:', err);
     }
@@ -188,10 +210,55 @@ class MobileDownloadManager {
       await this.ensureDir();
       const queuesPath = `${this.getBaseDir()}queues.json`;
       const arr = Array.from(this.queues.values());
-      await FileSystem.writeAsStringAsync(queuesPath, JSON.stringify(arr, null, 2));
+      await FileSystem.writeAsStringAsync(queuesPath, JSON.stringify(arr));
     } catch (err) {
       console.warn('Failed to persist queues:', err);
     }
+  }
+
+  private schedulePersistTasks(delayMs = 2000) {
+    if (this.persistTasksTimer) return;
+    this.persistTasksTimer = setTimeout(() => {
+      this.persistTasksTimer = null;
+      this.persistTasks();
+    }, delayMs);
+  }
+
+  private schedulePersistQueues(delayMs = 2000) {
+    if (this.persistQueuesTimer) return;
+    this.persistQueuesTimer = setTimeout(() => {
+      this.persistQueuesTimer = null;
+      this.persistQueues();
+    }, delayMs);
+  }
+
+  private persistTasksImmediately() {
+    if (this.persistTasksTimer) {
+      clearTimeout(this.persistTasksTimer);
+      this.persistTasksTimer = null;
+    }
+    this.persistTasks();
+  }
+
+  private persistQueuesImmediately() {
+    if (this.persistQueuesTimer) {
+      clearTimeout(this.persistQueuesTimer);
+      this.persistQueuesTimer = null;
+    }
+    this.persistQueues();
+  }
+
+  flushPendingPersists() {
+    if (this.persistTasksTimer) {
+      clearTimeout(this.persistTasksTimer);
+      this.persistTasksTimer = null;
+    }
+    if (this.persistQueuesTimer) {
+      clearTimeout(this.persistQueuesTimer);
+      this.persistQueuesTimer = null;
+    }
+    this.persistTasks();
+    this.persistQueues();
   }
 
   subscribe(listener: DownloadListener): () => void {
@@ -211,7 +278,16 @@ class MobileDownloadManager {
     for (const listener of this.taskListeners) {
       listener(list);
     }
-    this.persistTasks();
+  }
+
+  private notifyTasksThrottled(taskId: string) {
+    const now = Date.now();
+    const last = this.lastProgressNotifyTime.get(taskId) || 0;
+    if (now - last >= 250) {
+      this.lastProgressNotifyTime.set(taskId, now);
+      this.notifyTasks();
+      this.schedulePersistTasks(2000);
+    }
   }
 
   private notifyQueues() {
@@ -219,7 +295,6 @@ class MobileDownloadManager {
     for (const listener of this.queueListeners) {
       listener(list);
     }
-    this.persistQueues();
   }
 
   getAllTasks(): MobileDownloadTask[] {
@@ -255,6 +330,7 @@ class MobileDownloadManager {
     };
     this.queues.set(id, queue);
     this.notifyQueues();
+    this.persistQueuesImmediately();
     this.pumpQueues();
     return queue;
   }
@@ -264,6 +340,7 @@ class MobileDownloadManager {
     if (!q) throw new Error(`Queue not found: ${id}`);
     Object.assign(q, patch);
     this.notifyQueues();
+    this.persistQueuesImmediately();
     this.pumpQueues();
     return q;
   }
@@ -279,6 +356,8 @@ class MobileDownloadManager {
     this.queues.delete(id);
     this.notifyTasks();
     this.notifyQueues();
+    this.persistTasksImmediately();
+    this.persistQueuesImmediately();
     this.pumpQueues();
   }
 
@@ -287,6 +366,7 @@ class MobileDownloadManager {
     if (!q) return;
     q.enabled = true;
     this.notifyQueues();
+    this.persistQueuesImmediately();
     this.pumpQueues();
   }
 
@@ -301,6 +381,7 @@ class MobileDownloadManager {
       }
     }
     this.notifyQueues();
+    this.persistQueuesImmediately();
   }
 
   moveTaskToQueue(taskId: string, targetQueueId: string) {
@@ -308,6 +389,7 @@ class MobileDownloadManager {
     if (!task) return;
     task.queueId = targetQueueId;
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
   }
 
@@ -454,16 +536,15 @@ class MobileDownloadManager {
     const localUri = `${this.getBaseDir()}${id}_${fileName}`;
 
     const totalBytes = option.estimatedSizeBytes || 10 * 1024 * 1024;
-    const settings = mobileSettingsManager.getSettings();
-    const segmentCount = settings.defaultConnections || 4;
-    const rawSegments = computeSegments(totalBytes, segmentCount);
-
-    const segments: SegmentState[] = rawSegments.map((s) => ({
-      start: s.startByte,
-      end: s.endByte,
-      received: 0,
-      part: `part_${s.id}`,
-    }));
+    // Mobile runs an honest single-connection HTTP stream
+    const segments: SegmentState[] = [
+      {
+        start: 0,
+        end: totalBytes > 0 ? totalBytes - 1 : null,
+        received: 0,
+        part: '0',
+      },
+    ];
 
     const category = option.format === 'audio' ? 'music' : 'video';
 
@@ -488,7 +569,7 @@ class MobileDownloadManager {
       progress: 0,
       speed: 0,
       eta: null,
-      connections: segmentCount,
+      connections: 1,
       activeConnections: 0,
       segments,
       localUri,
@@ -498,6 +579,7 @@ class MobileDownloadManager {
 
     this.tasks.set(id, task);
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
     return id;
   }
@@ -518,17 +600,16 @@ class MobileDownloadManager {
     const localUri = `${this.getBaseDir()}${id}_${fileName}`;
 
     const category = request.category || detectCategory(fileName);
-    const settings = mobileSettingsManager.getSettings();
-    const connections = request.connections || settings.defaultConnections || 4;
     const totalBytes = 10 * 1024 * 1024; // Default estimate until probe/response
-    const rawSegments = computeSegments(totalBytes, connections);
-
-    const segments: SegmentState[] = rawSegments.map((s) => ({
-      start: s.startByte,
-      end: s.endByte,
-      received: 0,
-      part: `part_${s.id}`,
-    }));
+    // Mobile runs an honest single-connection HTTP stream
+    const segments: SegmentState[] = [
+      {
+        start: 0,
+        end: totalBytes > 0 ? totalBytes - 1 : null,
+        received: 0,
+        part: '0',
+      },
+    ];
 
     const task: MobileDownloadTask = {
       id,
@@ -548,7 +629,7 @@ class MobileDownloadManager {
       progress: 0,
       speed: 0,
       eta: null,
-      connections,
+      connections: 1,
       activeConnections: 0,
       segments,
       localUri,
@@ -562,6 +643,7 @@ class MobileDownloadManager {
 
     this.tasks.set(id, task);
     this.notifyTasks();
+    this.persistTasksImmediately();
     if (!request.startPaused) {
       this.pumpQueues();
     }
@@ -587,9 +669,11 @@ class MobileDownloadManager {
   private async executeDownload(task: MobileDownloadTask) {
     try {
       task.status = 'downloading';
-      task.activeConnections = Math.min(task.connections, 4);
+      task.connections = 1;
+      task.activeConnections = 1;
       this.speedTracking.set(task.id, { lastBytes: task.receivedBytes, lastTime: Date.now() });
       this.notifyTasks();
+      this.persistTasksImmediately();
 
       const downloadCallback = (downloadProgress: FileSystem.DownloadProgressData) => {
         const received = downloadProgress.totalBytesWritten;
@@ -603,20 +687,18 @@ class MobileDownloadManager {
         currentTask.receivedBytes = received;
         currentTask.totalBytes = total;
         currentTask.progress = total > 0 ? Math.min(1, received / total) : 0;
+        currentTask.connections = 1;
+        currentTask.activeConnections = 1;
 
-        // Update segmented states across connection threads
-        const chunkSize = Math.max(1, Math.floor(total / currentTask.segments.length));
-        currentTask.segments.forEach((seg, idx) => {
-          const segStart = idx * chunkSize;
-          const segEnd = (idx + 1) * chunkSize;
-          if (received >= segEnd) {
-            seg.received = chunkSize;
-          } else if (received > segStart) {
-            seg.received = received - segStart;
-          } else {
-            seg.received = 0;
-          }
-        });
+        // Honest single-stream state
+        currentTask.segments = [
+          {
+            start: 0,
+            end: total > 0 ? total - 1 : null,
+            received,
+            part: '0',
+          },
+        ];
 
         // Compute speed & ETA
         const tracking = this.speedTracking.get(task.id);
@@ -634,7 +716,8 @@ class MobileDownloadManager {
           this.speedTracking.set(task.id, { lastBytes: received, lastTime: now });
         }
 
-        this.notifyTasks();
+        // Throttle UI notification to ~4/s (250ms) and debounce disk persistence to 2s
+        this.notifyTasksThrottled(task.id);
       };
 
       // If this is a social media task and doesn't yet have a resolved direct CDN stream URL, resolve it now
@@ -694,6 +777,7 @@ class MobileDownloadManager {
         task.completedAt = Date.now();
         this.resumables.delete(task.id);
         this.speedTracking.delete(task.id);
+        this.lastProgressNotifyTime.delete(task.id);
 
         // Auto-save to Media Library if configured in settings
         const settings = mobileSettingsManager.getSettings();
@@ -702,6 +786,7 @@ class MobileDownloadManager {
         }
 
         this.notifyTasks();
+        this.persistTasksImmediately();
         this.pumpQueues();
       }
     } catch (err: any) {
@@ -710,7 +795,11 @@ class MobileDownloadManager {
         task.error = err.message || 'Download failed';
         task.activeConnections = 0;
         task.speed = 0;
+        this.resumables.delete(task.id);
+        this.speedTracking.delete(task.id);
+        this.lastProgressNotifyTime.delete(task.id);
         this.notifyTasks();
+        this.persistTasksImmediately();
         this.pumpQueues();
       }
     }
@@ -724,6 +813,7 @@ class MobileDownloadManager {
     task.status = 'paused';
     task.speed = 0;
     task.activeConnections = 0;
+    this.lastProgressNotifyTime.delete(id);
 
     if (resumable) {
       try {
@@ -733,6 +823,7 @@ class MobileDownloadManager {
       }
     }
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
   }
 
@@ -742,6 +833,7 @@ class MobileDownloadManager {
 
     task.status = 'queued';
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
   }
 
@@ -764,7 +856,9 @@ class MobileDownloadManager {
       } catch {}
       this.tasks.delete(id);
       this.speedTracking.delete(id);
+      this.lastProgressNotifyTime.delete(id);
       this.notifyTasks();
+      this.persistTasksImmediately();
       this.pumpQueues();
     }
   }
@@ -784,6 +878,7 @@ class MobileDownloadManager {
       }
     }
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
   }
 
@@ -794,15 +889,18 @@ class MobileDownloadManager {
       }
     }
     this.notifyTasks();
+    this.persistTasksImmediately();
   }
 
   async clearCompleted() {
     for (const [id, task] of this.tasks.entries()) {
       if (task.status === 'completed') {
         this.tasks.delete(id);
+        this.lastProgressNotifyTime.delete(id);
       }
     }
     this.notifyTasks();
+    this.persistTasksImmediately();
   }
 
   async retryFailed() {
@@ -813,6 +911,7 @@ class MobileDownloadManager {
       }
     }
     this.notifyTasks();
+    this.persistTasksImmediately();
     this.pumpQueues();
   }
 
@@ -835,6 +934,7 @@ class MobileDownloadManager {
       await MediaLibrary.saveToLibraryAsync(task.localUri);
       task.savedToLibrary = true;
       this.notifyTasks();
+      this.persistTasksImmediately();
       return { success: true, message: 'Saved successfully to Photos / Media Library!' };
     } catch (err: any) {
       return { success: false, message: err.message || 'Failed to save to Media Library.' };
@@ -842,7 +942,7 @@ class MobileDownloadManager {
   }
 
   // -------------------------------------------------------------------------
-  // Checksum Computation & Verification
+  // Memory-Safe Checksum Computation & Verification
   // -------------------------------------------------------------------------
 
   async verifyChecksum(
@@ -855,13 +955,45 @@ class MobileDownloadManager {
       throw new Error('Task is not completed or does not exist');
     }
 
-    // Read content and compute genuine RFC-compliant cryptographic hash digest (MD5 / SHA-1 / SHA-256)
-    const content = await FileSystem.readAsStringAsync(task.localUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    let actual = '';
 
-    const bytes = base64ToBytes(content);
-    const actual = computeHashHex(bytes, algorithm);
+    // Fast path: For MD5, native FileSystem.getInfoAsync calculates MD5 with zero JS memory allocation
+    if (algorithm === 'md5') {
+      try {
+        const info = await FileSystem.getInfoAsync(task.localUri, { md5: true });
+        if (info.exists && (info as any).md5) {
+          actual = String((info as any).md5).toLowerCase();
+        }
+      } catch (err) {
+        console.warn('Native MD5 checksum failed, falling back to chunked hasher:', err);
+      }
+    }
+
+    // Chunked streaming hash computation for SHA-1, SHA-256, SHA-512, or MD5 fallback
+    if (!actual) {
+      const fileInfo = await FileSystem.getInfoAsync(task.localUri);
+      if (!fileInfo.exists) {
+        throw new Error(`Downloaded file not found at ${task.localUri}`);
+      }
+      const totalSize = (fileInfo as any).size ?? task.receivedBytes;
+      const CHUNK_SIZE = 256 * 1024; // 256 KB chunk size to prevent memory spikes
+      const hasher = createIncrementalHasher(algorithm);
+
+      let position = 0;
+      while (position < totalSize) {
+        const readLen = Math.min(CHUNK_SIZE, totalSize - position);
+        const base64Chunk = await FileSystem.readAsStringAsync(task.localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+          position,
+          length: readLen,
+        });
+        const chunkBytes = base64ToBytes(base64Chunk);
+        hasher.update(chunkBytes);
+        position += readLen;
+      }
+      actual = hasher.digestHex();
+    }
+
     const cleanExpected = expected?.trim().toLowerCase().replace(/^(sha256|sha1|md5)[-:]?/i, '');
     const verified = cleanExpected ? actual.toLowerCase() === cleanExpected : undefined;
 
@@ -872,6 +1004,7 @@ class MobileDownloadManager {
       verified,
     };
     this.notifyTasks();
+    this.persistTasksImmediately();
     return { actual, verified };
   }
 }

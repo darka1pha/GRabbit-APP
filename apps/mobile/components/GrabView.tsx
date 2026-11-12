@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -43,6 +43,42 @@ interface GrabViewProps {
   onDownloadStarted?: () => void;
   onPreviewMedia?: (item: MediaItem, option: MediaOption) => void;
 }
+
+interface TrackRowProps {
+  item: MediaItem;
+  index: number;
+  isChecked: boolean;
+  onToggle: (id: string) => void;
+}
+
+const TrackRow = React.memo(function TrackRow({ item, index, isChecked, onToggle }: TrackRowProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.trackRow, isChecked && styles.trackRowChecked]}
+      onPress={() => onToggle(item.id)}
+    >
+      <Ionicons
+        name={isChecked ? 'checkbox' : 'square-outline'}
+        size={18}
+        color={isChecked ? '#38bdf8' : '#64748b'}
+      />
+      <Text style={styles.trackIndex}>{index + 1}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.trackTitle} numberOfLines={1}>
+          {item.title}
+        </Text>
+        {item.uploader ? (
+          <Text style={styles.trackAuthor} numberOfLines={1}>
+            {item.uploader}
+          </Text>
+        ) : null}
+      </View>
+      {item.durationSeconds ? (
+        <Text style={styles.trackDuration}>{formatDuration(item.durationSeconds)}</Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+});
 
 export function GrabView({
   initialUrl = '',
@@ -89,6 +125,15 @@ export function GrabView({
       console.warn('Clipboard read error:', err);
     }
   };
+
+  const handleToggleTrack = useCallback((id: string) => {
+    setSelectedTrackIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const handleGrab = async (target = input) => {
     const text = target.trim();
@@ -491,41 +536,15 @@ export function GrabView({
 
           {/* Tracks List */}
           <View style={styles.trackList}>
-            {resolvedMeta.items.map((item, idx) => {
-              const isChecked = selectedTrackIds.has(item.id);
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[styles.trackRow, isChecked && styles.trackRowChecked]}
-                  onPress={() => {
-                    const next = new Set(selectedTrackIds);
-                    if (isChecked) next.delete(item.id);
-                    else next.add(item.id);
-                    setSelectedTrackIds(next);
-                  }}
-                >
-                  <Ionicons
-                    name={isChecked ? 'checkbox' : 'square-outline'}
-                    size={18}
-                    color={isChecked ? '#38bdf8' : '#64748b'}
-                  />
-                  <Text style={styles.trackIndex}>{idx + 1}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.trackTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    {item.uploader ? (
-                      <Text style={styles.trackAuthor} numberOfLines={1}>
-                        {item.uploader}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {item.durationSeconds ? (
-                    <Text style={styles.trackDuration}>{formatDuration(item.durationSeconds)}</Text>
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
+            {resolvedMeta.items.map((item, idx) => (
+              <TrackRow
+                key={item.id}
+                item={item}
+                index={idx}
+                isChecked={selectedTrackIds.has(item.id)}
+                onToggle={handleToggleTrack}
+              />
+            ))}
           </View>
 
           {/* Batch Download Button */}

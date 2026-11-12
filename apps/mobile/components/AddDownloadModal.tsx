@@ -317,29 +317,12 @@ export function AddDownloadModal({
 
             {advanced && (
               <View style={styles.advancedContainer}>
-                {/* Parallel Connections */}
+                {/* Mobile Single Stream Engine */}
                 <View style={styles.field}>
-                  <Text style={styles.label}>Connection Threads: {connections}</Text>
-                  <View style={styles.stepperRow}>
-                    {[1, 2, 4, 8, 16].map((num) => (
-                      <TouchableOpacity
-                        key={num}
-                        style={[
-                          styles.connChip,
-                          connections === num && styles.connChipActive,
-                        ]}
-                        onPress={() => setConnections(num)}
-                      >
-                        <Text
-                          style={[
-                            styles.connChipText,
-                            connections === num && styles.connChipTextActive,
-                          ]}
-                        >
-                          {num}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                  <Text style={styles.label}>Connection Mode</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#1e293b' }}>
+                    <Ionicons name="flash-outline" size={16} color="#38bdf8" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 13, color: '#f8fafc', fontWeight: '500' }}>Single Stream (Mobile Native)</Text>
                   </View>
                 </View>
 

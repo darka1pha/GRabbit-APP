@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,58 @@ import { MotionView, PulseMotion } from './motion';
 interface RecognizeViewProps {
   onFindAndDownload: (query: string) => void;
 }
+
+interface HistoryRowProps {
+  item: RecognitionHistoryItem;
+  index: number;
+  onSelect: (item: RecognizedTrack) => void;
+  onDownload: (query: string) => void;
+}
+
+const HistoryRow = React.memo(function HistoryRow({
+  item,
+  index,
+  onSelect,
+  onDownload,
+}: HistoryRowProps) {
+  return (
+    <MotionView
+      key={item.id}
+      initial={{ opacity: 0, translateY: 6 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ duration: 180, delay: Math.min(index * 30, 180) }}
+    >
+      <TouchableOpacity
+        style={styles.historyItem}
+        onPress={() => onSelect(item)}
+      >
+        {item.coverArtUrl ? (
+          <Image source={{ uri: item.coverArtUrl }} style={styles.historyThumb} />
+        ) : (
+          <View style={styles.historyThumbPlaceholder}>
+            <Ionicons name="musical-note" size={18} color="#94a3b8" />
+          </View>
+        )}
+
+        <View style={styles.historyInfo}>
+          <Text style={styles.historyItemTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={styles.historyItemArtist} numberOfLines={1}>
+            {item.artist}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.historyGrabBtn}
+          onPress={() => onDownload(`${item.artist} - ${item.title}`)}
+        >
+          <Ionicons name="download-outline" size={18} color="#38bdf8" />
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </MotionView>
+  );
+});
 
 export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
   const [url, setUrl] = useState('');
@@ -212,41 +264,13 @@ export function RecognizeView({ onFindAndDownload }: RecognizeViewProps) {
 
           <View style={styles.historyList}>
             {history.map((item, idx) => (
-              <MotionView
+              <HistoryRow
                 key={item.id}
-                initial={{ opacity: 0, translateY: 6 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ duration: 180, delay: Math.min(idx * 30, 180) }}
-              >
-                <TouchableOpacity
-                  style={styles.historyItem}
-                  onPress={() => setResult(item)}
-                >
-                  {item.coverArtUrl ? (
-                    <Image source={{ uri: item.coverArtUrl }} style={styles.historyThumb} />
-                  ) : (
-                    <View style={styles.historyThumbPlaceholder}>
-                      <Ionicons name="musical-note" size={18} color="#94a3b8" />
-                    </View>
-                  )}
-
-                  <View style={styles.historyInfo}>
-                    <Text style={styles.historyItemTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.historyItemArtist} numberOfLines={1}>
-                      {item.artist}
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.historyGrabBtn}
-                    onPress={() => onFindAndDownload(`${item.artist} - ${item.title}`)}
-                  >
-                    <Ionicons name="download-outline" size={18} color="#38bdf8" />
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              </MotionView>
+                item={item}
+                index={idx}
+                onSelect={setResult}
+                onDownload={onFindAndDownload}
+              />
             ))}
           </View>
         </View>
