@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.1.0)'
+        description: 'Release Tag (e.g. v1.2.0)'
         required: false
-        default: 'v1.1.0'
+        default: 'v1.2.0'
       draft:
         description: 'Create draft release?'
         type: boolean
@@ -243,7 +243,7 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
           if [ -z "$TAG" ] || [ "$TAG" = "main" ] || [ "$TAG" = "master" ]; then
-            TAG="v1.1.0"
+            TAG="v1.2.0"
           fi
           echo "release_tag=$TAG" >> $GITHUB_OUTPUT
 

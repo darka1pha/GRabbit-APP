@@ -602,7 +602,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
                     const status = await api.updater.check();
                     setUpdateStatus(status);
                     if (status.state === 'not-available') {
-                      toast(`${t('set.upToDate')} (v${status.version ?? tools?.appVersion ?? '1.1.0'})`, 'success');
+                      toast(`${t('set.upToDate')} (v${status.version ?? tools?.appVersion ?? '1.2.0'})`, 'success');
                     }
                   } catch (err) {
                     toast(errorText(t, err), 'error');
