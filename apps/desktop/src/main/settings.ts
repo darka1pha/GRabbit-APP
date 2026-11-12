@@ -39,6 +39,20 @@ export function defaultSettings(): AppSettings {
     proxy: '',
     afterQueue: 'none',
     scheduler: { enabled: false, startTime: '02:00', stopTime: '08:00', days: [] },
+    automation: {
+      autoExtractArchives: false,
+      extractToSubfolder: true,
+      deleteArchiveAfterExtraction: false,
+      customCommand: '',
+      playCompletionSound: true,
+    },
+    speedSchedule: {
+      enabled: false,
+      startTime: '08:00',
+      stopTime: '22:00',
+      speedLimitKBps: 500,
+      days: [],
+    },
     media: {
       defaultAudioFormat: 'mp3',
       defaultVideoQuality: '1080p',
@@ -99,6 +113,20 @@ function sanitize(s: AppSettings): AppSettings {
     },
     userAgent: s.userAgent?.trim() || d.userAgent,
     proxy: s.proxy?.trim() ?? '',
+    automation: {
+      autoExtractArchives: typeof s.automation?.autoExtractArchives === 'boolean' ? s.automation.autoExtractArchives : false,
+      extractToSubfolder: typeof s.automation?.extractToSubfolder === 'boolean' ? s.automation.extractToSubfolder : true,
+      deleteArchiveAfterExtraction: typeof s.automation?.deleteArchiveAfterExtraction === 'boolean' ? s.automation.deleteArchiveAfterExtraction : false,
+      customCommand: s.automation?.customCommand?.trim() ?? '',
+      playCompletionSound: typeof s.automation?.playCompletionSound === 'boolean' ? s.automation.playCompletionSound : true,
+    },
+    speedSchedule: {
+      enabled: typeof s.speedSchedule?.enabled === 'boolean' ? s.speedSchedule.enabled : false,
+      startTime: s.speedSchedule?.startTime?.trim() || '08:00',
+      stopTime: s.speedSchedule?.stopTime?.trim() || '22:00',
+      speedLimitKBps: clamp(s.speedSchedule?.speedLimitKBps ?? 500, 0, 10_000_000, 500),
+      days: Array.isArray(s.speedSchedule?.days) ? s.speedSchedule.days : [],
+    },
     extension: {
       enabled: typeof s.extension?.enabled === 'boolean' ? s.extension.enabled : true,
       port: clamp(s.extension?.port, 1024, 65535, 31542),

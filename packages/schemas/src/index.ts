@@ -139,6 +139,22 @@ export const FileFiltersSchema = z
   .array(z.object({ name: text(120), extensions: z.array(text(32)).max(64) }))
   .max(32);
 
+export const AutomationSettingsSchema = z.object({
+  autoExtractArchives: z.boolean(),
+  extractToSubfolder: z.boolean(),
+  deleteArchiveAfterExtraction: z.boolean(),
+  customCommand: text(2048),
+  playCompletionSound: z.boolean(),
+});
+
+export const SpeedScheduleSettingsSchema = z.object({
+  enabled: z.boolean(),
+  startTime: TimeOfDaySchema,
+  stopTime: TimeOfDaySchema,
+  speedLimitKBps: z.number().finite().nonnegative(),
+  days: opt(WeekdaysSchema),
+});
+
 /** A settings patch: every field optional, every given field of the right type. */
 export const SettingsPatchSchema = z
   .object({
@@ -166,6 +182,8 @@ export const SettingsPatchSchema = z
     scheduler: z
       .object({ enabled: z.boolean(), startTime: TimeOfDaySchema, stopTime: TimeOfDaySchema, days: WeekdaysSchema })
       .partial(),
+    automation: AutomationSettingsSchema.partial(),
+    speedSchedule: SpeedScheduleSettingsSchema.partial(),
     media: z
       .object({
         defaultAudioFormat: z.enum(['mp3', 'm4a']),

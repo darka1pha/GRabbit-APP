@@ -315,18 +315,17 @@ RPC media resolution where yt-dlp fetches and remuxes the complete stream.
 
 ---
 
-## Phase 9 — Feature ideas (after the above)
+## Phase 9 — Feature additions — [IN PROGRESS]
 
-- Playlist/channel grab with per-item selection, plus "subscribe" to auto-grab new uploads.
-- Subtitles, chapters, SponsorBlock, and embedded metadata/cover options in the Grab view.
-- Post-download actions per category: convert, extract archive, move, run a command.
-- Site logins manager (per-host credentials and cookies) instead of raw header fields.
-- Bandwidth schedule (different speed limits by time of day), building on the 2.1 scheduler.
-- Remote control: with a hardened bridge, let mobile show and control the desktop queue.
-- Real multi-connection downloads on mobile (4.3 B / 6.1 native module).
-- macOS and Linux desktop builds — the code is mostly portable; `attrib`, `rundll32`, `shutdown`
-  and PowerShell calls need platform branches.
-- BitTorrent/magnet and FTP/SFTP support (via aria2 as an optional engine or a library).
+| # | Item | Status | Implementation Details |
+|---|---|---|---|
+| 9.1 | Post-Download Automation (Rules Engine) | Done | Added `apps/desktop/src/main/downloads/automation.ts` orchestrating automatic archive extraction (`.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`) via native `tar` and PowerShell `Expand-Archive`, dedicated subfolder extraction, optional archive trashing, and custom command execution with `{filePath}`, `{fileName}`, `{directory}`, `{category}`, `{fileSize}` interpolation. |
+| 9.2 | Bandwidth / Speed Schedule | Done | Added time-of-day speed scheduling (`speedSchedule`) to `manager.ts` and `scheduler.ts`, dynamically evaluating windows and adjusting `globalLimiter.setRate()` between throttled work-hour limits and unthrottled night windows, with day-of-week selection. |
+| 9.3 | Batch URL Pattern Expander | Done | Added `packages/utils/src/pattern-expander.ts` with `expandUrlPatterns` supporting zero-padded numeric ranges (`[01-10]`), unpadded (`[1-10]`), stepping (`[1-20:2]`), alphabetic ranges (`[a-z]`, `[A-Z]`), and cartesian multi-pattern expansion; added 1-click "⚡ Expand Pattern" pill and auto-expansion in `AddDownloadDialog.tsx`. |
+| 9.4 | Native Web Audio Completion Chime | Done | Implemented offline procedural dual-tone chime (D5 587Hz -> A5 880Hz) in `apps/desktop/src/renderer/src/utils/sound.ts` via Web Audio API `AudioContext`, triggered on download completion IPC without requiring external sound files. |
+| 9.5 | Subtitles, chapters, and SponsorBlock | Pending | Auto-subtitles and chapter splitting in Grab view. |
+| 9.6 | Remote control & Wi-Fi Push | Pending | Mobile-to-Desktop queue inspection and Wi-Fi direct file transfer. |
+| 9.7 | BitTorrent / Magnet Link Engine | Pending | Torrent engine integration via WebTorrent or aria2. |
 
 ---
 

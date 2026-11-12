@@ -52,7 +52,7 @@ const text = (key: MainMessageKey, params?: Record<string, string | number>) => 
 const router = new PlatformRouter();
 const recognizer = new MusicRecognizer();
 
-function send(channel: string, payload: unknown): void {
+function send(channel: string, payload: unknown = undefined): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
@@ -112,6 +112,10 @@ const manager = new DownloadManager({
   onOrderChanged: (ids) => send(IPC.downloadsOrder, ids),
   onQueuesChanged: (queues) => send(IPC.queuesChanged, queues),
   onCompleted: (item) => {
+    const s = settings.get();
+    if (s.automation?.playCompletionSound !== false) {
+      send(IPC.automationPlaySound);
+    }
     const mismatch = item.checksum?.verified === false;
     notify(text(mismatch ? 'notify.checksumMismatch' : 'notify.complete'), fileLabel(item), () => {
       if (item.filePath) shell.showItemInFolder(item.filePath);

@@ -1,10 +1,11 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Wrench, X } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { DayPicker, Switch } from '../components/ui';
 import { QRCodeModal } from '../components/QRCodeModal';
+import { playCompletionChime } from '../utils/sound';
 
 function Section({ id, title, icon, children }: { id?: string; title: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -133,6 +134,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             {[
               { id: 'sec-general', label: t('set.general') },
               { id: 'sec-downloads', label: t('set.downloads') },
+              { id: 'sec-automation', label: t('set.automation') },
               { id: 'sec-media', label: t('set.media') },
               { id: 'sec-extension', label: 'RPC Bridge' },
               { id: 'sec-tools', label: t('set.tools') },
@@ -252,6 +254,95 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
               <DayPicker value={s.scheduler.days} onChange={(days) => void save({ scheduler: { days } })} />
             </Setting>
           )}
+          <Setting label={t('set.speedSchedule')} hint={t('set.speedScheduleEnable')}>
+            <Switch
+              checked={s.speedSchedule?.enabled ?? false}
+              onChange={(v) => void save({ speedSchedule: { enabled: v } })}
+            />
+          </Setting>
+          {s.speedSchedule?.enabled && (
+            <>
+              <Setting label={`${t('set.startAt')} / ${t('set.stopAt')}`}>
+                <input
+                  className="input narrow"
+                  type="time"
+                  value={s.speedSchedule.startTime || '08:00'}
+                  onChange={(e) => void save({ speedSchedule: { startTime: e.target.value } })}
+                />
+                <span className="muted">→</span>
+                <input
+                  className="input narrow"
+                  type="time"
+                  value={s.speedSchedule.stopTime || '22:00'}
+                  onChange={(e) => void save({ speedSchedule: { stopTime: e.target.value } })}
+                />
+              </Setting>
+              <Setting label={t('set.scheduledSpeedLimit')}>
+                <LazyInput
+                  className="narrow"
+                  type="number"
+                  min={0}
+                  value={s.speedSchedule.speedLimitKBps ?? 500}
+                  onSave={(v) => void save({ speedSchedule: { speedLimitKBps: num(v) } })}
+                />
+              </Setting>
+              <Setting label={t('sched.days')}>
+                <DayPicker
+                  value={s.speedSchedule.days}
+                  onChange={(days) => void save({ speedSchedule: { days } })}
+                />
+              </Setting>
+            </>
+          )}
+        </Section>
+
+        <Section id="sec-automation" title={t('set.automation')} icon={<Zap size={15} />}>
+          <Setting label={t('set.autoExtract')} hint={t('set.autoExtractHint')}>
+            <Switch
+              checked={s.automation?.autoExtractArchives ?? false}
+              onChange={(v) => void save({ automation: { autoExtractArchives: v } })}
+            />
+          </Setting>
+          {s.automation?.autoExtractArchives && (
+            <>
+              <Setting label={t('set.extractSubfolder')} hint={t('set.extractSubfolderHint')}>
+                <Switch
+                  checked={s.automation?.extractToSubfolder ?? true}
+                  onChange={(v) => void save({ automation: { extractToSubfolder: v } })}
+                />
+              </Setting>
+              <Setting label={t('set.deleteArchive')} hint={t('set.deleteArchiveHint')}>
+                <Switch
+                  checked={s.automation?.deleteArchiveAfterExtraction ?? false}
+                  onChange={(v) => void save({ automation: { deleteArchiveAfterExtraction: v } })}
+                />
+              </Setting>
+            </>
+          )}
+          <Setting label={t('set.completionSound')} hint={t('set.completionSoundHint')}>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <Switch
+                checked={s.automation?.playCompletionSound ?? true}
+                onChange={(v) => void save({ automation: { playCompletionSound: v } })}
+              />
+              <button
+                type="button"
+                className="btn ghost sm"
+                style={{ padding: '2px 8px', fontSize: 11.5, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                onClick={() => playCompletionChime()}
+              >
+                <Volume2 size={13} /> {t('set.testSound')}
+              </button>
+            </div>
+          </Setting>
+          <Setting label={t('set.customCommand')} hint={t('set.customCommandHint')} stack>
+            <LazyInput
+              className="mono"
+              value={s.automation?.customCommand ?? ''}
+              placeholder="e.g. cmd /c echo Finished {fileName}"
+              onSave={(v) => void save({ automation: { customCommand: v } })}
+            />
+          </Setting>
         </Section>
 
         <Section title={t('set.network')} icon={<Globe size={15} />}>

@@ -53,6 +53,7 @@ const api: GrabbitApi = {
     watchSegments: (ids) => invoke(IPC.downloadsWatchSegments, ids),
     onRemoved: (listener) => subscribe(IPC.downloadsRemoved, listener),
     onOrderChanged: (listener) => subscribe(IPC.downloadsOrder, listener),
+    onAutomationSound: (listener) => subscribe(IPC.automationPlaySound, listener),
   },
   queues: {
     list: () => invoke(IPC.queuesList),

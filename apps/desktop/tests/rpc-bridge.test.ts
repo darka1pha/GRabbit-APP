@@ -54,6 +54,20 @@ describe('DesktopRpcBridge', () => {
       proxy: '',
       afterQueue: 'none',
       scheduler: { enabled: false, startTime: '', stopTime: '' },
+      automation: {
+        autoExtractArchives: false,
+        extractToSubfolder: true,
+        deleteArchiveAfterExtraction: false,
+        customCommand: '',
+        playCompletionSound: true,
+      },
+      speedSchedule: {
+        enabled: false,
+        startTime: '08:00',
+        stopTime: '22:00',
+        speedLimitKBps: 500,
+        days: [],
+      },
       media: {
         defaultAudioFormat: 'mp3',
         defaultVideoQuality: '1080p',
