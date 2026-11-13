@@ -44,10 +44,11 @@ export class MediaCacheRepository {
       return res.rows.map((r) => this.mapRow(r));
     }
 
-    const pattern = `%${trimmed}%`;
+    const escaped = trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    const pattern = `%${escaped}%`;
     const sql = `
       SELECT * FROM media_cache
-      WHERE title ILIKE $1 OR author ILIKE $1 OR media_id ILIKE $1
+      WHERE title ILIKE $1 ESCAPE '\\' OR author ILIKE $1 ESCAPE '\\' OR media_id ILIKE $1 ESCAPE '\\'
       ORDER BY updated_at DESC
       LIMIT $2;
     `;

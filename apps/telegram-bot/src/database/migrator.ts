@@ -1,7 +1,16 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getDatabasePool } from './client.js';
 import { logger } from '../observability/logger.js';
+
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+function resolveMigrationsDir(): string {
+  const srcDir = resolve(PACKAGE_ROOT, 'src/database/migrations');
+  if (existsSync(srcDir)) return srcDir;
+  return resolve(PACKAGE_ROOT, 'dist/database/migrations');
+}
 
 export async function runMigrations(): Promise<void> {
   const pool = getDatabasePool();
@@ -23,7 +32,7 @@ export async function runMigrations(): Promise<void> {
     );
     const appliedSet = new Set(appliedRows.map((r) => r.name));
 
-    const migrationsDir = resolve(process.cwd(), 'src/database/migrations');
+    const migrationsDir = resolveMigrationsDir();
     const files = readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();

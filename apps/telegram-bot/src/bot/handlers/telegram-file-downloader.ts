@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, copyFileSync, unlinkSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, copyFileSync, unlinkSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -25,6 +25,7 @@ export async function downloadTelegramMediaFile(
   }
 
   const tempDir = config.TEMP_DIR || './temp';
+  mkdirSync(tempDir, { recursive: true });
   const id = randomBytes(4).toString('hex');
   const targetPath = join(tempDir, `tg_media_${id}.${preferredExt}`);
 
@@ -69,7 +70,7 @@ export async function downloadTelegramMediaFile(
   const apiRoot = (config.TELEGRAM_API_ROOT || 'https://api.telegram.org').replace(/\/$/, '');
   const downloadUrl = `${apiRoot}/file/bot${config.BOT_TOKEN}/${relativePath}`;
 
-  logger.debug({ downloadUrl, targetPath }, 'Downloading Telegram media via HTTP');
+  logger.debug({ apiRoot, relativePath, targetPath }, 'Downloading Telegram media via HTTP');
 
   const response = await fetch(downloadUrl);
   if (!response.ok || !response.body) {

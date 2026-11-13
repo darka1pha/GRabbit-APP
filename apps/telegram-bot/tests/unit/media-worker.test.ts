@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MediaProcessingWorker } from '../../src/queue/workers/media-worker.js';
 import { Job } from 'bullmq';
 import { MediaJobPayload } from '../../core/types/job.js';
@@ -9,7 +9,7 @@ import { FFprobeRunner } from '../../src/services/media/ffprobe-runner.js';
 import { FFmpegRunner } from '../../src/services/media/ffmpeg-runner.js';
 import { DeliveryService } from '../../src/services/delivery/delivery-service.js';
 import { Bot } from 'grammy';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('MediaProcessingWorker Pipeline', () => {
@@ -22,6 +22,10 @@ describe('MediaProcessingWorker Pipeline', () => {
   let worker: MediaProcessingWorker;
 
   const testTempDir = join(process.cwd(), 'temp', 'test-job');
+
+  afterEach(() => {
+    rmSync(join(process.cwd(), 'temp'), { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     mkdirSync(testTempDir, { recursive: true });

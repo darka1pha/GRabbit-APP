@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { UserRepository } from '../../src/database/repositories/user-repository.js';
 import { JobRepository } from '../../src/database/repositories/job-repository.js';
+import { MediaCacheRepository } from '../../src/database/repositories/media-cache-repository.js';
 import * as dbClient from '../../src/database/client.js';
 
 describe('UserRepository Unit Tests', () => {
@@ -138,5 +139,24 @@ describe('JobRepository Unit Tests', () => {
     expect(active[0].status).toBe('processing');
     expect(active[0].localeSnapshot).toBe('fa');
     expect(querySpy.mock.calls[0][1]).toEqual([555]);
+  });
+});
+
+describe('MediaCacheRepository Unit Tests', () => {
+  const mediaRepo = new MediaCacheRepository();
+
+  it('escapes LIKE wildcards and backslashes in searchCachedMedia', async () => {
+    const querySpy = vi.spyOn(dbClient, 'query').mockResolvedValueOnce({
+      rows: [],
+      rowCount: 0,
+      command: 'SELECT',
+      oid: 0,
+      fields: [],
+    });
+
+    await mediaRepo.searchCachedMedia('100%_a\\b', 10);
+    expect(querySpy).toHaveBeenCalledTimes(1);
+    expect(querySpy.mock.calls[0][0]).toContain("ESCAPE '\\'");
+    expect(querySpy.mock.calls[0][1]).toEqual(['%100\\%\\_a\\\\b%', 10]);
   });
 });

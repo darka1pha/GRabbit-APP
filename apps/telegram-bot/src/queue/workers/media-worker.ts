@@ -263,13 +263,25 @@ export class MediaProcessingWorker {
       const maxDurationSeconds = isVip
         ? config.VIP_MAX_MEDIA_DURATION_SECONDS
         : config.MAX_MEDIA_DURATION_SECONDS;
+      const botApiCapBytes = config.TELEGRAM_API_ROOT
+        ? TELEGRAM_MAX_FILE_SIZE_BYTES
+        : 50 * 1024 * 1024;
       const maxFileSizeBytes = Math.min(
-        TELEGRAM_MAX_FILE_SIZE_BYTES,
+        botApiCapBytes,
         (isVip ? config.VIP_MAX_FILE_SIZE_MB : config.MAX_FILE_SIZE_MB) * 1024 * 1024
       );
 
       let finalFilePath = downloadResult.filePath;
       let thumbnailPath = downloadResult.thumbnailPath;
+      const initialFileSize = existsSync(finalFilePath)
+        ? statSync(finalFilePath).size
+        : downloadResult.fileSizeBytes ?? 0;
+      if (initialFileSize > maxFileSizeBytes) {
+        throw new MediaTooLargeError(
+          Math.round(maxFileSizeBytes / (1024 * 1024)),
+          initialFileSize / (1024 * 1024)
+        );
+      }
       let probeInfo: MediaProbeInfo | undefined;
       try {
         probeInfo = await this.ffprobe.probe(finalFilePath);

@@ -45,9 +45,31 @@ async function safeEdit(ctx: BotContext, text: string, options?: EditOptions): P
   } catch (err) {
     const description =
       (err as { description?: string })?.description || (err as Error)?.message || '';
-    if (!description.includes('message is not modified')) {
-      throw err;
+    if (description.includes('message is not modified')) {
+      return;
     }
+    if (description.includes('no text in the message to edit') || ctx.callbackQuery?.message?.photo) {
+      try {
+        await ctx.editMessageCaption({
+          caption: text,
+          parse_mode: options?.parse_mode,
+          reply_markup: options?.reply_markup,
+        });
+        return;
+      } catch (capErr) {
+        const capDesc =
+          (capErr as { description?: string })?.description || (capErr as Error)?.message || '';
+        if (capDesc.includes('message is not modified')) {
+          return;
+        }
+        await ctx.reply(text, {
+          parse_mode: options?.parse_mode,
+          reply_markup: options?.reply_markup,
+        });
+        return;
+      }
+    }
+    throw err;
   }
 }
 

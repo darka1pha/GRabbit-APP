@@ -1,10 +1,13 @@
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { I18n } from '@grammyjs/i18n';
 import { SupportedLocale, DEFAULT_LOCALE } from '../config/constants.js';
 
+const LOCALES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../locales');
+
 export const i18n = new I18n({
   defaultLocale: DEFAULT_LOCALE,
-  directory: resolve(process.cwd(), 'locales'),
+  directory: LOCALES_DIR,
   useSession: false,
 });
 

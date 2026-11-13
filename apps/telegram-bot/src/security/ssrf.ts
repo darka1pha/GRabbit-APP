@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 const PRIVATE_IP_RANGES = [
@@ -50,6 +51,32 @@ export function validateSafeUrl(rawUrl: string): URL {
 
   if (isPrivateOrBlockedHost(parsed.hostname)) {
     throw new Error('Destination host is restricted for security.');
+  }
+
+  return parsed;
+}
+
+/**
+ * Validates URL syntax/protocol/host AND resolves DNS records to block
+ * hostnames that point to private, loopback, or link-local IP ranges.
+ */
+export async function assertSafePublicUrl(rawUrl: string): Promise<URL> {
+  const parsed = validateSafeUrl(rawUrl);
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+
+  if (isIP(hostname)) {
+    return parsed;
+  }
+
+  const records = await lookup(hostname, { all: true, verbatim: true });
+  if (records.length === 0) {
+    throw new Error('Could not resolve destination host.');
+  }
+
+  for (const record of records) {
+    if (isPrivateOrBlockedHost(record.address)) {
+      throw new Error('Destination host resolves to a restricted address.');
+    }
   }
 
   return parsed;

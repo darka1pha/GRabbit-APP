@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Shazam } from 'node-shazam';
@@ -49,6 +49,7 @@ export class MusicRecognizer {
 
     const config = getConfig();
     const tempDir = config.TEMP_DIR || './temp';
+    mkdirSync(tempDir, { recursive: true });
     const sampleId = randomBytes(4).toString('hex');
     const samplePath = join(tempDir, `shazam_sample_${sampleId}.mp3`);
 

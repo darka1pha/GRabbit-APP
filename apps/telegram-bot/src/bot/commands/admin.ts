@@ -1,6 +1,7 @@
 import { InlineKeyboard, NextFunction } from 'grammy';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BotContext } from '../context.js';
 import { UserRepository } from '../../database/repositories/user-repository.js';
 import { JobRepository } from '../../database/repositories/job-repository.js';
@@ -57,12 +58,14 @@ interface ParsedCookieEntry {
   value: string;
 }
 
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+
 function getManagedCookiesFilePath(): string {
-  return resolve(process.cwd(), getConfig().TEMP_DIR, 'youtube_cookies.txt');
+  return resolve(PACKAGE_ROOT, getConfig().TEMP_DIR, 'youtube_cookies.txt');
 }
 
 function getRuntimeCookiesFilePath(): string {
-  return resolve(process.cwd(), getConfig().TEMP_DIR, 'youtube_cookies_runtime.txt');
+  return resolve(PACKAGE_ROOT, getConfig().TEMP_DIR, 'youtube_cookies_runtime.txt');
 }
 
 function parseCookiesFromText(rawContent: string): ParsedCookieEntry[] {
@@ -757,8 +760,7 @@ export async function handleAdminCallback(
         rmSync(getRuntimeCookiesFilePath(), { force: true });
       } catch {}
     } else {
-      // Activate pending state right on the cookies overview screen so uploading immediately works
-      pendingCookiesSetupAdmins.add(ctx.from.id);
+      pendingCookiesSetupAdmins.delete(ctx.from.id);
     }
 
     const currentPath = resolveYouTubeCookiesPath();
@@ -1122,6 +1124,7 @@ export function createAdminBroadcastMiddleware(userRepo: UserRepository) {
     ) {
       const diag = saveYouTubeCookiesWithDiagnostics(text, { mergeExisting: true });
       await userRepo.setSetting('youtube_cookies', diag.normalizedContent);
+      pendingCookiesSetupAdmins.delete(userId);
 
       await ctx.reply(buildCookieReplyMessage(ctx, diag), {
         parse_mode: 'HTML',
@@ -1181,17 +1184,30 @@ export function createAdminBroadcastMiddleware(userRepo: UserRepository) {
       { parse_mode: 'HTML' }
     );
 
-    for (const targetId of userIds) {
+    for (let i = 0; i < userIds.length; i++) {
+      const targetId = userIds[i]!;
+      const payload = `📢 <b>Announcement · اطلاعیه</b>\n\n${escapeHtml(text)}`;
       try {
         // Recipients' languages vary, so the header is bilingual
-        await ctx.api.sendMessage(
-          targetId,
-          `📢 <b>Announcement · اطلاعیه</b>\n\n${escapeHtml(text)}`,
-          { parse_mode: 'HTML' }
-        );
+        await ctx.api.sendMessage(targetId, payload, { parse_mode: 'HTML' });
         sentCount++;
-      } catch {
-        failedCount++;
+      } catch (err) {
+        const tgErr = err as { error_code?: number; parameters?: { retry_after?: number } };
+        if (tgErr?.error_code === 429) {
+          const waitMs = Math.min(((tgErr.parameters?.retry_after ?? 1) + 1) * 1000, 30_000);
+          await new Promise((r) => setTimeout(r, waitMs));
+          try {
+            await ctx.api.sendMessage(targetId, payload, { parse_mode: 'HTML' });
+            sentCount++;
+          } catch {
+            failedCount++;
+          }
+        } else {
+          failedCount++;
+        }
+      }
+      if (i + 1 < userIds.length) {
+        await new Promise((r) => setTimeout(r, 35));
       }
     }
 
