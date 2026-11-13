@@ -187,10 +187,18 @@ function renderMediaList(mediaList: DetectedMediaStream[], activeTabUrl?: string
 
     const info = document.createElement('div');
     info.className = 'media-info';
-    info.innerHTML = `
-      <span class="media-title" title="${item.title || item.url}">${item.title || 'Media Stream'}</span>
-      <span class="media-meta">${item.format?.toUpperCase() || 'VIDEO'} • ${item.quality || 'Best Available'}</span>
-    `;
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'media-title';
+    titleEl.title = item.title || item.url;
+    titleEl.textContent = item.title || 'Media Stream';
+
+    const metaEl = document.createElement('span');
+    metaEl.className = 'media-meta';
+    metaEl.textContent = `${item.format?.toUpperCase() || 'VIDEO'} • ${item.quality || 'Best Available'}`;
+
+    info.appendChild(titleEl);
+    info.appendChild(metaEl);
 
     const grabBtn = document.createElement('button');
     grabBtn.className = 'btn primary sm';
@@ -339,7 +347,7 @@ optionsBtnEl.addEventListener('click', () => {
   if (chrome.runtime.openOptionsPage) {
     chrome.runtime.openOptionsPage();
   } else {
-    window.open(chrome.runtime.getURL('options.html'));
+    window.open(chrome.runtime.getURL('options/index.html'));
   }
 });
 
