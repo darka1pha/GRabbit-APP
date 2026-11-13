@@ -115,6 +115,10 @@ export const AddMediaDownloadRequestSchema = z.object({
   directory: opt(text(1024)),
   startPaused: opt(z.boolean()),
   queueId: opt(IdSchema),
+  subtitles: opt(z.boolean()),
+  subtitleLang: opt(z.string().regex(/^[a-zA-Z0-9,._*-]{1,32}$/, 'Invalid subtitle language selector')),
+  embedChapters: opt(z.boolean()),
+  sponsorBlock: opt(z.boolean()),
 });
 
 export const WeekdaysSchema = z.array(z.number().int().min(0).max(6)).max(7);
@@ -230,6 +234,9 @@ export const RpcStreamRequestSchema = z.object({
   qualityId: opt(text(64)),
 });
 export const RpcExtensionUpdateRequestSchema = z.object({ downloadUrl: UrlTextSchema, version: opt(text(64)) });
+export const RpcIdsRequestSchema = z.object({ ids: IdListSchema.min(1) });
+export const RpcRemoveRequestSchema = z.object({ ids: IdListSchema.min(1), deleteFiles: opt(z.boolean()) });
+export const RpcQueueControlSchema = z.object({ id: IdSchema, enabled: z.boolean() });
 
 /** One line describing the first problem in a failed parse, e.g. `items.0.url: Required`. */
 export function describeIssue(error: z.ZodError): string {

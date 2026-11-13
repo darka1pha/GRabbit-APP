@@ -122,6 +122,10 @@ export interface MediaJobInfo {
   estimatedSizeBytes?: number;
   /** Human readable current stage, e.g. "Downloading video", "Converting". */
   stage?: string;
+  subtitles?: boolean;
+  subtitleLang?: string;
+  embedChapters?: boolean;
+  sponsorBlock?: boolean;
 }
 
 export interface DownloadItem {
@@ -255,6 +259,18 @@ export interface AddMediaDownloadRequest {
   directory?: string;
   startPaused?: boolean;
   queueId?: string;
+  subtitles?: boolean;
+  subtitleLang?: string;
+  embedChapters?: boolean;
+  sponsorBlock?: boolean;
+}
+
+export interface LanTransferInfo {
+  url: string;
+  deepLink: string;
+  fileName: string;
+  sizeBytes: number | null;
+  expiresAt: number;
 }
 
 export interface ProbeResult {
@@ -494,6 +510,7 @@ export interface GrabbitApi {
     openFile(id: string): Promise<void>;
     showInFolder(id: string): Promise<void>;
     copyUrl(id: string): Promise<void>;
+    createTransferLink(id: string): Promise<LanTransferInfo | null>;
     /** Whole items: new downloads and anything other than running progress. */
     onChanged(listener: (items: DownloadItem[]) => void): () => void;
     /** Running progress of active downloads. */
@@ -580,6 +597,7 @@ export const IPC = {
   downloadsOpenFile: 'downloads:open-file',
   downloadsShowInFolder: 'downloads:show-in-folder',
   downloadsCopyUrl: 'downloads:copy-url',
+  downloadsCreateTransferLink: 'downloads:create-transfer-link',
   downloadsChanged: 'downloads:changed',
   downloadsProgress: 'downloads:progress',
   downloadsAggregate: 'downloads:aggregate',
