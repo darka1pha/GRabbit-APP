@@ -32,6 +32,12 @@ jobs:
       - name: Run typecheck
         run: pnpm typecheck
 
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Validate bot translations
+        run: pnpm --filter @grabbit/telegram-bot run validate:translations
+
       - name: Run tests
         run: pnpm test
 

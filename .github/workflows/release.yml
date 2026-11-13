@@ -112,6 +112,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Typecheck & test Mobile
+        run: |
+          pnpm --filter @grabbit/mobile typecheck
+          pnpm --filter @grabbit/mobile test
+
       - name: Generate Mobile assets
         run: node apps/mobile/scripts/make-assets.mjs
 
