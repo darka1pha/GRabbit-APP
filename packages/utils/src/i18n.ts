@@ -437,6 +437,10 @@ export const en = {
   'mobile.qrInstruction': 'Point your camera at the QR code displayed in Desktop Settings → RPC Bridge.',
   'mobile.manualPair': 'Or paste pairing URI manually',
   'mobile.pairButton': 'Pair with Desktop',
+  'grab.recent': 'Recent Grabs',
+  'dl.linkRefreshed': 'Download link updated',
+  'app.viewRenderError': 'View Rendering Error',
+  'set.noMatchingSettings': 'No settings match "{query}"',
 };
 
 export type MessageKey = keyof typeof en;
@@ -480,7 +484,7 @@ export const fa: Record<MessageKey, string> = {
   'filter.completed': 'تکمیل‌شده',
   'filter.failed': 'ناموفق',
 
-  'status.queued': 'Queued',
+  'status.queued': 'در صف',
   'status.starting': 'در حال اتصال…',
   'status.downloading': 'در حال دانلود',
   'status.processing': 'در حال پردازش',
@@ -881,6 +885,10 @@ export const fa: Record<MessageKey, string> = {
   'mobile.qrInstruction': 'دوربین را به سمت کد QR نمایش‌داده‌شده در تنظیمات رایانه ← پل ارتباطی بگیرید.',
   'mobile.manualPair': 'یا لینک اتصال را به صورت دستی وارد کنید',
   'mobile.pairButton': 'اتصال به رایانه',
+  'grab.recent': 'دریافت‌های اخیر',
+  'dl.linkRefreshed': 'لینک دانلود به‌روزرسانی شد',
+  'app.viewRenderError': 'خطا در نمایش بخش',
+  'set.noMatchingSettings': 'تنظیمی مطابق با «{query}» یافت نشد',
 };
 
 export const dictionaries: Record<Language, Record<MessageKey, string>> = { en, fa };

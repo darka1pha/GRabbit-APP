@@ -12,10 +12,10 @@
  */
 
 const MAX_ITEMS_PER_URL = 500;
-const PATTERN_REGEX = /\[(?:(\d+)-(\d+)(?::(\d+))?|([a-zA-Z])-([a-zA-Z]))\]/;
+const PATTERN_REGEX = /\[(?:(\d+)-(\d+)(?::(\d+))?|([a-z])-([a-z])|([A-Z])-([A-Z]))\]/;
 
 export function hasUrlPattern(text: string): boolean {
-  return /\[(?:\d+-\d+(?::\d+)?|[a-zA-Z]-[a-zA-Z])\]/.test(text);
+  return /\[(?:\d+-\d+(?::\d+)?|[a-z]-[a-z]|[A-Z]-[A-Z])\]/.test(text);
 }
 
 /**
@@ -53,8 +53,8 @@ export function expandSinglePattern(template: string): string[] {
         }
       }
     } else {
-      const startChar = match[4].charCodeAt(0);
-      const endChar = match[5].charCodeAt(0);
+      const startChar = (match[4] ?? match[6]).charCodeAt(0);
+      const endChar = (match[5] ?? match[7]).charCodeAt(0);
 
       if (startChar <= endChar) {
         for (let c = startChar; c <= endChar; c++) {

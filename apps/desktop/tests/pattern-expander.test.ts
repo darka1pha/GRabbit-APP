@@ -10,6 +10,14 @@ describe('Batch URL Pattern Expander', () => {
     expect(hasUrlPattern('https://example.com/file[1-20:2].mp4')).toBe(true);
     expect(hasUrlPattern('https://example.com/file.zip')).toBe(false);
     expect(hasUrlPattern('https://example.com/[not-a-pattern].zip')).toBe(false);
+    expect(hasUrlPattern('https://example.com/item[Z-a].bin')).toBe(false);
+    expect(hasUrlPattern('https://example.com/item[a-Z].bin')).toBe(false);
+  });
+
+  it('does not expand mixed-case ASCII ranges like [Z-a] across punctuation', () => {
+    expect(expandSinglePattern('https://example.com/item[Z-a].bin')).toEqual([
+      'https://example.com/item[Z-a].bin',
+    ]);
   });
 
   it('expands numeric patterns with zero padding', () => {
