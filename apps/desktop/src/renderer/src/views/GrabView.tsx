@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AudioLines,
+  ChevronDown,
   CircleAlert,
   Clipboard,
   Clock,
@@ -11,7 +12,9 @@ import {
   Info,
   LoaderCircle,
   ListMusic,
+  Pin,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Music,
   X,
@@ -34,12 +37,33 @@ interface RecentGrabItem {
   uploader?: string;
   thumbnailUrl?: string;
   platform: string;
+  pinned?: boolean;
+}
+
+interface MediaExtrasOptions {
+  subtitles: boolean;
+  subtitleLang: string;
+  embedChapters: boolean;
+  sponsorBlock: boolean;
+}
+
+const DEFAULT_EXTRAS: MediaExtrasOptions = {
+  subtitles: false,
+  subtitleLang: 'en',
+  embedChapters: false,
+  sponsorBlock: false,
+};
+
+function sortGrabHistory(items: RecentGrabItem[]): RecentGrabItem[] {
+  const pinned = items.filter((i) => i.pinned);
+  const unpinned = items.filter((i) => !i.pinned);
+  return [...pinned, ...unpinned];
 }
 
 function loadGrabHistory(): RecentGrabItem[] {
   try {
     const raw = JSON.parse(localStorage.getItem(GRAB_HISTORY_KEY) ?? '[]');
-    return Array.isArray(raw) ? raw : [];
+    return Array.isArray(raw) ? sortGrabHistory(raw) : [];
   } catch {
     return [];
   }
@@ -47,7 +71,9 @@ function loadGrabHistory(): RecentGrabItem[] {
 
 function saveGrabHistory(items: RecentGrabItem[]): void {
   try {
-    localStorage.setItem(GRAB_HISTORY_KEY, JSON.stringify(items.slice(0, GRAB_HISTORY_MAX)));
+    const sorted = sortGrabHistory(items);
+    const pinnedCount = sorted.filter((i) => i.pinned).length;
+    localStorage.setItem(GRAB_HISTORY_KEY, JSON.stringify(sorted.slice(0, Math.max(GRAB_HISTORY_MAX, pinnedCount + 2))));
   } catch {
     // ignore
   }
@@ -60,7 +86,12 @@ type ViewState =
   | { kind: 'media'; meta: PlatformMetadata }
   | { kind: 'search'; query: string; items: MediaItem[] };
 
-function toRequest(item: MediaItem, option: MediaOption, directory?: string): AddMediaDownloadRequest {
+function toRequest(
+  item: MediaItem,
+  option: MediaOption,
+  directory?: string,
+  extras?: MediaExtrasOptions
+): AddMediaDownloadRequest {
   return {
     url: item.url,
     platform: item.platform,
@@ -73,6 +104,9 @@ function toRequest(item: MediaItem, option: MediaOption, directory?: string): Ad
     durationSeconds: item.durationSeconds,
     estimatedSizeBytes: option.estimatedSizeBytes,
     directory,
+    ...(extras?.subtitles ? { subtitles: true, subtitleLang: extras.subtitleLang.trim() || 'en' } : {}),
+    ...(extras?.embedChapters ? { embedChapters: true } : {}),
+    ...(extras?.sponsorBlock ? { sponsorBlock: true } : {}),
   };
 }
 
@@ -95,6 +129,16 @@ export function GrabView({
   const [state, setState] = useState<ViewState>({ kind: 'idle' });
   const [directory, setDirectory] = useState<string | undefined>();
   const [recentGrabs, setRecentGrabs] = useState<RecentGrabItem[]>(loadGrabHistory);
+  const [showExtras, setShowExtras] = useState(false);
+  const [extras, setExtras] = useState<MediaExtrasOptions>(DEFAULT_EXTRAS);
+
+  function togglePinRecent(url: string) {
+    setRecentGrabs((prev) => {
+      const next = sortGrabHistory(prev.map((r) => (r.url === url ? { ...r, pinned: !r.pinned } : r)));
+      saveGrabHistory(next);
+      return next;
+    });
+  }
 
   async function submit(value = input) {
     const text = value.trim();
@@ -114,16 +158,20 @@ export function GrabView({
           setState({ kind: 'media', meta });
           const first = meta.items[0];
           if (first) {
-            const entry: RecentGrabItem = {
-              url: text,
-              title: meta.isCollection ? meta.title || first.title : first.title,
-              uploader: meta.artistOrAuthor || first.uploader,
-              thumbnailUrl: meta.thumbnailUrl || first.thumbnailUrl,
-              platform: first.platform,
-            };
-            const next = [entry, ...recentGrabs.filter((r) => r.url !== text)].slice(0, GRAB_HISTORY_MAX);
-            setRecentGrabs(next);
-            saveGrabHistory(next);
+            setRecentGrabs((prev) => {
+              const existing = prev.find((r) => r.url === text);
+              const entry: RecentGrabItem = {
+                url: text,
+                title: meta.isCollection ? meta.title || first.title : first.title,
+                uploader: meta.artistOrAuthor || first.uploader,
+                thumbnailUrl: meta.thumbnailUrl || first.thumbnailUrl,
+                platform: first.platform,
+                pinned: existing?.pinned,
+              };
+              const next = sortGrabHistory([entry, ...prev.filter((r) => r.url !== text)]);
+              saveGrabHistory(next);
+              return next;
+            });
           }
         }
       } catch (err) {
@@ -276,12 +324,21 @@ export function GrabView({
           </motion.div>
         )}
 
+        {state.kind === 'media' && (
+          <ExtrasBar
+            extras={extras}
+            open={showExtras}
+            onToggle={() => setShowExtras((v) => !v)}
+            onChange={setExtras}
+          />
+        )}
+
         {state.kind === 'media' && !state.meta.isCollection && (
           <SingleMedia
             item={state.meta.items[0]}
             directory={directory}
             onDirectory={setDirectory}
-            onDownload={(item, option) => void add([toRequest(item, option, directory)])}
+            onDownload={(item, option) => void add([toRequest(item, option, directory, extras)])}
           />
         )}
 
@@ -289,6 +346,7 @@ export function GrabView({
           <Collection
             meta={state.meta}
             directory={directory}
+            extras={extras}
             onDirectory={setDirectory}
             onDownload={(requests) => void add(requests)}
           />
@@ -338,7 +396,7 @@ export function GrabView({
                   {recentGrabs.map((r, i) => (
                     <motion.div
                       key={r.url}
-                      className="card recent-card"
+                      className={`card recent-card ${r.pinned ? 'pinned' : ''}`}
                       onClick={() => void submit(r.url)}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -354,6 +412,18 @@ export function GrabView({
                         <div className="small muted ellipsis">{r.uploader || r.platform}</div>
                       </div>
                       <span className="badge">{r.platform}</span>
+                      <button
+                        type="button"
+                        className={`btn ghost sm icon recent-pin-btn ${r.pinned ? 'pinned' : ''}`}
+                        title={r.pinned ? t('grab.unpinRecent') : t('grab.pinRecent')}
+                        aria-label={r.pinned ? t('grab.unpinRecent') : t('grab.pinRecent')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePinRecent(r.url);
+                        }}
+                      >
+                        <Pin size={13} />
+                      </button>
                     </motion.div>
                   ))}
                 </div>
@@ -371,8 +441,75 @@ export function GrabView({
       format === 'audio'
         ? { format: 'audio', qualityId: s.media.defaultAudioFormat, label: '', extension: s.media.defaultAudioFormat }
         : { format: 'video', qualityId: s.media.defaultVideoQuality, label: '', extension: 'mp4' };
-    await add([toRequest(item, option)]);
+    await add([toRequest(item, option, undefined, extras)]);
   }
+}
+
+function ExtrasBar({
+  extras,
+  open,
+  onToggle,
+  onChange,
+}: {
+  extras: MediaExtrasOptions;
+  open: boolean;
+  onToggle(): void;
+  onChange(next: MediaExtrasOptions): void;
+}) {
+  const { t } = useI18n();
+  const activeCount = (extras.subtitles ? 1 : 0) + (extras.embedChapters ? 1 : 0) + (extras.sponsorBlock ? 1 : 0);
+
+  return (
+    <div className="card extras-bar">
+      <button type="button" className="extras-toggle" onClick={onToggle} aria-expanded={open}>
+        <SlidersHorizontal size={14} className="muted" />
+        <span className="grow" style={{ textAlign: 'start', fontWeight: 600, fontSize: 13 }}>
+          {t('grab.extras')}
+        </span>
+        {activeCount > 0 && <span className="badge accent">{activeCount}</span>}
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div className="extras-body">
+          <label className="extras-check">
+            <input
+              type="checkbox"
+              checked={extras.subtitles}
+              onChange={(e) => onChange({ ...extras, subtitles: e.target.checked })}
+            />
+            <span>{t('grab.subtitles')}</span>
+          </label>
+          {extras.subtitles && (
+            <label className="extras-lang">
+              <span className="small muted">{t('grab.subtitleLang')}</span>
+              <input
+                className="input mono"
+                value={extras.subtitleLang}
+                placeholder="en,fa"
+                onChange={(e) => onChange({ ...extras, subtitleLang: e.target.value })}
+              />
+            </label>
+          )}
+          <label className="extras-check">
+            <input
+              type="checkbox"
+              checked={extras.embedChapters}
+              onChange={(e) => onChange({ ...extras, embedChapters: e.target.checked })}
+            />
+            <span>{t('grab.embedChapters')}</span>
+          </label>
+          <label className="extras-check">
+            <input
+              type="checkbox"
+              checked={extras.sponsorBlock}
+              onChange={(e) => onChange({ ...extras, sponsorBlock: e.target.checked })}
+            />
+            <span>{t('grab.sponsorBlock')}</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function OptionTile({ option, selected, onSelect }: { option: MediaOption; selected: boolean; onSelect(): void }) {
@@ -411,6 +548,18 @@ function SingleMedia({
   const audio = item.availableOptions.filter((o) => o.format === 'audio');
   const video = item.availableOptions.filter((o) => o.format === 'video');
 
+  const presets = useMemo(() => {
+    const sortedVideo = [...video].sort((a, b) => (parseInt(b.qualityId, 10) || 0) - (parseInt(a.qualityId, 10) || 0));
+    const bestVideo = sortedVideo[0];
+    const compact720 = sortedVideo.find((o) => o.qualityId === '720p') ?? sortedVideo.find((o) => (parseInt(o.qualityId, 10) || 0) <= 720);
+    const audioMp3 = audio.find((o) => o.qualityId === 'mp3' || o.qualityId.startsWith('mp3')) ?? audio[0];
+    const list: Array<{ id: string; label: string; option: MediaOption }> = [];
+    if (bestVideo) list.push({ id: 'best', label: t('grab.presetBest'), option: bestVideo });
+    if (audioMp3) list.push({ id: 'audio', label: t('grab.presetAudio'), option: audioMp3 });
+    if (compact720 && compact720 !== bestVideo) list.push({ id: 'compact', label: t('grab.presetMobile'), option: compact720 });
+    return list;
+  }, [audio, video, t]);
+
   const preferred = useMemo(() => {
     const wantAudio = settings?.media.defaultAudioFormat ?? 'mp3';
     const wantVideo = settings?.media.defaultVideoQuality ?? '1080p';
@@ -446,6 +595,20 @@ function SingleMedia({
           </div>
         ) : (
           <>
+            {presets.length > 0 && (
+              <div className="grab-presets">
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`grab-preset-pill ${choice === p.option ? 'active' : ''}`}
+                    onClick={() => setChoice(p.option)}
+                  >
+                    <Sparkles size={12} /> {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {audio.length > 0 && (
               <div className="option-group">
                 <h4>
@@ -498,11 +661,13 @@ function SingleMedia({
 function Collection({
   meta,
   directory,
+  extras,
   onDirectory,
   onDownload,
 }: {
   meta: PlatformMetadata;
   directory?: string;
+  extras: MediaExtrasOptions;
   onDirectory(dir: string | undefined): void;
   onDownload(requests: AddMediaDownloadRequest[]): void;
 }) {
@@ -597,7 +762,7 @@ function Collection({
           disabled={selected.size === 0}
           onClick={() => {
             const option = optionFor();
-            onDownload(meta.items.filter((i) => selected.has(i.id)).map((i) => toRequest(i, option, directory)));
+            onDownload(meta.items.filter((i) => selected.has(i.id)).map((i) => toRequest(i, option, directory, extras)));
           }}
         >
           <Download size={16} /> {t('grab.downloadSelected', { count: selected.size })}

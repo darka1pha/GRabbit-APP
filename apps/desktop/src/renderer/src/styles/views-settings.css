@@ -54,3 +54,39 @@
   align-items: stretch;
   gap: 8px;
 }
+
+.settings-presets-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.schedule-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cmd-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.cmd-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cmd-preview code {
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-all;
+  user-select: text;
+}

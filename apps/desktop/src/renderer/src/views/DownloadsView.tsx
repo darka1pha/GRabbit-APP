@@ -8,6 +8,7 @@ import {
   ArrowUpToLine,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Download,
   ExternalLink,
@@ -16,6 +17,7 @@ import {
   Inbox,
   Layers,
   Link,
+  Music,
   Pause,
   Play,
   Plus,
@@ -24,17 +26,21 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
-import type { Category, ChecksumAlgorithm, DownloadItem, DownloadQueue, DownloadStatus } from '../../../shared/types';
+import type { Category, ChecksumAlgorithm, DownloadItem, DownloadQueue, DownloadStatus, LanTransferInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '../format';
 import { ContextMenu, FileIcon, MenuEntry, Modal, ProgressBar } from '../components/ui';
 import { QueueConfigModal } from '../components/QueueConfigModal';
+import { QRCodeModal } from '../components/QRCodeModal';
 import { downloadStore, useDownloadsAggregate, useLiveDownload, useSegmentWatch } from '../downloads-store';
 import { Sparkline } from '../components/Sparkline';
+import { formatScheduleCountdown, getScheduleWindowState } from '../utils/schedule';
 
 export type StatusFilter = 'all' | 'active' | 'queued' | 'completed' | 'failed';
 export type GroupByOption = 'none' | 'date' | 'status' | 'queue';
@@ -233,12 +239,14 @@ interface RowActions {
   openFile(item: DownloadItem): void;
   openFolder(item: DownloadItem): void;
   remove(item: DownloadItem): void;
+  sendToMobile?(item: DownloadItem): void;
   toggleSelect?(item: DownloadItem): void;
   changeUrl?(item: DownloadItem): void;
   retry?(item: DownloadItem): void;
   dragStart?(e: React.DragEvent, item: DownloadItem): void;
   dragOver?(e: React.DragEvent, item: DownloadItem): void;
   drop?(e: React.DragEvent, item: DownloadItem): void;
+  dragEnd?(): void;
 }
 
 /** Speed and count of active downloads in the page header. */
@@ -258,20 +266,27 @@ type DialogState =
   | { kind: 'limit'; item: DownloadItem }
   | { kind: 'verify'; item: DownloadItem }
   | { kind: 'segments'; item: DownloadItem }
+  | { kind: 'mobileTransfer'; item: DownloadItem; info: LanTransferInfo }
   | null;
 
 export function DownloadsView({
   category,
   onAdd,
+  onGoGrab,
+  onGoSettings,
 }: {
   category: Category | 'all';
   onAdd(url?: string, mode?: 'single' | 'batch' | 'pattern'): void;
+  onGoGrab?: () => void;
+  onGoSettings?: (section?: string) => void;
 }) {
   const { t, language } = useI18n();
   const { downloads, queues, refreshQueues, toast } = useApp();
   const [selectedQueueId, setSelectedQueueId] = useState<string | 'all'>('all');
   const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'before' | 'after' } | null>(null);
+  const [nowTick, setNowTick] = useState(() => new Date());
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<'order' | 'added' | 'name' | 'size' | 'progress' | 'speed'>('added');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -466,6 +481,51 @@ export function DownloadsView({
   const currentQueue = useMemo(
     () => (selectedQueueId === 'all' ? null : queues.find((q) => q.id === selectedQueueId) ?? null),
     [queues, selectedQueueId]
+  );
+
+  const hasScheduledQueue = useMemo(() => queues.some((q) => q.scheduler?.enabled), [queues]);
+  useEffect(() => {
+    if (!hasScheduledQueue) return;
+    setNowTick(new Date());
+    const timer = setInterval(() => setNowTick(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, [hasScheduledQueue]);
+
+  const { scheduledBanners, waitingQueueIds } = useMemo(() => {
+    const waiting = new Set<string>();
+    const banners: Array<{ queue: DownloadQueue; win: ReturnType<typeof getScheduleWindowState> }> = [];
+    for (const q of queues) {
+      if (!q.scheduler?.enabled) continue;
+      const win = getScheduleWindowState(q.scheduler, nowTick);
+      if (!win.active || !q.enabled) waiting.add(q.id);
+      const matchesQueue = selectedQueueId === 'all' || selectedQueueId === q.id;
+      const hasPending = downloads.some(
+        (d) => (d.queueId || 'main') === q.id && (d.status === 'queued' || d.status === 'paused')
+      );
+      if (matchesQueue && (selectedQueueId === q.id || hasPending)) {
+        banners.push({ queue: q, win });
+      }
+    }
+    return { scheduledBanners: banners, waitingQueueIds: waiting };
+  }, [queues, nowTick, selectedQueueId, downloads]);
+
+  const sendToMobile = useCallback(
+    (item: DownloadItem) => {
+      void (async () => {
+        try {
+          const info = await api.downloads.createTransferLink(item.id);
+          if (!info) return;
+          setDialog({ kind: 'mobileTransfer', item, info });
+        } catch (err) {
+          toast(
+            errorText(t, err),
+            'error',
+            onGoSettings ? { label: t('nav.settings'), run: () => onGoSettings('sec-extension') } : undefined
+          );
+        }
+      })();
+    },
+    [t, toast, onGoSettings]
   );
 
   const isAllSelected = visible.length > 0 && visible.every((d) => selected.has(d.id));
@@ -815,6 +875,7 @@ export function DownloadsView({
     return [
       { label: t('dl.open'), icon: <ExternalLink size={15} />, disabled: !done, onClick: () => void run(() => api.downloads.openFile(item.id)) },
       { label: t('dl.showInFolder'), icon: <FolderOpen size={15} />, onClick: () => void run(() => api.downloads.showInFolder(item.id)) },
+      { label: t('dl.sendToMobile'), icon: <Smartphone size={15} />, disabled: !done, onClick: () => sendToMobile(item) },
       { separator: true },
       { label: t('dl.resume'), icon: <Play size={15} />, disabled: !targets.some(canResume), onClick: () => void run(() => api.downloads.resume(ids(targets))) },
       { label: t('dl.pause'), icon: <Pause size={15} />, disabled: !targets.some(canPause), onClick: () => void run(() => api.downloads.pause(ids(targets))) },
@@ -885,6 +946,7 @@ export function DownloadsView({
     openFile: (item) => void run(() => api.downloads.openFile(item.id)),
     openFolder: (item) => void run(() => api.downloads.showInFolder(item.id)),
     remove: (item) => removeWithUndo([item]),
+    sendToMobile,
     changeUrl: (item) => setDialog({ kind: 'url', item }),
     retry: (item) => void run(() => api.downloads.retry([item.id])),
     toggleSelect: (item) => {
@@ -900,12 +962,20 @@ export function DownloadsView({
       e.dataTransfer.setData('text/download-id', item.id);
       e.dataTransfer.effectAllowed = 'move';
     },
-    dragOver: (e) => {
+    dragOver: (e, item) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const pos: 'before' | 'after' = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+      setDropTarget((prev) => (prev?.id === item.id && prev.pos === pos ? prev : { id: item.id, pos }));
+    },
+    dragEnd: () => {
+      setDropTarget(null);
     },
     drop: (e, targetItem) => {
       e.preventDefault();
+      const pos = dropTarget?.id === targetItem.id ? dropTarget.pos : 'before';
+      setDropTarget(null);
       const sourceId = e.dataTransfer.getData('text/download-id');
       if (!sourceId || sourceId === targetItem.id) return;
       const targetQueueId = targetItem.queueId || 'main';
@@ -940,8 +1010,9 @@ export function DownloadsView({
       const srcIdx = order.indexOf(sourceId);
       const dstIdx = order.indexOf(targetItem.id);
       if (srcIdx >= 0 && dstIdx >= 0) {
+        const insertIdx = Math.max(0, dstIdx + (pos === 'after' ? 1 : 0) - (srcIdx < dstIdx ? 1 : 0));
         order.splice(srcIdx, 1);
-        order.splice(dstIdx, 0, sourceId);
+        order.splice(insertIdx, 0, sourceId);
         setSortBy('order');
         void run(() => api.queues.reorder(targetQueueId, order));
       }
@@ -956,12 +1027,14 @@ export function DownloadsView({
       openFile: (item) => latestActions.current.openFile(item),
       openFolder: (item) => latestActions.current.openFolder(item),
       remove: (item) => latestActions.current.remove(item),
+      sendToMobile: (item) => latestActions.current.sendToMobile?.(item),
       changeUrl: (item) => latestActions.current.changeUrl?.(item),
       retry: (item) => latestActions.current.retry?.(item),
       toggleSelect: (item) => latestActions.current.toggleSelect?.(item),
       dragStart: (e, item) => latestActions.current.dragStart?.(e, item),
       dragOver: (e, item) => latestActions.current.dragOver?.(e, item),
       drop: (e, item) => latestActions.current.drop?.(e, item),
+      dragEnd: () => latestActions.current.dragEnd?.(),
     }),
     []
   );
@@ -1258,7 +1331,41 @@ export function DownloadsView({
         </div>
       </div>
 
-      <div className="table-wrap" ref={tableRef} onMouseDown={(e) => e.target === tableRef.current && setSelected(new Set())}>
+      {scheduledBanners.length > 0 && (
+        <div className="dl-schedule-stack">
+          {scheduledBanners.map(({ queue, win }) => {
+            const countdown = formatScheduleCountdown(win.remainingMs, language);
+            const activeWindow = win.active && queue.enabled;
+            return (
+              <div key={queue.id} className={`dl-schedule-banner ${activeWindow ? 'active' : ''}`}>
+                <Clock size={15} />
+                <span className="queue-tag">{queueDisplayName(queue)}</span>
+                <span className="grow small">
+                  {win.active ? t('queue.stopsIn', { time: countdown }) : t('queue.startsIn', { time: countdown })}
+                </span>
+                {(!queue.enabled || !win.active) && (
+                  <button
+                    type="button"
+                    className="btn sm primary"
+                    onClick={() => void run(() => api.queues.start(queue.id))}
+                  >
+                    <Play size={12} /> {t('queue.startNow')}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div
+        className="table-wrap"
+        ref={tableRef}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(null);
+        }}
+        onMouseDown={(e) => e.target === tableRef.current && setSelected(new Set())}
+      >
         {visible.length === 0 ? (
           <div className="empty">
             <div className="icon-circle">
@@ -1266,13 +1373,25 @@ export function DownloadsView({
             </div>
             <h3>{t('dl.empty')}</h3>
             <p>{t('dl.emptyHint')}</p>
-            <div className="row" style={{ gap: 8, marginTop: 12 }}>
-              <button className="btn primary" onClick={() => onAdd('', 'single')}>
-                <Plus size={16} /> {t('dl.add')}
+            <div className="empty-starter-grid">
+              <button type="button" className="card starter-card" onClick={() => onAdd('', 'single')}>
+                <Plus size={18} />
+                <b>{t('dl.add')}</b>
               </button>
-              <button className="btn" onClick={() => onAdd('', 'batch')}>
-                <Layers size={16} /> {t('dl.addBatch')}
+              <button type="button" className="card starter-card" onClick={() => onAdd('', 'batch')}>
+                <Layers size={18} />
+                <b>{t('dl.addBatch')}</b>
               </button>
+              <button type="button" className="card starter-card" onClick={() => onAdd('', 'pattern')}>
+                <Zap size={18} />
+                <b>{t('add.modePattern')}</b>
+              </button>
+              {onGoGrab && (
+                <button type="button" className="card starter-card" onClick={onGoGrab}>
+                  <Music size={18} />
+                  <b>{t('nav.grab')}</b>
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -1339,6 +1458,8 @@ export function DownloadsView({
                       selected={selected.has(item.id)}
                       isFocused={focusedId === item.id}
                       queueName={selectedQueueId === 'all' ? queueNames.get(item.queueId || 'main') : undefined}
+                      dropPosition={dropTarget?.id === item.id ? dropTarget.pos : undefined}
+                      waitingWindow={item.status === 'queued' && waitingQueueIds.has(item.queueId || 'main')}
                       actions={rowActions}
                       density={density}
                     />
@@ -1417,6 +1538,8 @@ export function DownloadsView({
                         selected={selected.has(item.id)}
                         isFocused={focusedId === item.id}
                         queueName={selectedQueueId === 'all' && groupBy !== 'queue' ? queueNames.get(item.queueId || 'main') : undefined}
+                        dropPosition={dropTarget?.id === item.id ? dropTarget.pos : undefined}
+                        waitingWindow={item.status === 'queued' && waitingQueueIds.has(item.queueId || 'main')}
                         actions={rowActions}
                         density={density}
                       />
@@ -1554,12 +1677,22 @@ export function DownloadsView({
             }
             onOpenFile={() => void run(() => api.downloads.openFile(single.id))}
             onOpenFolder={() => void run(() => api.downloads.showInFolder(single.id))}
+            onSendToMobile={() => sendToMobile(single)}
             onInspectSegments={(item) => setDialog({ kind: 'segments', item })}
           />
         )}
       </AnimatePresence>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.item)} onClose={() => setMenu(null)} />}
+
+      {dialog?.kind === 'mobileTransfer' && (
+        <QRCodeModal
+          value={dialog.info.deepLink}
+          title={t('dl.transferReady', { name: dialog.info.fileName })}
+          subtitle={`${t('dl.sendToMobileDesc')} — ${dialog.info.url}`}
+          onClose={() => setDialog(null)}
+        />
+      )}
 
       {dialog?.kind === 'remove' && (
         <RemoveDialog
@@ -1602,6 +1735,8 @@ const DownloadRow = memo(function DownloadRow({
   selected,
   isFocused,
   queueName,
+  dropPosition,
+  waitingWindow,
   actions,
   density: _density = 'comfortable',
 }: {
@@ -1609,6 +1744,8 @@ const DownloadRow = memo(function DownloadRow({
   selected: boolean;
   isFocused: boolean;
   queueName?: string;
+  dropPosition?: 'before' | 'after';
+  waitingWindow?: boolean;
   actions: RowActions;
   density?: DensityOption;
 }) {
@@ -1687,6 +1824,12 @@ const DownloadRow = memo(function DownloadRow({
         {item.media?.author ?? safeHostname(item.url)}
       </>
     );
+  } else if (item.status === 'queued' && waitingWindow) {
+    sub = (
+      <span className="waiting-window-hint">
+        <Clock size={11} /> {t('dl.waitingWindow')}
+      </span>
+    );
   } else {
     sub = t(`status.${item.status}` as MessageKey);
   }
@@ -1709,7 +1852,8 @@ const DownloadRow = memo(function DownloadRow({
       onDragStart={(e) => actions.dragStart?.(e, item)}
       onDragOver={(e) => actions.dragOver?.(e, item)}
       onDrop={(e) => actions.drop?.(e, item)}
-      className={selected ? 'dl-row selected' : 'dl-row'}
+      onDragEnd={() => actions.dragEnd?.()}
+      className={`dl-row${selected ? ' selected' : ''}${dropPosition ? ` drop-${dropPosition}` : ''}`}
       onMouseDown={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
@@ -1759,14 +1903,24 @@ const DownloadRow = memo(function DownloadRow({
       <td role="gridcell">
         <div className="row-actions">
           {item.status === 'completed' ? (
-            <button
-              className="btn ghost sm icon"
-              title={t('dl.open')}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={onOpenFile}
-            >
-              <ExternalLink size={15} />
-            </button>
+            <>
+              <button
+                className="btn ghost sm icon"
+                title={t('dl.open')}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={onOpenFile}
+              >
+                <ExternalLink size={15} />
+              </button>
+              <button
+                className="btn ghost sm icon"
+                title={t('dl.sendToMobile')}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => actions.sendToMobile?.(item)}
+              >
+                <Smartphone size={14} />
+              </button>
+            </>
           ) : (
             <button
               className="btn ghost sm icon"
@@ -1795,6 +1949,7 @@ function DetailsPanel({
   onCopyUrl,
   onOpenFile,
   onOpenFolder,
+  onSendToMobile,
   onInspectSegments,
 }: {
   item: DownloadItem;
@@ -1802,6 +1957,7 @@ function DetailsPanel({
   onCopyUrl(): void;
   onOpenFile(): void;
   onOpenFolder(): void;
+  onSendToMobile(): void;
   onInspectSegments(item: DownloadItem): void;
 }) {
   const { t, language } = useI18n();
@@ -1838,9 +1994,14 @@ function DetailsPanel({
           <Copy size={13} /> {t('dl.copyLink')}
         </button>
         {item.status === 'completed' && (
-          <button className="btn sm primary" onClick={onOpenFile}>
-            <ExternalLink size={13} /> {t('dl.open')}
-          </button>
+          <>
+            <button className="btn sm primary" onClick={onOpenFile}>
+              <ExternalLink size={13} /> {t('dl.open')}
+            </button>
+            <button className="btn sm" onClick={onSendToMobile}>
+              <Smartphone size={13} /> {t('dl.sendToMobile')}
+            </button>
+          </>
         )}
         <button className="btn sm" onClick={onOpenFolder}>
           <FolderOpen size={13} /> {t('dl.showInFolder')}

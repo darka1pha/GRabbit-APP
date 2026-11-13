@@ -408,7 +408,17 @@ function Shell() {
                     }}
                   />
                 )}
-                {view === 'downloads' && <DownloadsView category={category} onAdd={(url, mode) => setAddDialog({ url, mode })} />}
+                {view === 'downloads' && (
+                  <DownloadsView
+                    category={category}
+                    onAdd={(url, mode) => setAddDialog({ url, mode })}
+                    onGoGrab={() => setView('grab')}
+                    onGoSettings={(section) => {
+                      if (section) setSettingsSection(section);
+                      setView('settings');
+                    }}
+                  />
+                )}
                 <Suspense fallback={null}>
                   {view === 'recognize' && <RecognizeView onFindAndDownload={(q) => openGrab(q)} />}
                   {view === 'settings' && <SettingsView initialSection={settingsSection} />}

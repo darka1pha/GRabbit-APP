@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AudioLines, CircleAlert, Download, ExternalLink, FileAudio, Link, LoaderCircle } from 'lucide-react';
+import { AudioLines, CircleAlert, Download, ExternalLink, FileAudio, Link, LoaderCircle, Search, X } from 'lucide-react';
 import type { RecognizedTrack } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
-import { api } from '../state';
+import { api, useApp } from '../state';
 import { isHttpUrl } from '../format';
 import { Thumb } from '../components/ui';
 
@@ -37,12 +37,60 @@ function spotifyWebUrl(uri?: string): string | undefined {
 
 export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: string): void }) {
   const { t } = useI18n();
+  const { toast } = useApp();
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecognizedTrack | null>(null);
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState<RecognizedTrack[]>(loadHistory);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [grabbingKey, setGrabbingKey] = useState<string | null>(null);
+
+  const filteredHistory = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    if (!q) return history;
+    return history.filter(
+      (h) =>
+        h.title.toLowerCase().includes(q) ||
+        h.artist.toLowerCase().includes(q) ||
+        (h.album?.toLowerCase().includes(q) ?? false) ||
+        (h.genre?.toLowerCase().includes(q) ?? false)
+    );
+  }, [history, historyQuery]);
+
+  async function quickGrabAudio(track: RecognizedTrack) {
+    const key = `${track.artist}-${track.title}`;
+    if (grabbingKey) return;
+    setGrabbingKey(key);
+    try {
+      const searchQuery = `${track.artist} - ${track.title}`;
+      const matches = await api.media.search(searchQuery, 1);
+      const top = matches[0];
+      if (!top) {
+        onFindAndDownload(searchQuery);
+        return;
+      }
+      const added = await api.downloads.addMedia([
+        {
+          url: top.url,
+          platform: top.platform,
+          mediaId: top.id,
+          format: 'audio',
+          qualityId: 'mp3',
+          title: searchQuery,
+          author: track.artist,
+          thumbnailUrl: track.coverArtUrl ?? top.thumbnailUrl,
+          durationSeconds: top.durationSeconds,
+        },
+      ]);
+      toast(t('grab.added', { count: added.length }), 'success');
+    } catch (err) {
+      toast(errorText(t, err), 'error');
+    } finally {
+      setGrabbingKey((prev) => (prev === key ? null : prev));
+    }
+  }
 
   async function identify(job: () => Promise<RecognizedTrack | null>) {
     setBusy(true);
@@ -152,52 +200,106 @@ export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: 
         </AnimatePresence>
 
         <AnimatePresence mode="wait">
-          {result && <SongCard key={`${result.artist}-${result.title}`} track={result} onFindAndDownload={onFindAndDownload} />}
+          {result && (
+            <SongCard
+              key={`${result.artist}-${result.title}`}
+              track={result}
+              grabbing={grabbingKey === `${result.artist}-${result.title}`}
+              onFindAndDownload={onFindAndDownload}
+              onGrabAudio={(track) => void quickGrabAudio(track)}
+            />
+          )}
         </AnimatePresence>
 
         {history.length > 0 && (
           <div className="history">
-            <div className="row">
+            <div className="row" style={{ gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
               <b className="grow">{t('rec.history')}</b>
+              <div className="input-with-icon" style={{ width: 210 }}>
+                <Search size={14} />
+                <input
+                  className="input"
+                  style={{ height: 30, fontSize: 12.5, paddingInlineEnd: historyQuery ? 26 : 10 }}
+                  value={historyQuery}
+                  placeholder={t('rec.searchHistory')}
+                  onChange={(e) => setHistoryQuery(e.target.value)}
+                />
+                {historyQuery && (
+                  <button
+                    type="button"
+                    className="input-clear-btn"
+                    title={t('common.clear')}
+                    onClick={() => setHistoryQuery('')}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
               <button
                 className="btn ghost sm"
                 onClick={() => {
                   setHistory([]);
+                  setHistoryQuery('');
                   saveHistory([]);
                 }}
               >
                 {t('rec.clear')}
               </button>
             </div>
-            {history.map((h, i) => (
-              <motion.div
-                key={`${h.title}-${i}`}
-                className="history-item"
-                onClick={() => setResult(h)}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                whileHover={{ x: 2 }}
-                transition={{ duration: 0.18, delay: Math.min(i * 0.03, 0.2) }}
-              >
-                {h.coverArtUrl ? <img src={h.coverArtUrl} alt="" referrerPolicy="no-referrer" /> : <div className="ph" />}
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="ellipsis" style={{ fontWeight: 600 }}>
-                    {h.title}
-                  </div>
-                  <div className="small muted ellipsis">{h.artist}</div>
-                </div>
-                <button
-                  className="btn ghost sm icon"
-                  title={t('rec.download')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onFindAndDownload(`${h.artist} - ${h.title}`);
-                  }}
-                >
-                  <Download size={15} />
-                </button>
-              </motion.div>
-            ))}
+            {filteredHistory.length === 0 ? (
+              <div className="small muted" style={{ padding: '12px 4px' }}>
+                {t('grab.noResults')}
+              </div>
+            ) : (
+              filteredHistory.map((h, i) => {
+                const trackKey = `${h.artist}-${h.title}`;
+                const isGrabbing = grabbingKey === trackKey;
+                return (
+                  <motion.div
+                    key={`${h.title}-${i}`}
+                    className="history-item"
+                    onClick={() => setResult(h)}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    whileHover={{ x: 2 }}
+                    transition={{ duration: 0.18, delay: Math.min(i * 0.03, 0.2) }}
+                  >
+                    {h.coverArtUrl ? <img src={h.coverArtUrl} alt="" referrerPolicy="no-referrer" /> : <div className="ph" />}
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="ellipsis" style={{ fontWeight: 600 }}>
+                        {h.title}
+                      </div>
+                      <div className="small muted ellipsis">
+                        {h.artist}
+                        {h.album ? ` · ${h.album}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      className="btn sm"
+                      disabled={isGrabbing}
+                      title={t('rec.grabAudio')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void quickGrabAudio(h);
+                      }}
+                    >
+                      {isGrabbing ? <LoaderCircle size={13} className="spin" /> : <AudioLines size={13} />}
+                      <span>{t('rec.grabAudio')}</span>
+                    </button>
+                    <button
+                      className="btn ghost sm icon"
+                      title={t('rec.download')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFindAndDownload(`${h.artist} - ${h.title}`);
+                      }}
+                    >
+                      <Download size={15} />
+                    </button>
+                  </motion.div>
+                );
+              })
+            )}
           </div>
         )}
       </div>
@@ -205,7 +307,17 @@ export function RecognizeView({ onFindAndDownload }: { onFindAndDownload(query: 
   );
 }
 
-function SongCard({ track, onFindAndDownload }: { track: RecognizedTrack; onFindAndDownload(query: string): void }) {
+function SongCard({
+  track,
+  grabbing,
+  onFindAndDownload,
+  onGrabAudio,
+}: {
+  track: RecognizedTrack;
+  grabbing: boolean;
+  onFindAndDownload(query: string): void;
+  onGrabAudio(track: RecognizedTrack): void;
+}) {
   const { t } = useI18n();
   const spotify = spotifyWebUrl(track.spotifyUri);
   const facts: [string, string | undefined][] = [
@@ -235,8 +347,11 @@ function SongCard({ track, onFindAndDownload }: { track: RecognizedTrack; onFind
             </dl>
           ))}
         <div className="row" style={{ marginTop: 16, flexWrap: 'wrap' }}>
-          <button className="btn primary" onClick={() => onFindAndDownload(`${track.artist} - ${track.title}`)}>
-            <Download size={16} /> {t('rec.download')}
+          <button className="btn primary" disabled={grabbing} onClick={() => onGrabAudio(track)}>
+            {grabbing ? <LoaderCircle size={15} className="spin" /> : <AudioLines size={15} />} {t('rec.grabAudio')}
+          </button>
+          <button className="btn" onClick={() => onFindAndDownload(`${track.artist} - ${track.title}`)}>
+            <Download size={15} /> {t('rec.download')}
           </button>
           {track.shazamUrl && (
             <button className="btn" onClick={() => void api.app.openExternal(track.shazamUrl!)}>

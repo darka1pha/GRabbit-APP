@@ -1,11 +1,12 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Clock, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { DayPicker, Switch } from '../components/ui';
 import { QRCodeModal } from '../components/QRCodeModal';
 import { playCompletionChime } from '../utils/sound';
+import { formatScheduleCountdown, getScheduleWindowState, type ScheduleLike } from '../utils/schedule';
 
 const SettingsSearchContext = createContext<{
   query: string;
@@ -126,6 +127,41 @@ function LazyInput({
   );
 }
 
+function ScheduleStatusBadge({ schedule, now }: { schedule: ScheduleLike; now: Date }) {
+  const { t, language } = useI18n();
+  const win = getScheduleWindowState(schedule, now);
+  if (!win.enabled) return null;
+  if (win.active) {
+    return (
+      <span className="badge success schedule-status-badge">
+        <Clock size={11} />
+        {t('set.scheduleActiveNow')}
+        {win.remainingMs !== null ? ` · ${formatScheduleCountdown(win.remainingMs, language)}` : ''}
+      </span>
+    );
+  }
+  return (
+    <span className="badge schedule-status-badge">
+      <Clock size={11} />
+      {t('set.scheduleWaiting', { time: formatScheduleCountdown(win.remainingMs, language) })}
+    </span>
+  );
+}
+
+function formatSampleCustomCommand(template: string, downloadDir: string): string {
+  const base = (downloadDir || 'C:\\Downloads').replace(/[\\/]+$/, '');
+  const sep = base.includes('/') && !base.includes('\\') ? '/' : '\\';
+  const fileName = 'ubuntu-24.04-desktop-amd64.iso';
+  const vars: Record<string, string> = {
+    filePath: `${base}${sep}${fileName}`,
+    fileName,
+    directory: base,
+    category: 'programs',
+    fileSize: '4823449600',
+  };
+  return template.replace(/\{(filePath|fileName|directory|category|fileSize)\}/g, (full, key: string) => vars[key] ?? full);
+}
+
 export function SettingsView({ initialSection }: { initialSection?: string } = {}) {
   const { t } = useI18n();
   const { settings, updateSettings, toast } = useApp();
@@ -136,6 +172,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
   const [searchQuery, setSearchQuery] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [matchedSections, setMatchedSections] = useState<Set<string>>(() => new Set());
+  const [nowTick, setNowTick] = useState(() => new Date());
 
   const reportMatch = useCallback((id: string, matched: boolean) => {
     setMatchedSections((prev) => {
@@ -169,6 +206,14 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
       offUpdater();
     };
   }, []);
+
+  const anyScheduleEnabled = Boolean(settings?.scheduler.enabled || settings?.speedSchedule?.enabled);
+  useEffect(() => {
+    if (!anyScheduleEnabled) return;
+    setNowTick(new Date());
+    const timer = setInterval(() => setNowTick(new Date()), 15_000);
+    return () => clearInterval(timer);
+  }, [anyScheduleEnabled]);
 
   if (!settings) return null;
   const s = settings;
@@ -315,6 +360,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             </select>
           </Setting>
           <Setting label={t('set.scheduler')} hint={t('set.schedulerEnable')}>
+            <ScheduleStatusBadge schedule={s.scheduler} now={nowTick} />
             <Switch checked={s.scheduler.enabled} onChange={(v) => void save({ scheduler: { enabled: v } })} />
           </Setting>
           {s.scheduler.enabled && (
@@ -330,10 +376,33 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             </Setting>
           )}
           <Setting label={t('set.speedSchedule')} hint={t('set.speedScheduleEnable')}>
+            {s.speedSchedule && <ScheduleStatusBadge schedule={s.speedSchedule} now={nowTick} />}
             <Switch
               checked={s.speedSchedule?.enabled ?? false}
               onChange={(v) => void save({ speedSchedule: { enabled: v } })}
             />
+          </Setting>
+          <Setting label={t('set.presets')}>
+            <div className="settings-presets-row">
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() =>
+                  void save({
+                    speedSchedule: {
+                      enabled: true,
+                      startTime: '08:00',
+                      stopTime: '22:00',
+                      speedLimitKBps: 500,
+                      days: [],
+                    },
+                    globalSpeedLimitKBps: 0,
+                  })
+                }
+              >
+                <Moon size={13} /> {t('set.presetNightOwl')}
+              </button>
+            </div>
           </Setting>
           {s.speedSchedule?.enabled && (
             <>
@@ -372,6 +441,25 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
         </Section>
 
         <Section id="sec-automation" title={t('set.automation')} icon={<Zap size={15} />}>
+          <Setting label={t('set.presets')}>
+            <div className="settings-presets-row">
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() =>
+                  void save({
+                    automation: {
+                      autoExtractArchives: true,
+                      extractToSubfolder: true,
+                      deleteArchiveAfterExtraction: false,
+                    },
+                  })
+                }
+              >
+                <Zap size={13} /> {t('set.presetExtractZip')}
+              </button>
+            </div>
+          </Setting>
           <Setting label={t('set.autoExtract')} hint={t('set.autoExtractHint')}>
             <Switch
               checked={s.automation?.autoExtractArchives ?? false}
@@ -417,6 +505,12 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
               placeholder="e.g. echo Finished {fileName}"
               onSave={(v) => void save({ automation: { customCommand: v } })}
             />
+            {(s.automation?.customCommand ?? '').trim() !== '' && (
+              <div className="cmd-preview">
+                <span className="cmd-preview-label">{t('set.commandPreview')}:</span>
+                <code className="mono">{formatSampleCustomCommand(s.automation!.customCommand!.trim(), s.downloadDir)}</code>
+              </div>
+            )}
           </Setting>
         </Section>
 

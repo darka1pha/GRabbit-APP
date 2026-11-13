@@ -172,15 +172,29 @@
 .recent-card {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 12px;
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.12s ease, background 0.15s ease;
+}
+.recent-card.pinned {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .recent-card:hover {
   border-color: var(--accent);
   background: var(--surface-2);
   transform: translateY(-1px);
+}
+.recent-pin-btn {
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+.recent-card:hover .recent-pin-btn,
+.recent-pin-btn.pinned {
+  opacity: 1;
+}
+.recent-pin-btn.pinned {
+  color: var(--accent);
 }
 .recent-thumb {
   width: 56px;
