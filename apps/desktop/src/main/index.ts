@@ -24,7 +24,7 @@ import { ClipboardWatcher } from './clipboard-watcher';
 import { DesktopRpcBridge } from './rpc-bridge';
 import { AutoUpdaterService } from './updater';
 import { GrabPillManager } from './grab-pill';
-import { registerIpc } from './ipc';
+import { getPrimaryLanIp, registerIpc } from './ipc';
 import { mainText, type MainMessageKey } from './messages';
 
 const APP_ID = 'com.grabbit.desktop';
@@ -473,6 +473,29 @@ app.whenReady().then(() => {
     dataDir,
     updater,
     grabPill,
+    createTransferLink: (itemId) => {
+      const ext = settings.get().extension;
+      if (!ext.enabled || ext.allowLan !== true) {
+        throw new Error('Enable Local Network Access (LAN) under Settings -> Mobile Pairing first.');
+      }
+      const lanIp = getPrimaryLanIp();
+      if (!lanIp) {
+        throw new Error('No active Wi-Fi or Ethernet LAN IPv4 address was detected.');
+      }
+      const tokenInfo = rpcBridge.createTransferToken(itemId);
+      if (!tokenInfo) return null;
+      const url = `http://${lanIp}:${ext.port}/transfer/${tokenInfo.token}`;
+      const deepLink = `grabbit://transfer?url=${encodeURIComponent(url)}&name=${encodeURIComponent(tokenInfo.fileName)}${
+        tokenInfo.sizeBytes != null ? `&size=${tokenInfo.sizeBytes}` : ''
+      }`;
+      return {
+        url,
+        deepLink,
+        fileName: tokenInfo.fileName,
+        sizeBytes: tokenInfo.sizeBytes,
+        expiresAt: tokenInfo.expiresAt,
+      };
+    },
     toggleMiniMode,
     isMiniMode: () => isMini,
   });

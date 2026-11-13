@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseProgressLine } from '../src/main/media/ytdlp-runner';
 import { detectPlatform, extractUrlFromText, parsePlatformUrl } from '../src/main/media/url-parser';
 import { sanitizeFilename } from '../src/main/media/filename';
+import { buildFormatArgs } from '../src/main/media/platforms/youtube';
 import { pickBestMatch } from '../src/main/media/platforms/track-matcher';
 import { categoryForFileName, looksLikeDirectFile } from '../src/main/downloads/categories';
 import { uniqueFileName, algorithmForDigest } from '../src/main/downloads/files';
@@ -82,5 +83,62 @@ describe('Spotify → YouTube matching', () => {
       { url: 'c', title: 'Never Gonna Give You Up', channel: 'Rick Astley', duration: 214, source: 'youtube-music' as const },
     ]);
     expect(best?.candidate.url).toBe('c');
+  });
+});
+
+describe('yt-dlp media extras', () => {
+  const baseRequest = {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    platform: 'youtube' as const,
+    mediaId: 'dQw4w9WgXcQ',
+    outputPath: 'C:\\Downloads\\sample',
+    title: 'Sample Video',
+  };
+
+  it('adds subtitle, chapter, and SponsorBlock flags for video downloads', () => {
+    const res = buildFormatArgs({
+      ...baseRequest,
+      format: 'video',
+      qualityId: '1080p',
+      subtitles: true,
+      subtitleLang: 'en,fa',
+      embedChapters: true,
+      sponsorBlock: true,
+    });
+    expect(res.ext).toBe('mp4');
+    expect(res.args).toContain('--embed-chapters');
+    expect(res.args).toContain('--write-subs');
+    expect(res.args).toContain('--write-auto-subs');
+    expect(res.args).toContain('--embed-subs');
+    const langIdx = res.args.indexOf('--sub-langs');
+    expect(langIdx).toBeGreaterThan(-1);
+    expect(res.args[langIdx + 1]).toBe('en,fa');
+    const sbIdx = res.args.indexOf('--sponsorblock-remove');
+    expect(sbIdx).toBeGreaterThan(-1);
+    expect(res.args[sbIdx + 1]).toBe('default');
+  });
+
+  it('sanitizes unsafe subtitle language selectors', () => {
+    const res = buildFormatArgs({
+      ...baseRequest,
+      format: 'video',
+      qualityId: '720p',
+      subtitles: true,
+      subtitleLang: 'en;rm -rf /',
+    });
+    const langIdx = res.args.indexOf('--sub-langs');
+    expect(res.args[langIdx + 1]).toBe('en,en-US,fa');
+  });
+
+  it('embeds chapters when requested on audio downloads', () => {
+    const res = buildFormatArgs({
+      ...baseRequest,
+      format: 'audio',
+      qualityId: 'mp3-320',
+      embedChapters: true,
+    });
+    expect(res.ext).toBe('mp3');
+    expect(res.args).toContain('--embed-chapters');
+    expect(res.args).not.toContain('--write-subs');
   });
 });

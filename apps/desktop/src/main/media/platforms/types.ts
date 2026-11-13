@@ -10,6 +10,10 @@ export interface DownloadRequest {
   /** Working folder for this job (kept between pause / resume so yt-dlp can continue .part files). */
   outputPath: string;
   title?: string;
+  subtitles?: boolean;
+  subtitleLang?: string;
+  embedChapters?: boolean;
+  sponsorBlock?: boolean;
   onProgress?: (progress: DownloadProgress) => void;
   onStage?: (stage: string) => void;
   signal?: AbortSignal;

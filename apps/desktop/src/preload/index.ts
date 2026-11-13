@@ -47,6 +47,7 @@ const api: GrabbitApi = {
     openFile: (id) => invoke(IPC.downloadsOpenFile, id),
     showInFolder: (id) => invoke(IPC.downloadsShowInFolder, id),
     copyUrl: (id) => invoke(IPC.downloadsCopyUrl, id),
+    createTransferLink: (id) => invoke(IPC.downloadsCreateTransferLink, id),
     onChanged: (listener) => subscribe(IPC.downloadsChanged, listener),
     onProgress: (listener) => subscribe(IPC.downloadsProgress, listener),
     onAggregate: (listener) => subscribe(IPC.downloadsAggregate, listener),

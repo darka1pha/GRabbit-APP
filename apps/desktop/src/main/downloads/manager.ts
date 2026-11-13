@@ -360,6 +360,10 @@ export class DownloadManager {
           thumbnailUrl: req.thumbnailUrl,
           durationSeconds: req.durationSeconds,
           estimatedSizeBytes: req.estimatedSizeBytes,
+          subtitles: req.subtitles,
+          subtitleLang: req.subtitleLang,
+          embedChapters: req.embedChapters,
+          sponsorBlock: req.sponsorBlock,
         },
       };
       this.insert(item);

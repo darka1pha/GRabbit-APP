@@ -26,6 +26,7 @@ import {
   type ChecksumAlgorithm,
   type DeepPartial,
   type DownloadQueue,
+  type LanTransferInfo,
   type ProbeResult,
   type ToolInfo,
 } from '../shared/types';
@@ -61,8 +62,28 @@ export interface IpcDeps {
   dataDir: string;
   updater: AutoUpdaterService;
   grabPill: GrabPillManager;
+  createTransferLink?(itemId: string): LanTransferInfo | null;
   toggleMiniMode?(enable?: boolean): boolean;
   isMiniMode?(): boolean;
+}
+
+/**
+ * Returns the machine's first non-loopback, non-link-local IPv4 address for LAN pairing & Wi-Fi handoff.
+ */
+export function getPrimaryLanIp(): string | undefined {
+  try {
+    const nets = networkInterfaces();
+    for (const iface of Object.values(nets)) {
+      for (const addr of iface ?? []) {
+        if (addr.family === 'IPv4' && !addr.internal && !addr.address.startsWith('169.254.')) {
+          return addr.address;
+        }
+      }
+    }
+  } catch {
+    // ignore network enumeration failures
+  }
+  return undefined;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -189,6 +210,10 @@ export function registerIpc(deps: IpcDeps): void {
     clipboard.writeText(item.url);
   });
 
+  handle(IPC.downloadsCreateTransferLink, [IdSchema], (id: string) => {
+    return deps.createTransferLink ? deps.createTransferLink(id) : null;
+  });
+
   handle(IPC.downloadsWatchSegments, [IdListSchema], (ids: string[]) => manager.watchSegments(ids));
 
   // ------------------------------------------------------------ queues
@@ -213,21 +238,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(IPC.toolsInfo, [], async (): Promise<ToolInfo> => {
     const cfg = getMediaConfig();
     const [y, f, p] = await Promise.all([ytdlp.getVersion(), new FFmpegRunner().getVersion(), new FFprobeRunner().getVersion()]);
-    let lanIp: string | undefined;
-    try {
-      const nets = networkInterfaces();
-      for (const iface of Object.values(nets)) {
-        for (const addr of iface ?? []) {
-          if (addr.family === 'IPv4' && !addr.internal && !addr.address.startsWith('169.254.')) {
-            lanIp = addr.address;
-            break;
-          }
-        }
-        if (lanIp) break;
-      }
-    } catch {
-      // ignore
-    }
+    const lanIp = getPrimaryLanIp();
     return {
       ytdlp: { path: cfg.ytdlpPath, version: y },
       ffmpeg: { path: cfg.ffmpegPath, version: f },

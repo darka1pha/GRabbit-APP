@@ -143,8 +143,19 @@ export function getYouTubeYtDlpExtraArgs(): string[] {
   return [...args, ...cookieArgs()];
 }
 
+/** Sanitize user-supplied subtitle language selector (e.g. "en,fa" or "en.*"). */
+function sanitizeSubLangs(raw?: string): string {
+  const cleaned = (raw ?? '').trim();
+  return /^[a-zA-Z0-9,._*-]{1,32}$/.test(cleaned) ? cleaned : 'en,en-US,fa';
+}
+
 /** yt-dlp arguments + format selector for an audio/video choice. Shared by the yt-dlp based adapters. */
 export function buildFormatArgs(request: DownloadRequest): { formatSelector: string; args: string[]; ext: string } {
+  const sharedExtra: string[] = [];
+  if (request.embedChapters) {
+    sharedExtra.push('--embed-chapters');
+  }
+
   if (request.format === 'audio') {
     const isM4A = request.qualityId === 'm4a';
     const isFlac = request.qualityId === 'flac';
@@ -169,6 +180,7 @@ export function buildFormatArgs(request: DownloadRequest): { formatSelector: str
         '--embed-thumbnail',
         '--convert-thumbnails',
         'jpg',
+        ...sharedExtra,
       ],
     };
   }
@@ -178,10 +190,17 @@ export function buildFormatArgs(request: DownloadRequest): { formatSelector: str
   if (request.qualityId.endsWith('p') && !isNaN(height)) {
     formatSelector = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`;
   }
+  const videoExtra: string[] = [...sharedExtra];
+  if (request.subtitles) {
+    videoExtra.push('--write-subs', '--write-auto-subs', '--sub-langs', sanitizeSubLangs(request.subtitleLang), '--embed-subs');
+  }
+  if (request.sponsorBlock) {
+    videoExtra.push('--sponsorblock-remove', 'default');
+  }
   return {
     ext: 'mp4',
     formatSelector,
-    args: ['--merge-output-format', 'mp4', '--embed-metadata', '--embed-thumbnail', '--convert-thumbnails', 'jpg'],
+    args: ['--merge-output-format', 'mp4', '--embed-metadata', '--embed-thumbnail', '--convert-thumbnails', 'jpg', ...videoExtra],
   };
 }
 

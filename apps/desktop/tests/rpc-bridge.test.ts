@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { request } from 'node:http';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DesktopRpcBridge } from '../src/main/rpc-bridge';
 import type { DownloadManager } from '../src/main/downloads/manager';
 import type { PlatformRouter } from '../src/main/media/router';
@@ -106,6 +109,7 @@ describe('DesktopRpcBridge', () => {
 
     mockManager = {
       list: vi.fn().mockReturnValue([mockItem]),
+      get: vi.fn().mockImplementation((id: string) => (id === mockItem.id ? mockItem : undefined)),
       addHttp: vi.fn().mockImplementation((reqs: AddHttpDownloadRequest[]) => {
         return reqs.map((r) => ({
           ...mockItem,
@@ -114,6 +118,15 @@ describe('DesktopRpcBridge', () => {
         }));
       }),
       addMedia: vi.fn().mockReturnValue([]),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      remove: vi.fn().mockResolvedValue(undefined),
+      listQueues: vi.fn().mockReturnValue([
+        { id: 'main', name: 'Main Queue', enabled: true, maxConcurrent: 3, order: ['test-id-1'] },
+        { id: 'scheduled', name: 'Scheduled Queue', enabled: false, maxConcurrent: 2, order: [] },
+      ]),
+      startQueue: vi.fn(),
+      stopQueue: vi.fn(),
     };
 
     mockRouter = {
@@ -471,5 +484,126 @@ describe('DesktopRpcBridge', () => {
     expect(data.success).toBe(true);
     expect(data.metadata.title).toBe('Test Video');
     expect(data.items).toHaveLength(1);
+  });
+
+  it('controls downloads via POST /downloads/pause, /resume, and /remove', async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-GRabbit-Token': TEST_TOKEN,
+    };
+
+    const pauseRes = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/pause`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['test-id-1'] }),
+    });
+    expect(pauseRes.status).toBe(200);
+    expect(mockManager.pause).toHaveBeenCalledWith(['test-id-1']);
+
+    const resumeRes = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/resume`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['test-id-1'] }),
+    });
+    expect(resumeRes.status).toBe(200);
+    expect(mockManager.resume).toHaveBeenCalledWith(['test-id-1']);
+
+    const removeRes = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/remove`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['test-id-1'], deleteFiles: true }),
+    });
+    expect(removeRes.status).toBe(200);
+    expect(mockManager.remove).toHaveBeenCalledWith(['test-id-1'], true);
+  });
+
+  it('lists and toggles queues via GET /queues/list and POST /queues/toggle', async () => {
+    const listRes = await fetch(`http://127.0.0.1:${TEST_PORT}/queues/list`, {
+      headers: { 'X-GRabbit-Token': TEST_TOKEN },
+    });
+    expect(listRes.status).toBe(200);
+    const listBody = (await listRes.json()) as any;
+    expect(listBody.success).toBe(true);
+    expect(listBody.queues).toHaveLength(2);
+
+    const startRes = await fetch(`http://127.0.0.1:${TEST_PORT}/queues/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+      body: JSON.stringify({ id: 'scheduled', enabled: true }),
+    });
+    expect(startRes.status).toBe(200);
+    expect(mockManager.startQueue).toHaveBeenCalledWith('scheduled');
+
+    const stopRes = await fetch(`http://127.0.0.1:${TEST_PORT}/queues/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+      body: JSON.stringify({ id: 'main', enabled: false }),
+    });
+    expect(stopRes.status).toBe(200);
+    expect(mockManager.stopQueue).toHaveBeenCalledWith('main');
+  });
+
+  it('streams completed files via temporary /transfer/:token and authenticated /downloads/:id/file with Range support', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'grabbit-transfer-test-'));
+    try {
+      const samplePath = join(tempDir, 'hello-world.bin');
+      writeFileSync(samplePath, 'HelloGRabbitTransfer');
+
+      const completedItem: DownloadItem = {
+        id: 'done-file-1',
+        kind: 'http',
+        url: 'https://example.com/hello-world.bin',
+        fileName: 'hello-world.bin',
+        filePath: samplePath,
+        directory: tempDir,
+        category: 'other',
+        status: 'completed',
+        totalBytes: 20,
+        receivedBytes: 20,
+        speed: 0,
+        eta: 0,
+        resumable: true,
+        connections: 1,
+        activeConnections: 0,
+        retries: 0,
+        createdAt: Date.now(),
+      };
+      (mockManager.get as any).mockImplementation((id: string) => (id === 'done-file-1' ? completedItem : undefined));
+
+      const tokenInfo = bridge.createTransferToken('done-file-1');
+      expect(tokenInfo).not.toBeNull();
+      expect(tokenInfo!.fileName).toBe('hello-world.bin');
+      expect(tokenInfo!.sizeBytes).toBe(20);
+
+      // Unauthenticated pull via single-use/time-limited token succeeds
+      const fullRes = await fetch(`http://127.0.0.1:${TEST_PORT}/transfer/${tokenInfo!.token}`);
+      expect(fullRes.status).toBe(200);
+      expect(fullRes.headers.get('accept-ranges')).toBe('bytes');
+      expect(await fullRes.text()).toBe('HelloGRabbitTransfer');
+
+      // HTTP Range partial slice returns 206 Partial Content
+      const rangeRes = await fetch(`http://127.0.0.1:${TEST_PORT}/transfer/${tokenInfo!.token}`, {
+        headers: { Range: 'bytes=5-11' },
+      });
+      expect(rangeRes.status).toBe(206);
+      expect(rangeRes.headers.get('content-range')).toBe('bytes 5-11/20');
+      expect(await rangeRes.text()).toBe('GRabbit');
+
+      // Invalid token is rejected with 404
+      const badTokenRes = await fetch(`http://127.0.0.1:${TEST_PORT}/transfer/does-not-exist`);
+      expect(badTokenRes.status).toBe(404);
+
+      // Authenticated direct file pull enforces X-GRabbit-Token
+      const unauthDirect = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/done-file-1/file`);
+      expect(unauthDirect.status).toBe(401);
+
+      const authDirect = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/done-file-1/file`, {
+        headers: { 'X-GRabbit-Token': TEST_TOKEN },
+      });
+      expect(authDirect.status).toBe(200);
+      expect(await authDirect.text()).toBe('HelloGRabbitTransfer');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

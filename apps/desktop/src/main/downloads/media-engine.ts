@@ -61,6 +61,10 @@ export class MediaDownloadTask {
       qualityId: media.qualityId,
       outputPath: workDir,
       title: media.title,
+      subtitles: media.subtitles,
+      subtitleLang: media.subtitleLang,
+      embedChapters: media.embedChapters,
+      sponsorBlock: media.sponsorBlock,
       signal,
       onStage: (stage) => {
         item.status = 'processing';

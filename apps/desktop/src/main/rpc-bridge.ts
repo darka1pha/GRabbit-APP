@@ -1,17 +1,20 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { URL } from 'node:url';
 import {
   describeIssue,
   RpcAddBatchRequestSchema,
   RpcAddDownloadRequestSchema,
   RpcExtensionUpdateRequestSchema,
+  RpcIdsRequestSchema,
+  RpcQueueControlSchema,
+  RpcRemoveRequestSchema,
   RpcStreamRequestSchema,
   RpcUrlRequestSchema,
   type ZodTypeAny,
@@ -117,8 +120,118 @@ export class DesktopRpcBridge {
   private running = false;
   private requests = new WindowCounter(MAX_REQUESTS_PER_MINUTE);
   private authFailures = new WindowCounter(MAX_AUTH_FAILURES_PER_MINUTE);
+  private transferTokens = new Map<
+    string,
+    { itemId: string; fileName: string; sizeBytes: number | null; expiresAt: number }
+  >();
 
   constructor(private readonly deps: RpcBridgeDeps) {}
+
+  private pruneTransferTokens(now = Date.now()): void {
+    for (const [token, entry] of this.transferTokens) {
+      if (entry.expiresAt <= now) this.transferTokens.delete(token);
+    }
+  }
+
+  /**
+   * Generates a short-lived unguessable LAN pull token for a completed download item
+   * so paired mobile devices or QR scanners can pull the file directly over Wi-Fi.
+   */
+  public createTransferToken(
+    itemId: string,
+    ttlMs = 15 * 60 * 1000
+  ): { token: string; fileName: string; sizeBytes: number | null; expiresAt: number } | null {
+    const now = Date.now();
+    this.pruneTransferTokens(now);
+    const item = this.deps.manager.get(itemId);
+    if (!item || item.status !== 'completed' || !item.filePath || !existsSync(item.filePath)) {
+      return null;
+    }
+
+    if (this.transferTokens.size >= 100) {
+      const oldestKey = this.transferTokens.keys().next().value;
+      if (oldestKey) this.transferTokens.delete(oldestKey);
+    }
+
+    const token = randomBytes(24).toString('hex');
+    const fileName = item.fileName || basename(item.filePath);
+    let sizeBytes: number | null = item.totalBytes ?? null;
+    try {
+      sizeBytes = statSync(item.filePath).size;
+    } catch {
+      // keep fallback size
+    }
+    const expiresAt = now + ttlMs;
+    this.transferTokens.set(token, { itemId: item.id, fileName, sizeBytes, expiresAt });
+    return { token, fileName, sizeBytes, expiresAt };
+  }
+
+  private streamCompletedFile(req: IncomingMessage, res: ServerResponse, itemId: string): void {
+    const item = this.deps.manager.get(itemId);
+    if (!item || item.status !== 'completed' || !item.filePath || !existsSync(item.filePath)) {
+      this.sendJson(res, 404, { success: false, error: 'Completed file not found' });
+      return;
+    }
+
+    let size: number;
+    try {
+      size = statSync(item.filePath).size;
+    } catch {
+      this.sendJson(res, 404, { success: false, error: 'Completed file is inaccessible' });
+      return;
+    }
+
+    const name = item.fileName || basename(item.filePath);
+    const asciiName = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+    const contentType = item.mimeType || 'application/octet-stream';
+    const baseHeaders: Record<string, string | number> = {
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+      'Content-Disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      'Cache-Control': 'no-store',
+    };
+
+    const rangeHeader = req.headers['range'];
+    let start = 0;
+    let end = Math.max(0, size - 1);
+    let statusCode = 200;
+
+    if (typeof rangeHeader === 'string' && size > 0) {
+      const m = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+      if (m) {
+        const parsedStart = m[1] ? parseInt(m[1], 10) : 0;
+        const parsedEnd = m[2] ? parseInt(m[2], 10) : size - 1;
+        if (!Number.isNaN(parsedStart) && !Number.isNaN(parsedEnd) && parsedStart <= parsedEnd && parsedEnd < size) {
+          start = parsedStart;
+          end = parsedEnd;
+          statusCode = 206;
+          baseHeaders['Content-Range'] = `bytes ${start}-${end}/${size}`;
+        } else {
+          res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+          res.end();
+          return;
+        }
+      }
+    }
+
+    baseHeaders['Content-Length'] = size === 0 ? 0 : end - start + 1;
+    res.writeHead(statusCode, baseHeaders);
+
+    if (size === 0 || req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+
+    const stream = createReadStream(item.filePath, { start, end });
+    stream.on('error', () => {
+      if (!res.headersSent) {
+        this.sendJson(res, 500, { success: false, error: 'Failed reading file' });
+      } else {
+        res.destroy();
+      }
+    });
+    stream.pipe(res);
+  }
 
   /**
    * URL the desktop is asked to fetch on a caller's behalf and report back on. Loopback, private
@@ -335,6 +448,19 @@ export class DesktopRpcBridge {
       return;
     }
 
+    // One-click Wi-Fi transfer pull endpoint (gated by short-lived 192-bit random token)
+    if ((req.method === 'GET' || req.method === 'HEAD') && pathname.startsWith('/transfer/')) {
+      this.pruneTransferTokens();
+      const token = decodeURIComponent(pathname.slice('/transfer/'.length));
+      const entry = this.transferTokens.get(token);
+      if (!entry) {
+        this.sendJson(res, 404, { success: false, error: 'Transfer link expired or invalid' });
+        return;
+      }
+      this.streamCompletedFile(req, res, entry.itemId);
+      return;
+    }
+
     // All subsequent endpoints require authentication
     if (!this.authenticate(req)) {
       this.authFailures.add(client);
@@ -415,6 +541,54 @@ export class DesktopRpcBridge {
 
       if (req.method === 'GET' && pathname === '/downloads/list') {
         this.sendJson(res, 200, { success: true, items: this.deps.manager.list() });
+        return;
+      }
+
+      if ((req.method === 'GET' || req.method === 'HEAD') && pathname.startsWith('/downloads/') && pathname.endsWith('/file')) {
+        const rawId = pathname.slice('/downloads/'.length, -'/file'.length);
+        const itemId = rawId ? decodeURIComponent(rawId) : '';
+        if (!itemId) {
+          this.sendJson(res, 400, { success: false, error: 'Missing download id' });
+          return;
+        }
+        this.streamCompletedFile(req, res, itemId);
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/downloads/pause') {
+        const body = this.parse(RpcIdsRequestSchema, await this.readBodyJson(req));
+        this.deps.manager.pause(body.ids);
+        this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/downloads/resume') {
+        const body = this.parse(RpcIdsRequestSchema, await this.readBodyJson(req));
+        this.deps.manager.resume(body.ids);
+        this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/downloads/remove') {
+        const body = this.parse(RpcRemoveRequestSchema, await this.readBodyJson(req));
+        await this.deps.manager.remove(body.ids, Boolean(body.deleteFiles));
+        this.sendJson(res, 200, { success: true });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/queues/list') {
+        this.sendJson(res, 200, { success: true, queues: this.deps.manager.listQueues() });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/queues/toggle') {
+        const body = this.parse(RpcQueueControlSchema, await this.readBodyJson(req));
+        if (body.enabled) {
+          this.deps.manager.startQueue(body.id);
+        } else {
+          this.deps.manager.stopQueue(body.id);
+        }
+        this.sendJson(res, 200, { success: true });
         return;
       }
 
