@@ -43,6 +43,7 @@ export interface MobileDownloadTask {
   activeConnections: number;
   segments: SegmentState[];
   localUri: string;
+  resumeData?: string;
   savedToLibrary?: boolean;
   error?: string;
   errorCode?: string;
@@ -85,6 +86,7 @@ class MobileDownloadManager {
   private tasks: Map<string, MobileDownloadTask> = new Map();
   private queues: Map<string, DownloadQueue> = new Map();
   private resumables: Map<string, FileSystem.DownloadResumable> = new Map();
+  private resolveAborts: Map<string, AbortController> = new Map();
   private taskListeners: Set<DownloadListener> = new Set();
   private queueListeners: Set<QueueListener> = new Set();
   private speedTracking: Map<string, { lastBytes: number; lastTime: number }> = new Map();
@@ -426,7 +428,7 @@ class MobileDownloadManager {
           q.enabled = true;
           changed = true;
           this.pumpQueues();
-        } else if (!inWindow && q.enabled && q.id === 'scheduled') {
+        } else if (!inWindow && q.enabled) {
           q.enabled = false;
           changed = true;
           for (const task of this.tasks.values()) {
@@ -536,7 +538,7 @@ class MobileDownloadManager {
     const fileName = `${safeTitle}.${extension}`;
     const localUri = `${this.getBaseDir()}${id}_${fileName}`;
 
-    const totalBytes = option.estimatedSizeBytes || 10 * 1024 * 1024;
+    const totalBytes = option.estimatedSizeBytes && option.estimatedSizeBytes > 0 ? option.estimatedSizeBytes : 0;
     // Mobile runs an honest single-connection HTTP stream
     const segments: SegmentState[] = [
       {
@@ -601,7 +603,7 @@ class MobileDownloadManager {
     const localUri = `${this.getBaseDir()}${id}_${fileName}`;
 
     const category = request.category || detectCategory(fileName);
-    const totalBytes = 10 * 1024 * 1024; // Default estimate until probe/response
+    const totalBytes = 0; // Unknown until HEAD probe or download response reports Content-Length
     // Mobile runs an honest single-connection HTTP stream
     const segments: SegmentState[] = [
       {
@@ -710,8 +712,10 @@ class MobileDownloadManager {
           const instantSpeed = deltaBytes / deltaTime;
           currentTask.speed = currentTask.speed ? Math.round(currentTask.speed * 0.7 + instantSpeed * 0.3) : Math.round(instantSpeed);
 
-          if (currentTask.speed > 0) {
+          if (currentTask.speed > 0 && total > 0) {
             currentTask.eta = Math.max(0, Math.round((total - received) / currentTask.speed));
+          } else {
+            currentTask.eta = null;
           }
 
           this.speedTracking.set(task.id, { lastBytes: received, lastTime: now });
@@ -724,20 +728,34 @@ class MobileDownloadManager {
       // If this is a social media task and doesn't yet have a resolved direct CDN stream URL, resolve it now
       let targetUrl = task.streamUrl || task.url;
       if (task.kind === 'media' && !task.streamUrl) {
-        const resolved = await mobileBridge.resolveDirectStreamUrl(task.url, task.platform, {
-          format: task.format,
-          qualityId: task.qualityId,
-          label: task.qualityId,
-          extension: task.extension,
-          estimatedSizeBytes: task.totalBytes,
-        });
-        targetUrl = resolved.streamUrl;
-        task.streamUrl = resolved.streamUrl;
-        if (resolved.sizeBytes && resolved.sizeBytes > 0) {
-          task.totalBytes = resolved.sizeBytes;
+        const resolveAbort = new AbortController();
+        this.resolveAborts.set(task.id, resolveAbort);
+        try {
+          const resolved = await mobileBridge.resolveDirectStreamUrl(
+            task.url,
+            task.platform,
+            {
+              format: task.format,
+              qualityId: task.qualityId,
+              label: task.qualityId,
+              extension: task.extension,
+              estimatedSizeBytes: task.totalBytes > 0 ? task.totalBytes : undefined,
+            },
+            resolveAbort.signal
+          );
+          targetUrl = resolved.streamUrl;
+          task.streamUrl = resolved.streamUrl;
+          if (resolved.sizeBytes && resolved.sizeBytes > 0) {
+            task.totalBytes = resolved.sizeBytes;
+          }
+          if (resolved.headers) {
+            task.headers = { ...(task.headers || {}), ...resolved.headers };
+          }
+        } finally {
+          this.resolveAborts.delete(task.id);
         }
-        if (resolved.headers) {
-          task.headers = { ...(task.headers || {}), ...resolved.headers };
+        if ((task.status as string) !== 'downloading') {
+          return;
         }
       }
 
@@ -746,15 +764,41 @@ class MobileDownloadManager {
         ...(task.referrer ? { Referer: task.referrer } : {}),
       };
 
+      const savedResumeData = task.resumeData;
       const resumable = FileSystem.createDownloadResumable(
         targetUrl,
         task.localUri,
         { headers: requestHeaders },
-        downloadCallback
+        downloadCallback,
+        savedResumeData
       );
 
       this.resumables.set(task.id, resumable);
-      const result = await resumable.downloadAsync();
+      let result: FileSystem.FileSystemDownloadResult | undefined;
+      if (savedResumeData && typeof resumable.resumeAsync === 'function') {
+        try {
+          result = await resumable.resumeAsync();
+        } catch {
+          result = undefined;
+        }
+        if (!result && (task.status as string) === 'downloading') {
+          task.resumeData = undefined;
+          const freshResumable = FileSystem.createDownloadResumable(
+            targetUrl,
+            task.localUri,
+            { headers: requestHeaders },
+            downloadCallback
+          );
+          this.resumables.set(task.id, freshResumable);
+          result = await freshResumable.downloadAsync();
+        }
+      } else {
+        result = await resumable.downloadAsync();
+      }
+
+      if ((task.status as string) !== 'downloading') {
+        return;
+      }
 
       if (result?.uri) {
         if (typeof result.status === 'number' && (result.status < 200 || result.status >= 300)) {
@@ -769,20 +813,37 @@ class MobileDownloadManager {
           throw new Error('Remote server returned an HTML page instead of a playable media stream.');
         }
 
+        let finalBytes = task.receivedBytes;
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(result.uri);
+          if (fileInfo.exists && typeof (fileInfo as any).size === 'number' && (fileInfo as any).size > 0) {
+            finalBytes = (fileInfo as any).size;
+          }
+        } catch {
+          // Keep tracked receivedBytes when size lookup is unavailable
+        }
+        if (finalBytes <= 0 && task.totalBytes > 0) {
+          finalBytes = task.totalBytes;
+        }
+
         task.status = 'completed';
         task.progress = 1;
-        task.receivedBytes = task.totalBytes;
+        task.receivedBytes = finalBytes;
+        if (!task.totalBytes || task.totalBytes <= 0 || finalBytes > task.totalBytes) {
+          task.totalBytes = finalBytes;
+        }
         task.speed = 0;
         task.eta = 0;
         task.activeConnections = 0;
         task.completedAt = Date.now();
+        task.resumeData = undefined;
         this.resumables.delete(task.id);
         this.speedTracking.delete(task.id);
         this.lastProgressNotifyTime.delete(task.id);
 
         // Auto-save to Media Library if configured in settings
         const settings = mobileSettingsManager.getSettings();
-        if (settings.autoSaveToLibrary && (task.category === 'video' || task.category === 'images' || task.category === 'music')) {
+        if (settings.autoSaveToLibrary && (task.category === 'video' || task.category === 'images')) {
           this.saveToMediaLibrary(task.id).catch(() => {});
         }
 
@@ -792,11 +853,13 @@ class MobileDownloadManager {
         this.pumpQueues();
       }
     } catch (err: any) {
-      if (task.status !== 'paused') {
+      this.resolveAborts.delete(task.id);
+      if ((task.status as string) !== 'paused') {
         task.status = 'error';
         task.error = err.message || 'Download failed';
         task.activeConnections = 0;
         task.speed = 0;
+        task.resumeData = undefined;
         this.resumables.delete(task.id);
         this.speedTracking.delete(task.id);
         this.lastProgressNotifyTime.delete(task.id);
@@ -808,9 +871,17 @@ class MobileDownloadManager {
     }
   }
 
+  public refresh() {
+    this.notifyTasks();
+    this.notifyQueues();
+    this.pumpQueues();
+  }
+
   async pauseDownload(id: string) {
     const task = this.tasks.get(id);
     const resumable = this.resumables.get(id);
+    this.resolveAborts.get(id)?.abort();
+    this.resolveAborts.delete(id);
     if (!task) return;
 
     task.status = 'paused';
@@ -820,10 +891,14 @@ class MobileDownloadManager {
 
     if (resumable) {
       try {
-        await resumable.pauseAsync();
+        const pauseRes = await resumable.pauseAsync();
+        if (pauseRes?.resumeData) {
+          task.resumeData = pauseRes.resumeData;
+        }
       } catch (err) {
         console.warn('Error pausing download:', err);
       }
+      this.resumables.delete(id);
     }
     this.notifyTasks();
     this.persistTasksImmediately();
@@ -843,6 +918,8 @@ class MobileDownloadManager {
   async cancelDownload(id: string) {
     const task = this.tasks.get(id);
     const resumable = this.resumables.get(id);
+    this.resolveAborts.get(id)?.abort();
+    this.resolveAborts.delete(id);
     if (resumable) {
       try {
         await resumable.pauseAsync();
@@ -1060,7 +1137,7 @@ class MobileDownloadManager {
       actual = hasher.digestHex();
     }
 
-    const cleanExpected = expected?.trim().toLowerCase().replace(/^(sha256|sha1|md5)[-:]?/i, '');
+    const cleanExpected = expected?.trim().toLowerCase().replace(/^(sha512|sha256|sha1|md5)[-:]?/i, '');
     const verified = cleanExpected ? actual.toLowerCase() === cleanExpected : undefined;
 
     task.checksum = {

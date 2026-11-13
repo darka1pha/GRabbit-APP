@@ -52,6 +52,7 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     startQueue,
     stopQueue,
     moveTaskToQueue,
+    refresh,
   } = useDownloads();
 
   const [selectedQueueId, setSelectedQueueId] = useState<string | 'all'>('all');
@@ -149,11 +150,11 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     void hapticLight();
     setIsRefreshing(true);
     try {
-      await new Promise((r) => setTimeout(r, 500));
+      refresh();
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [refresh]);
 
   // Multi-select actions
   const handleLongPress = useCallback((id: string) => {
@@ -293,7 +294,7 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
           <View style={{ alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
             <Text style={styles.viewTitle}>{t('dl.title')}</Text>
             <Text style={styles.viewSubtitle}>
-              {counts.all} {t('queue.items', { count: counts.all })} • {counts.active} {t('dl.statusActive')}
+              {t('queue.items', { count: counts.all })} • {counts.active} {t('dl.statusActive')}
             </Text>
           </View>
 

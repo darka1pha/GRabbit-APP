@@ -161,11 +161,12 @@ export function GrabView({
     }
 
     const [fmtKind, quality] = collectionFormat.split(':');
+    const resolvedQuality = quality || (fmtKind === 'audio' ? 'mp3' : '1080p');
     const option: MediaOption = {
       format: fmtKind as 'audio' | 'video',
-      qualityId: quality || 'mp3',
-      label: quality.toUpperCase(),
-      extension: fmtKind === 'audio' ? 'mp3' : 'mp4',
+      qualityId: resolvedQuality,
+      label: resolvedQuality.toUpperCase(),
+      extension: fmtKind === 'audio' ? resolvedQuality : 'mp4',
     };
 
     try {

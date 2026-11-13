@@ -220,7 +220,9 @@ function MediaCardComponent({
 
           <View style={styles.statsRow}>
             <Text style={styles.statsText}>
-              {formatBytes(task.receivedBytes)} / {formatBytes(task.totalBytes)} ({Math.round(task.progress * 100)}%)
+              {task.totalBytes > 0
+                ? `${formatBytes(task.receivedBytes)} / ${formatBytes(task.totalBytes)} (${Math.round(task.progress * 100)}%)`
+                : formatBytes(task.receivedBytes)}
             </Text>
             {isDownloading && task.speed > 0 && (
               <Text style={styles.statsText}>

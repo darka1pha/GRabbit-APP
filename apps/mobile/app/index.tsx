@@ -5,12 +5,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MediaItem, MediaOption } from '@grabbit/types';
 import { useShareIntent } from '../hooks/useShareIntent';
 import { useDownloads } from '../hooks/useDownloads';
 import { MobileDownloadTask } from '../services/download-manager';
+import { mobileBridge } from '../services/bridge';
 import { notificationService } from '../services/notification-service';
 import { useI18n } from '../hooks/useI18n';
 import { hapticLight } from '../services/haptics';
@@ -37,7 +39,7 @@ export default function HomeScreen() {
   const [playerVisible, setPlayerVisible] = useState(false);
   const [playerSource, setPlayerSource] = useState<MediaPlayerSource | null>(null);
 
-  const { tasks, activeTasks } = useDownloads();
+  const { tasks, activeTasks, saveToLibrary } = useDownloads();
 
   // Handle incoming notification tap (Item 6.2)
   useEffect(() => {
@@ -70,9 +72,18 @@ export default function HomeScreen() {
   };
 
   // Stream preview from Grab view
-  const handlePreviewStream = (item: MediaItem, option: MediaOption) => {
+  const handlePreviewStream = async (item: MediaItem, option: MediaOption) => {
+    let uri = option.directStreamUrl || item.url;
+    if (!option.directStreamUrl) {
+      try {
+        const resolved = await mobileBridge.resolveDirectStreamUrl(item.url, item.platform, option);
+        if (resolved.streamUrl) uri = resolved.streamUrl;
+      } catch {
+        // Fall back to source URL if resolver fails; modal displays playback error cleanly
+      }
+    }
     setPlayerSource({
-      uri: item.url,
+      uri,
       title: item.title,
       author: item.uploader,
       thumbnailUrl: item.thumbnailUrl,
@@ -85,12 +96,13 @@ export default function HomeScreen() {
   // Play downloaded task from Downloads view
   const handlePlayDownloaded = (task: MobileDownloadTask) => {
     setPlayerSource({
+      taskId: task.id,
       uri: task.localUri,
       title: task.title,
       author: task.author,
       thumbnailUrl: task.thumbnailUrl,
       isVideo: task.format === 'video',
-      canSaveToLibrary: !task.savedToLibrary,
+      canSaveToLibrary: !task.savedToLibrary && (task.category === 'video' || task.category === 'images'),
     });
     setPlayerVisible(true);
   };
@@ -241,7 +253,14 @@ export default function HomeScreen() {
           setPlayerVisible(false);
           setPlayerSource(null);
         }}
-        onSaveToLibrary={() => {}}
+        onSaveToLibrary={async () => {
+          if (!playerSource?.taskId) return;
+          const res = await saveToLibrary(playerSource.taskId);
+          Alert.alert(res.success ? 'Saved' : 'Error', res.message);
+          if (res.success) {
+            setPlayerSource((prev) => (prev ? { ...prev, canSaveToLibrary: false } : null));
+          }
+        }}
       />
 
       {/* Direct Download Dialog when triggered from Grab or elsewhere */}

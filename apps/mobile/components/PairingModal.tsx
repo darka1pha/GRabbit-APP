@@ -78,13 +78,23 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
     setTestResult(null);
 
     try {
-      const portNum = Number(port) || 31542;
+      const parsedPort = Number(port);
+      const portNum = Number.isFinite(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535 ? Math.trunc(parsedPort) : 31542;
       const url = `http://${host.trim()}:${portNum}/ping`;
       const res = await fetch(url, {
         headers: token.trim() ? { 'X-GRabbit-Token': token.trim() } : {},
       });
 
       if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { authenticated?: boolean } | null;
+        if (data?.authenticated !== true) {
+          void hapticError();
+          setTestResult({
+            success: false,
+            message: 'Desktop rejected the security token. Check your security token in Desktop Settings.',
+          });
+          return;
+        }
         await mobileSettingsManager.updateSettings({
           desktopBridge: {
             enabled: true,

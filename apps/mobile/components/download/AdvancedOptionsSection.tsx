@@ -1,16 +1,7 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Category, DownloadQueue, CATEGORIES } from '@grabbit/types';
+import { View, Text, TextInput, StyleSheet } from 'react-native';
 
 interface AdvancedOptionsSectionProps {
-  category: Category | 'auto';
-  onCategoryChange: (cat: Category | 'auto') => void;
-  queueId: string;
-  onQueueChange: (qId: string) => void;
-  queues: DownloadQueue[];
-  connections: number;
-  onConnectionsChange: (c: number) => void;
   referrer: string;
   onReferrerChange: (r: string) => void;
   headersText: string;
@@ -22,13 +13,6 @@ interface AdvancedOptionsSectionProps {
 }
 
 export function AdvancedOptionsSection({
-  category,
-  onCategoryChange,
-  queueId,
-  onQueueChange,
-  queues,
-  connections,
-  onConnectionsChange,
   referrer,
   onReferrerChange,
   headersText,
@@ -40,54 +24,18 @@ export function AdvancedOptionsSection({
 }: AdvancedOptionsSectionProps) {
   return (
     <View style={styles.container}>
-      {/* Category */}
+      {/* Speed Limit */}
       <View style={styles.field}>
-        <Text style={styles.label}>Category</Text>
-        <View style={styles.chipRow}>
-          <TouchableOpacity
-            style={[styles.chip, category === 'auto' && styles.chipActive]}
-            onPress={() => onCategoryChange('auto')}
-            accessibilityRole="button"
-            accessibilityLabel="Auto category"
-          >
-            <Text style={[styles.chipText, category === 'auto' && styles.chipTextActive]}>
-              Auto
-            </Text>
-          </TouchableOpacity>
-          {CATEGORIES.map((c) => (
-            <TouchableOpacity
-              key={c}
-              style={[styles.chip, category === c && styles.chipActive]}
-              onPress={() => onCategoryChange(c)}
-              accessibilityRole="button"
-              accessibilityLabel={c}
-            >
-              <Text style={[styles.chipText, category === c && styles.chipTextActive]}>
-                {c}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      {/* Target Queue */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Target Queue</Text>
-        <View style={styles.chipRow}>
-          {queues.map((q) => (
-            <TouchableOpacity
-              key={q.id}
-              style={[styles.chip, queueId === q.id && styles.chipActive]}
-              onPress={() => onQueueChange(q.id)}
-              accessibilityRole="button"
-              accessibilityLabel={q.name}
-            >
-              <Text style={[styles.chipText, queueId === q.id && styles.chipTextActive]}>
-                {q.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <Text style={styles.label}>Speed Limit (KB/s, 0 = unlimited)</Text>
+        <TextInput
+          style={styles.input}
+          value={speedLimitKBps > 0 ? String(speedLimitKBps) : ''}
+          onChangeText={(v) => onSpeedLimitChange(Math.max(0, parseInt(v.replace(/[^0-9]/g, ''), 10) || 0))}
+          placeholder="0"
+          placeholderTextColor="#64748b"
+          keyboardType="numeric"
+          accessibilityLabel="Speed limit"
+        />
       </View>
 
       {/* Parallel Connections */}

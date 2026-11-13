@@ -11,11 +11,42 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Category, DownloadQueue, ProbeResult, CATEGORIES } from '@grabbit/types';
+import { AddHttpDownloadRequest, Category, ChecksumAlgorithm, CATEGORIES, DownloadQueue, ProbeResult } from '@grabbit/types';
 import { formatBytes, isHttpUrl, looksLikeMediaPage } from '@grabbit/utils';
 import { useDownloads } from '../hooks/useDownloads';
 import { AdvancedOptionsSection } from './download/AdvancedOptionsSection';
 import { useI18n } from '../hooks/useI18n';
+
+function parseHeadersText(raw: string): Record<string, string> | undefined {
+  const result: Record<string, string> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const val = line.slice(idx + 1).trim();
+    if (key) result[key] = val;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseChecksumInput(raw: string): AddHttpDownloadRequest['checksum'] | undefined {
+  const cleaned = raw.trim();
+  if (!cleaned) return undefined;
+  const prefixed = /^(md5|sha1|sha256|sha512)[:\-]?\s*([0-9a-f]+)$/i.exec(cleaned);
+  if (prefixed) {
+    return {
+      algorithm: prefixed[1].toLowerCase() as ChecksumAlgorithm,
+      expected: prefixed[2].toLowerCase(),
+    };
+  }
+  const hex = cleaned.toLowerCase();
+  if (/^[0-9a-f]+$/.test(hex)) {
+    const algorithm: ChecksumAlgorithm =
+      hex.length === 32 ? 'md5' : hex.length === 40 ? 'sha1' : hex.length === 128 ? 'sha512' : 'sha256';
+    return { algorithm, expected: hex };
+  }
+  return { algorithm: 'sha256', expected: cleaned };
+}
 
 interface AddDownloadModalProps {
   visible: boolean;
@@ -55,7 +86,12 @@ export function AddDownloadModal({
       setFileName('');
       setCategory('auto');
       setQueueId('main');
+      setConnections(4);
       setAdvanced(false);
+      setReferrer('');
+      setHeadersText('');
+      setSpeedLimitKBps(0);
+      setChecksum('');
     }
   }, [visible, initialUrl]);
 
@@ -109,6 +145,9 @@ export function AddDownloadModal({
       return;
     }
 
+    const headers = parseHeadersText(headersText);
+    const parsedChecksum = parseChecksumInput(checksum);
+
     setSubmitting(true);
     try {
       if (urls.length === 1) {
@@ -119,7 +158,9 @@ export function AddDownloadModal({
           queueId,
           connections,
           referrer: referrer.trim() || undefined,
+          headers,
           speedLimitKBps: speedLimitKBps > 0 ? speedLimitKBps : undefined,
+          checksum: parsedChecksum,
           startPaused,
         });
       } else {
@@ -127,6 +168,9 @@ export function AddDownloadModal({
           category: category === 'auto' ? undefined : category,
           queueId,
           connections,
+          referrer: referrer.trim() || undefined,
+          headers,
+          speedLimitKBps: speedLimitKBps > 0 ? speedLimitKBps : undefined,
           startPaused,
         });
       }
@@ -319,13 +363,6 @@ export function AddDownloadModal({
 
             {advanced && (
               <AdvancedOptionsSection
-                category={category}
-                onCategoryChange={setCategory}
-                queueId={queueId}
-                onQueueChange={setQueueId}
-                queues={queues}
-                connections={connections}
-                onConnectionsChange={setConnections}
                 referrer={referrer}
                 onReferrerChange={setReferrer}
                 headersText={headersText}

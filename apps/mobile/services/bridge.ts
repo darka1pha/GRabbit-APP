@@ -950,7 +950,12 @@ export class MobileBridgeService {
     const matchedStream = await this.searchYouTubeAudioStream(`${author || ''} ${title}`.trim(), signal);
     const availableOptions = audioOptions().map((opt) =>
       matchedStream
-        ? { ...opt, directStreamUrl: matchedStream.streamUrl, estimatedSizeBytes: matchedStream.sizeBytes }
+        ? {
+            ...opt,
+            extension: 'm4a',
+            directStreamUrl: matchedStream.streamUrl,
+            estimatedSizeBytes: matchedStream.sizeBytes,
+          }
         : opt
     );
 

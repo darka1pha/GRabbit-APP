@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { formatDuration } from '@grabbit/utils';
 
 export interface MediaPlayerSource {
+  taskId?: string;
   uri: string;
   title: string;
   author?: string;
@@ -42,9 +43,17 @@ export function MediaPlayerModal({
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const videoRef = useRef<Video>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  useEffect(() => {
+    setPlaybackError(null);
+    setPositionMs(0);
+    setDurationMs(0);
+    setIsLoading(Boolean(visible && source));
+  }, [visible, source]);
 
   // Audio playback setup when source is audio
   useEffect(() => {
@@ -55,6 +64,7 @@ export function MediaPlayerModal({
 
       try {
         setIsLoading(true);
+        setPlaybackError(null);
         await Audio.setAudioModeAsync({
           playsInSilentModeIOS: true,
           staysActiveInBackground: false,
@@ -75,9 +85,12 @@ export function MediaPlayerModal({
         );
 
         soundRef.current = sound;
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Audio setup error:', err);
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+          setPlaybackError(err?.message || 'Failed to load audio stream');
+        }
       }
     }
 
@@ -175,16 +188,25 @@ export function MediaPlayerModal({
               ref={videoRef}
               style={styles.videoPlayer}
               source={{ uri: source.uri }}
+              shouldPlay={visible}
               useNativeControls={false}
               resizeMode={ResizeMode.CONTAIN}
               isLooping
               onPlaybackStatusUpdate={(status) => {
                 if (status.isLoaded) {
                   setIsLoading(false);
+                  setPlaybackError(null);
                   setIsPlaying(status.isPlaying);
                   setPositionMs(status.positionMillis);
                   setDurationMs(status.durationMillis || 0);
+                } else if ('error' in status && status.error) {
+                  setIsLoading(false);
+                  setPlaybackError(status.error);
                 }
+              }}
+              onError={(err) => {
+                setIsLoading(false);
+                setPlaybackError(typeof err === 'string' ? err : 'Failed to load video stream');
               }}
             />
           ) : (
@@ -207,9 +229,17 @@ export function MediaPlayerModal({
             </View>
           )}
 
-          {isLoading && (
+          {isLoading && !playbackError && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#38bdf8" />
+            </View>
+          )}
+          {playbackError && (
+            <View style={styles.loadingOverlay}>
+              <Ionicons name="alert-circle-outline" size={40} color="#f87171" />
+              <Text style={{ color: '#fecaca', marginTop: 10, paddingHorizontal: 24, textAlign: 'center', fontSize: 13 }}>
+                {playbackError}
+              </Text>
             </View>
           )}
         </View>

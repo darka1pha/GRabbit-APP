@@ -137,10 +137,10 @@ export class MobileUpdaterService {
 
       if (!res.ok) {
         return this.emit({
-          state: 'up-to-date',
+          state: 'error',
           currentVersion,
-          latestVersion: currentVersion,
           releaseUrl: GITHUB_RELEASES_PAGE,
+          error: `Update check failed (HTTP ${res.status})`,
         });
       }
 
@@ -177,7 +177,12 @@ export class MobileUpdaterService {
         releaseUrl,
       });
 
-      return await this.downloadAndInstallApk(downloadUrl, latestVersion);
+      if (!apkAsset?.browser_download_url) {
+        await Linking.openURL(releaseUrl);
+        return this.status;
+      }
+
+      return await this.downloadAndInstallApk(apkAsset.browser_download_url, latestVersion);
     } catch (err: any) {
       return this.emit({
         state: 'error',
@@ -201,9 +206,9 @@ export class MobileUpdaterService {
       if (!cacheDir || !downloadUrl.toLowerCase().endsWith('.apk')) {
         await Linking.openURL(downloadUrl);
         return this.emit({
-          state: 'installing',
+          state: 'available',
           latestVersion: version,
-          progressPercent: 100,
+          progressPercent: undefined,
         });
       }
 
@@ -246,6 +251,19 @@ export class MobileUpdaterService {
       if (!result || !result.uri) {
         throw new Error('APK download failed: empty response');
       }
+      if (typeof result.status === 'number' && (result.status < 200 || result.status >= 300)) {
+        await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+        throw new Error(`APK download failed (HTTP ${result.status})`);
+      }
+
+      const downloadedInfo = await FileSystem.getInfoAsync(result.uri);
+      if (
+        !downloadedInfo.exists ||
+        (typeof downloadedInfo.size === 'number' && downloadedInfo.size < 100_000)
+      ) {
+        await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+        throw new Error('Downloaded update file is incomplete or invalid');
+      }
 
       this.emit({
         state: 'installing',
@@ -269,9 +287,10 @@ export class MobileUpdaterService {
       try {
         await Linking.openURL(downloadUrl);
         return this.emit({
-          state: 'installing',
+          state: 'available',
           latestVersion: version,
-          progressPercent: 100,
+          progressPercent: undefined,
+          error: err?.message || 'In-app download failed; opened release link in browser',
         });
       } catch {
         return this.emit({

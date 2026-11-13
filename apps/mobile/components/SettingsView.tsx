@@ -414,7 +414,7 @@ export function SettingsView() {
       {/* About */}
       <View style={styles.aboutCard}>
         <Text style={styles.aboutTitle}>🐰 GRabbit Mobile</Text>
-        <Text style={styles.aboutVersion}>v{updateStatus.currentVersion} • Phase 6 UI/UX</Text>
+        <Text style={styles.aboutVersion}>v{updateStatus.currentVersion}</Text>
         <Text style={styles.aboutDesc}>
           Cross-platform download manager & media grabber powered by Expo & @grabbit core engines.
         </Text>

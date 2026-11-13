@@ -164,9 +164,16 @@ describe('Mobile App Desktop Feature Parity', () => {
 
   describe('Direct HTTP File Probing', () => {
     it('probes a URL and computes filename & category', async () => {
-      const probe = await mobileDownloadManager.probeUrl('https://example.com/archive.zip');
-      expect(probe.fileName).toBe('archive.zip');
-      expect(probe.category).toBe('compressed');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      try {
+        const probe = await mobileDownloadManager.probeUrl('https://example.com/archive.zip');
+        expect(probe.fileName).toBe('archive.zip');
+        expect(probe.category).toBe('compressed');
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 
@@ -294,9 +301,13 @@ describe('Mobile App Desktop Feature Parity', () => {
       const task = mobileDownloadManager.getTask(id);
       expect(task).toBeDefined();
       expect(task?.connections).toBe(1);
-      expect(task?.activeConnections).toBe(0);
       expect(task?.segments.length).toBe(1);
       expect(task?.segments[0].start).toBe(0);
+      await vi.waitFor(() => {
+        const finished = mobileDownloadManager.getTask(id);
+        expect(finished?.status).toBe('completed');
+        expect(finished?.activeConnections).toBe(0);
+      });
     });
 
     it('manages fallback ordering and failure recording in resolverPool', () => {
@@ -325,18 +336,42 @@ describe('Mobile App Desktop Feature Parity', () => {
         },
       });
 
-      await expect(
-        mobileBridge.resolveDirectStreamUrl(
-          'https://unknown-service.com/video/123',
-          'generic',
-          {
-            format: 'video',
-            qualityId: '1080p',
-            extension: 'mp4',
-            label: '1080p',
-          }
-        )
-      ).rejects.toThrow(/Resolver unavailable — pair with desktop/i);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 503, statusText: 'Service Unavailable' }));
+
+      try {
+        await expect(
+          mobileBridge.resolveDirectStreamUrl(
+            'https://unknown-service.com/video/123',
+            'generic',
+            {
+              format: 'video',
+              qualityId: '1080p',
+              extension: 'mp4',
+              label: '1080p',
+            }
+          )
+        ).rejects.toThrow(/Resolver unavailable — pair with desktop/i);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('emits an explicit updater error when GitHub release check returns non-2xx', async () => {
+      const { mobileUpdater } = await import('../services/updater');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(null, { status: 500, statusText: 'Server Error' }));
+
+      (mobileUpdater as any).status.localUri = undefined;
+      try {
+        const res = await mobileUpdater.checkAndInstallUpdate();
+        expect(res.state).toBe('error');
+        expect(res.error).toMatch(/500/);
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
 
     it('verifies checksum via incremental hasher without loading entire file at once', async () => {
@@ -369,6 +404,14 @@ describe('Mobile App Desktop Feature Parity', () => {
       vi.spyOn(FileSystem, 'readAsStringAsync').mockResolvedValue('YWJj'); // "abc"
       const shaResult = await mobileDownloadManager.verifyChecksum(id, 'sha256');
       expect(shaResult.actual).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+      // 3. SHA-512 with sha512: prefix strip
+      const sha512Result = await mobileDownloadManager.verifyChecksum(
+        id,
+        'sha512',
+        'sha512:ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f'
+      );
+      expect(sha512Result.verified).toBe(true);
     });
 
     it('supports chunked streaming hashes for MD5, SHA-1, and SHA-256', () => {

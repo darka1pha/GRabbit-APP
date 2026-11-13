@@ -131,6 +131,10 @@ export function useDownloads() {
     return await mobileDownloadManager.getStorageUsage();
   }, []);
 
+  const refresh = useCallback(() => {
+    mobileDownloadManager.refresh();
+  }, []);
+
   return {
     tasks,
     queues,
@@ -161,5 +165,6 @@ export function useDownloads() {
     moveTaskToQueue,
     cleanStorage,
     getStorageUsage,
+    refresh,
   };
 }
