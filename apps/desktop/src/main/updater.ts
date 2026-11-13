@@ -1,5 +1,7 @@
 import { app, shell } from 'electron';
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
@@ -23,6 +25,8 @@ export class AutoUpdaterService {
   private autoInstallRequested = false;
   private downloadedInstallerPath: string | null = null;
   private fallbackDownloadUrl: string | null = null;
+  private fallbackAssetName: string | null = null;
+  private fallbackChecksumsUrl: string | null = null;
 
   constructor(private readonly deps: AutoUpdaterDeps) {
     this.init();
@@ -168,10 +172,22 @@ export class AutoUpdaterService {
         return this.status;
       }
 
-      const exeAsset = (data.assets || []).find(
-        (a) => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.exe')
-      );
+      const assets = Array.isArray(data.assets) ? data.assets : [];
+      const exeAsset =
+        assets.find((a) => {
+          const n = typeof a.name === 'string' ? a.name.toLowerCase() : '';
+          return n.endsWith('.exe') && n.includes('setup') && !n.includes('portable');
+        }) ||
+        assets.find((a) => {
+          const n = typeof a.name === 'string' ? a.name.toLowerCase() : '';
+          return n.endsWith('.exe') && !n.includes('portable');
+        }) ||
+        assets.find((a) => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.exe'));
+      const checksumAsset = assets.find((a) => a.name === 'SHA256SUMS.txt');
+
       this.fallbackDownloadUrl = exeAsset?.browser_download_url || null;
+      this.fallbackAssetName = exeAsset?.name || null;
+      this.fallbackChecksumsUrl = checksumAsset?.browser_download_url || null;
 
       this.updateStatus({
         state: 'available',
@@ -220,8 +236,10 @@ export class AutoUpdaterService {
       }
 
       const totalBytes = Number(res.headers.get('content-length') || 0);
-      const targetPath = join(tmpdir(), `GRabbit-Setup-${version}.exe`);
+      const safeFileName = this.fallbackAssetName || `GRabbit-Setup-${version}.exe`;
+      const targetPath = join(tmpdir(), safeFileName);
       const fileStream = createWriteStream(targetPath);
+      const hasher = createHash('sha256');
       const reader = res.body.getReader();
       let received = 0;
 
@@ -229,7 +247,9 @@ export class AutoUpdaterService {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          fileStream.write(Buffer.from(value));
+          const buf = Buffer.from(value);
+          fileStream.write(buf);
+          hasher.update(buf);
           received += value.byteLength;
           if (totalBytes > 0) {
             this.updateStatus({
@@ -244,6 +264,17 @@ export class AutoUpdaterService {
         fileStream.end(() => resolve());
         fileStream.on('error', reject);
       });
+
+      if (this.fallbackChecksumsUrl && this.fallbackAssetName) {
+        const expectedHash = await this.fetchExpectedSha256(this.fallbackChecksumsUrl, this.fallbackAssetName);
+        if (expectedHash) {
+          const actualHash = hasher.digest('hex').toLowerCase();
+          if (actualHash !== expectedHash) {
+            await rm(targetPath, { force: true }).catch(() => {});
+            throw new Error(`Installer checksum verification failed (${safeFileName})`);
+          }
+        }
+      }
 
       this.downloadedInstallerPath = targetPath;
       this.updateStatus({ state: 'downloaded', version, progressPercent: 100 });
@@ -271,6 +302,23 @@ export class AutoUpdaterService {
       return;
     }
     autoUpdater.quitAndInstall(false, true);
+  }
+
+  private async fetchExpectedSha256(checksumsUrl: string, assetName: string): Promise<string | null> {
+    try {
+      const res = await fetch(checksumsUrl);
+      if (!res.ok) return null;
+      const text = await res.text();
+      for (const line of text.split(/\r?\n/)) {
+        const match = /^([a-fA-F0-9]{64})\s+\*?(.+)$/.exec(line.trim());
+        if (match && match[2].trim() === assetName) {
+          return match[1].toLowerCase();
+        }
+      }
+    } catch {
+      // Ignore if SHA256SUMS.txt cannot be fetched; fall through
+    }
+    return null;
   }
 }
 

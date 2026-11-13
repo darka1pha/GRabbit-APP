@@ -2,7 +2,8 @@ import { app } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, statSync, createWriteStream } from 'node:fs';
 import { rename, rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
-import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { httpRequest } from './downloads/http-client';
 import { logger } from './logger';
 
@@ -31,6 +32,20 @@ function devFallback(...parts: string[]): string {
   return join(app.getAppPath(), 'node_modules', ...parts);
 }
 
+function resolveDevPackageBinary(specifier: string, property?: string): string | null {
+  try {
+    const req = createRequire(join(app.getAppPath(), 'package.json'));
+    const loaded = req(specifier) as unknown;
+    const candidate = property && loaded && typeof loaded === 'object' ? (loaded as Record<string, unknown>)[property] : loaded;
+    if (typeof candidate === 'string' && existsSync(candidate)) {
+      return candidate;
+    }
+  } catch {
+    // Fall back to direct node_modules path
+  }
+  return null;
+}
+
 /**
  * yt-dlp runs from a per-user copy so it can update itself (Program Files is read-only);
  * the bundled copy seeds it on first launch and whenever a newer build ships with the app.
@@ -54,11 +69,16 @@ export function resolveBinaries(): BinaryPaths {
   const bundledFfprobe = join(bundledBin, `ffprobe${EXE}`);
   const hasBundled = existsSync(bundledFfmpeg) && existsSync(bundledFfprobe);
 
+  const devFfmpeg = resolveDevPackageBinary('ffmpeg-static') ?? devFallback('ffmpeg-static', `ffmpeg${EXE}`);
+  const devFfprobe =
+    resolveDevPackageBinary('@ffprobe-installer/ffprobe', 'path') ??
+    devFallback('@ffprobe-installer', `${process.platform}-${process.arch}`, `ffprobe${EXE}`);
+
   return {
     ytdlp: existsSync(userYtdlp) ? userYtdlp : existsSync(bundledYtdlp) ? bundledYtdlp : userYtdlp,
-    ffmpeg: hasBundled ? bundledFfmpeg : devFallback('ffmpeg-static', `ffmpeg${EXE}`),
-    ffprobe: hasBundled ? bundledFfprobe : devFallback('@ffprobe-installer', 'win32-x64', `ffprobe${EXE}`),
-    ffmpegDir: hasBundled ? bundledBin : '',
+    ffmpeg: hasBundled ? bundledFfmpeg : devFfmpeg,
+    ffprobe: hasBundled ? bundledFfprobe : devFfprobe,
+    ffmpegDir: hasBundled ? bundledBin : existsSync(devFfmpeg) ? dirname(devFfmpeg) : '',
   };
 }
 

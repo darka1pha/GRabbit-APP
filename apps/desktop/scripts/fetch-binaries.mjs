@@ -2,7 +2,7 @@
 //   ffmpeg / ffprobe: copied from the ffmpeg-static / @ffprobe-installer npm packages
 //   yt-dlp:           downloaded from the official GitHub release (only when missing, or with --force)
 // Usage: node scripts/fetch-binaries.mjs [--force]
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -42,7 +42,18 @@ let ffprobeSrc;
 try {
   ffprobeSrc = req('@ffprobe-installer/ffprobe')?.path;
 } catch {
-  ffprobeSrc = join(root, 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe');
+  const direct = join(root, 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe');
+  if (existsSync(direct)) {
+    ffprobeSrc = direct;
+  } else {
+    const pnpmDir = join(root, '..', '..', 'node_modules', '.pnpm');
+    const pkgDir = existsSync(pnpmDir)
+      ? readdirSync(pnpmDir).find((d) => d.startsWith('@ffprobe-installer+win32-x64@'))
+      : undefined;
+    ffprobeSrc = pkgDir
+      ? join(pnpmDir, pkgDir, 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe')
+      : direct;
+  }
 }
 
 copyIfChanged(ffmpegSrc, join(binDir, 'ffmpeg.exe'));

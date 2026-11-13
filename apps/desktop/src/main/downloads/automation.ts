@@ -50,10 +50,12 @@ export async function extractArchive(
   // Windows fallback for .zip files: PowerShell Expand-Archive
   if (isWindows && lower.endsWith('.zip')) {
     try {
-      const escapedArchive = archivePath.replace(/"/g, '`"');
-      const escapedDest = destinationDir.replace(/"/g, '`"');
-      const script = `Expand-Archive -LiteralPath "${escapedArchive}" -DestinationPath "${escapedDest}" -Force`;
-      await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 180_000 });
+      const script =
+        'Expand-Archive -LiteralPath $env:GRABBIT_ARCHIVE -DestinationPath $env:GRABBIT_DEST -Force';
+      await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        timeout: 180_000,
+        env: { ...process.env, GRABBIT_ARCHIVE: archivePath, GRABBIT_DEST: destinationDir },
+      });
       return { success: true, extractedPath: destinationDir };
     } catch (psErr) {
       logger.error({ err: psErr, archivePath }, 'PowerShell Expand-Archive fallback failed');
@@ -62,6 +64,25 @@ export async function extractArchive(
   }
 
   return { success: false, extractedPath: destinationDir, error: 'No compatible extraction tool succeeded' };
+}
+
+/**
+ * Sanitizes and safely quotes a variable interpolated into a custom shell command.
+ * Strips command-chaining/expansion metacharacters while keeping unspaced safe tokens
+ * unquoted so templates like `echo {fileName}` continue to emit clean output.
+ */
+function formatShellVariable(raw: string | number, alreadyQuoted: boolean): string {
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? String(raw) : '0';
+  }
+  if (process.platform === 'win32') {
+    const clean = raw.replace(/[\x00-\x1f\r\n"&|;<>%^!`]/g, '_');
+    if (alreadyQuoted) return clean;
+    return /[\s()$']/.test(clean) ? `"${clean}"` : clean;
+  }
+  const clean = raw.replace(/[\x00-\x1f\r\n`$;|&><\\]/g, '_');
+  if (alreadyQuoted) return clean.replace(/'/g, "'\\''");
+  return /[^A-Za-z0-9_./:-]/.test(clean) ? `'${clean.replace(/'/g, "'\\''")}'` : clean;
 }
 
 /**
@@ -74,7 +95,12 @@ export async function runCustomCommand(
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   let cmd = commandTemplate;
   for (const [key, val] of Object.entries(variables)) {
-    cmd = cmd.split(`{${key}}`).join(String(val));
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const tokenRegex = new RegExp(`(["']?)\\{${escapedKey}\\}\\1`, 'g');
+    cmd = cmd.replace(tokenRegex, (_m, quote: string) => {
+      const formatted = formatShellVariable(val, Boolean(quote));
+      return quote ? `${quote}${formatted}${quote}` : formatted;
+    });
   }
   try {
     const { stdout, stderr } = await execAsync(cmd, { timeout: 30_000 });

@@ -237,7 +237,7 @@ export class DownloadManager {
       .map((id) => this.items.get(id)!)
       .filter((it) => it && !TERMINAL_STATUSES.includes(it.status));
     this.activeStore.saveSync(active);
-    this.historyStore.saveSync(this.getCappedHistory());
+    this.historyStore.saveSync(this.getCappedHistory(false));
     this.queueStore.saveSync(Array.from(this.queues.values()));
   }
 
@@ -1038,21 +1038,32 @@ export class DownloadManager {
     this.activeStore.save(() => active);
   }
 
-  private getCappedHistory(): DownloadItem[] {
+  private getCappedHistory(notify = true): DownloadItem[] {
     let history = this.order
       .map((id) => this.items.get(id)!)
       .filter((it) => it && TERMINAL_STATUSES.includes(it.status));
 
     if (history.length > MAX_HISTORY_ITEMS) {
       const dropCount = history.length - MAX_HISTORY_ITEMS;
-      const toDrop = new Set(history.slice(0, dropCount).map((it) => it.id));
+      const droppedIds = history.slice(0, dropCount).map((it) => it.id);
+      const toDrop = new Set(droppedIds);
       for (const id of toDrop) {
         this.items.delete(id);
         this.limiters.delete(id);
         this.restarts.delete(id);
+        this.dirty.delete(id);
+        this.progressDirty.delete(id);
+        this.watchedSegments.delete(id);
       }
       this.order = this.order.filter((id) => !toDrop.has(id));
+      for (const q of this.queues.values()) {
+        q.order = q.order.filter((id) => !toDrop.has(id));
+      }
       history = history.slice(dropCount);
+      if (notify) {
+        this.persistQueues();
+        this.deps.onItemsRemoved(droppedIds);
+      }
     }
     return history;
   }
