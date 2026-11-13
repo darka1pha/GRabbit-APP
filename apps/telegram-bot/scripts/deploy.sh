@@ -5,13 +5,14 @@
 # ==============================================================================
 set -euo pipefail
 
-# Determine script and project directory
+# Determine script, bot, and repository root directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+BOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="${1:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 
 echo "🐰 g(Rabbit) — Server Redeployment"
 echo "========================================"
-echo "📍 Project directory: $PROJECT_DIR"
+echo "📍 Repository directory: $PROJECT_DIR"
 cd "$PROJECT_DIR"
 
 # 1. Verify Git Repository
@@ -21,8 +22,8 @@ if [ ! -d ".git" ]; then
 fi
 
 # 2. Check for .env file
-if [ ! -f ".env" ]; then
-  echo "⚠️ Warning: .env file not found in $PROJECT_DIR. Ensure required environment variables are set."
+if [ ! -f "$BOT_DIR/.env" ] && [ ! -f ".env" ]; then
+  echo "⚠️ Warning: .env file not found in $BOT_DIR or $PROJECT_DIR. Ensure required environment variables are set."
 fi
 
 # 3. Pull latest changes from origin/main
@@ -42,7 +43,7 @@ fi
 
 # 5. Rebuild and restart the app service
 echo "🐳 Rebuilding and restarting application container..."
-$COMPOSE up -d --build app
+$COMPOSE -f "$BOT_DIR/docker-compose.yml" up -d --build app
 
 # 6. Clean up dangling images
 echo "🧹 Cleaning up unused Docker images..."
@@ -50,7 +51,7 @@ docker image prune -f
 
 # 7. Verify running containers
 echo "📋 Active containers:"
-$COMPOSE ps
+$COMPOSE -f "$BOT_DIR/docker-compose.yml" ps
 
 echo "========================================"
 echo "✅ g(Rabbit) redeployment completed successfully!"

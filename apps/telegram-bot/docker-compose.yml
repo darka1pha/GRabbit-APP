@@ -1,8 +1,8 @@
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/telegram-bot/Dockerfile
     container_name: grab-bit-app
     restart: unless-stopped
     depends_on:

@@ -5,11 +5,11 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/bundle-workspace.mjs",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src || echo 'Lint skipped'",
+    "lint": "eslint eslint.config.mjs scripts/bundle-workspace.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "validate:translations": "tsx scripts/validate-translations.ts"

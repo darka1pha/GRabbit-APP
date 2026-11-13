@@ -10,20 +10,27 @@ WORKDIR /app
 # Enable corepack and prepare pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy package manifests and config (pnpm-workspace.yaml holds allowBuilds approvals)
+# Copy workspace manifests and config (pnpm-workspace.yaml holds allowBuilds approvals)
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
+COPY apps/telegram-bot/package.json ./apps/telegram-bot/
+COPY packages/core/package.json ./packages/core/
+COPY packages/types/package.json ./packages/types/
+COPY packages/utils/package.json ./packages/utils/
 
-# Install all dependencies (including dev)
-RUN pnpm install --frozen-lockfile || pnpm install --config.strict-dep-builds=false
+# Install dependencies for telegram-bot and workspace packages
+RUN pnpm --filter @grabbit/telegram-bot... install --frozen-lockfile || pnpm --filter @grabbit/telegram-bot... install --config.strict-dep-builds=false
 
-# Copy source code and build config
-COPY tsconfig.json ./
-COPY src/ ./src/
-COPY locales/ ./locales/
-COPY scripts/ ./scripts/
+# Copy workspace packages & telegram-bot source code and build config
+COPY packages/types ./packages/types
+COPY packages/utils ./packages/utils
+COPY packages/core ./packages/core
+COPY apps/telegram-bot/tsconfig.json ./apps/telegram-bot/
+COPY apps/telegram-bot/src ./apps/telegram-bot/src
+COPY apps/telegram-bot/locales ./apps/telegram-bot/locales
+COPY apps/telegram-bot/scripts ./apps/telegram-bot/scripts
 
-# Build TypeScript to dist/
-RUN pnpm build
+# Build TypeScript + workspace bundle to apps/telegram-bot/dist/
+RUN pnpm --filter @grabbit/telegram-bot build
 
 # Stage 2: Production runtime image
 FROM node:22-bookworm-slim AS runner
@@ -52,17 +59,23 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy manifests
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
+COPY apps/telegram-bot/package.json ./apps/telegram-bot/
+COPY packages/core/package.json ./packages/core/
+COPY packages/types/package.json ./packages/types/
+COPY packages/utils/package.json ./packages/utils/
 
 # Install only production dependencies
-RUN pnpm install --prod --ignore-scripts --config.strict-dep-builds=false
+RUN pnpm --filter @grabbit/telegram-bot... install --prod --ignore-scripts --config.strict-dep-builds=false
 
 # Copy build artifacts and runtime resources
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/locales ./locales
-COPY src/database/migrations ./src/database/migrations
+COPY --from=builder /app/apps/telegram-bot/dist ./apps/telegram-bot/dist
+COPY --from=builder /app/apps/telegram-bot/locales ./apps/telegram-bot/locales
+COPY apps/telegram-bot/src/database/migrations ./apps/telegram-bot/src/database/migrations
 
 # Create temp media directory
 RUN mkdir -p /app/temp
+
+WORKDIR /app/apps/telegram-bot
 
 ENV NODE_ENV=production
 ENV YTDLP_PATH=/usr/local/bin/yt-dlp
