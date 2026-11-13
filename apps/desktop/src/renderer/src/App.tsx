@@ -310,7 +310,7 @@ function Shell() {
             <button
               className="quick-pill btn ghost"
               onClick={() => setCommandPaletteOpen(true)}
-              title="Command Palette (Ctrl+K)"
+              title={`${t('palette.title')} (Ctrl+K)`}
             >
               <Search size={13} />
               <span className="kbd">Ctrl+K</span>
@@ -395,7 +395,7 @@ function Shell() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
             >
-              <ErrorBoundary fallbackTitle="View Rendering Error">
+              <ErrorBoundary fallbackTitle={t('app.viewRenderError')}>
                 {view === 'grab' && (
                   <GrabView
                     pendingInput={grabInput}

@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
@@ -90,6 +90,110 @@ function canResume(item: DownloadItem): boolean {
   return item.status === 'paused' || item.status === 'error';
 }
 
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function restoreRemovedItems(items: DownloadItem[]): void {
+  if (items.length === 0) return;
+  const http = items
+    .filter((i) => i.kind === 'http')
+    .map((i) => ({
+      url: i.url,
+      fileName: i.fileName,
+      category: i.category,
+      directory: i.directory,
+      connections: i.connections,
+      queueId: i.queueId,
+      startPaused: true,
+    }));
+  const media = items
+    .filter((i) => i.kind === 'media' && i.media)
+    .map((i) => ({
+      platform: i.media!.platform,
+      mediaId: i.media!.mediaId,
+      format: i.media!.format,
+      qualityId: i.media!.qualityId,
+      url: i.url,
+      title: i.media!.title,
+      author: i.media!.author,
+      thumbnailUrl: i.media!.thumbnailUrl,
+      durationSeconds: i.media!.durationSeconds,
+      estimatedSizeBytes: i.totalBytes ?? undefined,
+      directory: i.directory,
+      queueId: i.queueId,
+      startPaused: true,
+    }));
+  if (http.length > 0) void api.downloads.addHttp(http);
+  if (media.length > 0) void api.downloads.addMedia(media);
+}
+
+function lowerBoundRow(offsets: number[], target: number): number {
+  const count = offsets.length - 1;
+  if (count <= 0) return 0;
+  let lo = 0;
+  let hi = count - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (offsets[mid + 1] <= target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function useVirtualVariableRows(
+  container: RefObject<HTMLElement | null>,
+  heights: number[]
+): { start: number; end: number; topHeight: number; bottomHeight: number } {
+  const offsets = useMemo(() => {
+    const acc = new Array<number>(heights.length + 1);
+    acc[0] = 0;
+    for (let i = 0; i < heights.length; i++) {
+      acc[i + 1] = acc[i] + heights[i];
+    }
+    return acc;
+  }, [heights]);
+
+  const count = heights.length;
+  const [range, setRange] = useState({ start: 0, end: Math.min(count, 40) });
+
+  useLayoutEffect(() => {
+    const el = container.current;
+    if (!el || count === 0) {
+      setRange({ start: 0, end: 0 });
+      return;
+    }
+    const update = () => {
+      const top = el.scrollTop;
+      const bottom = top + el.clientHeight;
+      const start = Math.max(0, lowerBoundRow(offsets, top) - OVERSCAN_ROWS);
+      const end = Math.min(count, lowerBoundRow(offsets, bottom) + 1 + OVERSCAN_ROWS);
+      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      observer.disconnect();
+    };
+  }, [container, count, offsets]);
+
+  const start = Math.min(range.start, count);
+  const end = Math.min(Math.max(range.end, start), count);
+  return {
+    start,
+    end,
+    topHeight: offsets[start] ?? 0,
+    bottomHeight: (offsets[count] ?? 0) - (offsets[end] ?? 0),
+  };
+}
+
 /**
  * Which rows of a fixed-row-height list are in (or near) view. Only those are rendered; the
  * rest of the list is represented by two spacers of the right height.
@@ -169,7 +273,7 @@ export function DownloadsView({
   const [queueModal, setQueueModal] = useState<{ queue?: DownloadQueue | null } | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'added' | 'name' | 'size' | 'progress' | 'speed'>('added');
+  const [sortBy, setSortBy] = useState<'order' | 'added' | 'name' | 'size' | 'progress' | 'speed'>('added');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -204,7 +308,6 @@ export function DownloadsView({
   const queueMenuRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const undoBufferRef = useRef<{ items: DownloadItem[] } | null>(null);
 
   useEffect(() => {
     if (!showViewMenu && !showQueueMenu) return;
@@ -273,6 +376,16 @@ export function DownloadsView({
     return () => clearInterval(timer);
   }, [sortsByLiveValue, anyActive]);
 
+  const queueOrderMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const targetQueues = selectedQueueId === 'all' ? queues : queues.filter((q) => q.id === selectedQueueId);
+    let idx = 0;
+    for (const q of targetQueues) {
+      for (const id of q.order) map.set(id, idx++);
+    }
+    return map;
+  }, [queues, selectedQueueId]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = inQueue.filter(
@@ -286,6 +399,11 @@ export function DownloadsView({
       const a = live(x);
       const b = live(y);
       switch (sortBy) {
+        case 'order': {
+          const ia = queueOrderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+          const ib = queueOrderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+          return ia !== ib ? ia - ib : a.createdAt - b.createdAt;
+        }
         case 'name':
           return a.fileName.localeCompare(b.fileName) * mult;
         case 'size':
@@ -300,7 +418,7 @@ export function DownloadsView({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inQueue, filter, query, sortBy, sortDir, sortsByLiveValue, liveSortTick]);
+  }, [inQueue, filter, query, sortBy, sortDir, sortsByLiveValue, liveSortTick, queueOrderMap]);
 
   const counts = useMemo(() => {
     const c: Record<StatusFilter, number> = { all: 0, active: 0, queued: 0, completed: 0, failed: 0 };
@@ -336,7 +454,15 @@ export function DownloadsView({
       : null;
   const rowHeight = density === 'compact' ? ROW_HEIGHT_COMPACT : ROW_HEIGHT_COMFORTABLE;
   const rows = useVirtualRows(tableRef, visible.length, rowHeight);
-  const queueNames = useMemo(() => new Map(queues.map((q) => [q.id, q.name])), [queues]);
+  const queueDisplayName = useCallback(
+    (q: Pick<DownloadQueue, 'id' | 'name'>) => {
+      if (q.id === 'main' && (!q.name || q.name === 'Main Queue')) return t('queue.main');
+      if (q.id === 'scheduled' && (!q.name || q.name === 'Scheduled Queue')) return t('queue.scheduled');
+      return q.name;
+    },
+    [t]
+  );
+  const queueNames = useMemo(() => new Map(queues.map((q) => [q.id, queueDisplayName(q)])), [queues, queueDisplayName]);
   const currentQueue = useMemo(
     () => (selectedQueueId === 'all' ? null : queues.find((q) => q.id === selectedQueueId) ?? null),
     [queues, selectedQueueId]
@@ -458,7 +584,7 @@ export function DownloadsView({
           const totalBytes = items.reduce((sum, i) => sum + (i.totalBytes ?? i.receivedBytes ?? 0), 0);
           result.push({
             id: q.id,
-            title: q.name,
+            title: queueDisplayName(q),
             items,
             totalBytes,
           });
@@ -479,7 +605,31 @@ export function DownloadsView({
     }
 
     return [];
-  }, [groupBy, visible, t, queueNames, queues]);
+  }, [groupBy, visible, t, queueNames, queues, queueDisplayName]);
+
+  const flatGroupedRows = useMemo(() => {
+    if (groupBy === 'none') return [];
+    const list: Array<
+      | { kind: 'group'; group: DownloadGroup; isCollapsed: boolean }
+      | { kind: 'item'; item: DownloadItem }
+    > = [];
+    for (const grp of groups) {
+      const isCollapsed = collapsedGroups.has(grp.id);
+      list.push({ kind: 'group', group: grp, isCollapsed });
+      if (!isCollapsed) {
+        for (const item of grp.items) {
+          list.push({ kind: 'item', item });
+        }
+      }
+    }
+    return list;
+  }, [groupBy, groups, collapsedGroups]);
+
+  const groupedRowHeights = useMemo(
+    () => flatGroupedRows.map((entry) => (entry.kind === 'group' ? 36 : rowHeight)),
+    [flatGroupedRows, rowHeight]
+  );
+  const groupedVirtual = useVirtualVariableRows(tableRef, groupedRowHeights);
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -529,42 +679,13 @@ export function DownloadsView({
   const removeWithUndo = useCallback(
     (targets: DownloadItem[]) => {
       const targetIds = targets.map((t) => t.id);
-      undoBufferRef.current = { items: targets.slice() };
+      const snapshot = targets.slice();
       void run(async () => {
         await api.downloads.remove(targetIds, false);
         toast(t('dl.confirmRemove', { count: targetIds.length }), 'info', {
           label: t('common.undo'),
           run: () => {
-            const buf = undoBufferRef.current;
-            if (!buf || buf.items.length === 0) return;
-            const http = buf.items
-              .filter((i) => i.kind === 'http')
-              .map((i) => ({
-                url: i.url,
-                fileName: i.fileName,
-                category: i.category,
-                directory: i.directory,
-                connections: i.connections,
-                queueId: i.queueId,
-                startPaused: true,
-              }));
-            const media = buf.items
-              .filter((i) => i.kind === 'media' && i.media)
-              .map((i) => ({
-                platform: i.media!.platform,
-                mediaId: i.media!.mediaId,
-                format: i.media!.format,
-                qualityId: i.media!.qualityId,
-                url: i.url,
-                title: i.media!.title,
-                author: i.media!.author,
-                thumbnailUrl: i.media!.thumbnailUrl,
-                directory: i.directory,
-                queueId: i.queueId,
-                startPaused: true,
-              }));
-            if (http.length > 0) void api.downloads.addHttp(http);
-            if (media.length > 0) void api.downloads.addMedia(media);
+            restoreRemovedItems(snapshot);
             toast(t('dl.undone'), 'success');
           },
         });
@@ -576,26 +697,13 @@ export function DownloadsView({
   const clearCompletedWithUndo = useCallback(() => {
     const completed = downloads.filter((d) => d.status === 'completed');
     if (completed.length === 0) return;
-    undoBufferRef.current = { items: completed.slice() };
+    const snapshot = completed.slice();
     void run(async () => {
       await api.downloads.clearCompleted();
       toast(t('dl.clearedCompleted'), 'info', {
         label: t('common.undo'),
         run: () => {
-          const buf = undoBufferRef.current;
-          if (!buf || buf.items.length === 0) return;
-          const http = buf.items
-            .filter((i) => i.kind === 'http')
-            .map((i) => ({
-              url: i.url,
-              fileName: i.fileName,
-              category: i.category,
-              directory: i.directory,
-              connections: i.connections,
-              queueId: i.queueId,
-              startPaused: true,
-            }));
-          if (http.length > 0) void api.downloads.addHttp(http);
+          restoreRemovedItems(snapshot);
           toast(t('dl.undone'), 'success');
         },
       });
@@ -734,7 +842,7 @@ export function DownloadsView({
       ...queues
         .filter((q) => q.id !== (item.queueId || 'main'))
         .map((q) => ({
-          label: `${t('queue.moveTo')}: ${q.name}`,
+          label: `${t('queue.moveTo')}: ${queueDisplayName(q)}`,
           icon: <Layers size={15} />,
           onClick: () =>
             void run(async () => {
@@ -745,10 +853,10 @@ export function DownloadsView({
             }),
         })),
       { separator: true },
-      { label: t('dl.moveTop'), icon: <ArrowUpToLine size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'top')) },
-      { label: t('dl.moveUp'), icon: <ArrowUp size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'up')) },
-      { label: t('dl.moveDown'), icon: <ArrowDown size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'down')) },
-      { label: t('dl.moveBottom'), icon: <ArrowDownToLine size={15} />, onClick: () => void run(() => api.downloads.move(item.id, 'bottom')) },
+      { label: t('dl.moveTop'), icon: <ArrowUpToLine size={15} />, onClick: () => { setSortBy('order'); void run(() => api.downloads.move(item.id, 'top')); } },
+      { label: t('dl.moveUp'), icon: <ArrowUp size={15} />, onClick: () => { setSortBy('order'); void run(() => api.downloads.move(item.id, 'up')); } },
+      { label: t('dl.moveDown'), icon: <ArrowDown size={15} />, onClick: () => { setSortBy('order'); void run(() => api.downloads.move(item.id, 'down')); } },
+      { label: t('dl.moveBottom'), icon: <ArrowDownToLine size={15} />, onClick: () => { setSortBy('order'); void run(() => api.downloads.move(item.id, 'bottom')); } },
       { separator: true },
       { label: t('dl.remove'), icon: <Trash2 size={15} />, onClick: () => setDialog({ kind: 'remove', ids: ids(targets), deleteFiles: false }) },
       {
@@ -812,13 +920,29 @@ export function DownloadsView({
         return;
       }
 
-      const queueItems = inQueue.filter((d) => (d.queueId || 'main') === targetQueueId);
-      const order = queueItems.map((d) => d.id);
+      const targetQueue = queues.find((q) => q.id === targetQueueId);
+      const allInTargetQueue = downloads.filter((d) => (d.queueId || 'main') === targetQueueId);
+      const knownIds = new Set(allInTargetQueue.map((d) => d.id));
+      const existingSet = new Set<string>();
+      const order: string[] = [];
+      for (const id of targetQueue?.order ?? []) {
+        if (knownIds.has(id) && !existingSet.has(id)) {
+          existingSet.add(id);
+          order.push(id);
+        }
+      }
+      for (const d of allInTargetQueue) {
+        if (!existingSet.has(d.id)) {
+          existingSet.add(d.id);
+          order.push(d.id);
+        }
+      }
       const srcIdx = order.indexOf(sourceId);
       const dstIdx = order.indexOf(targetItem.id);
       if (srcIdx >= 0 && dstIdx >= 0) {
         order.splice(srcIdx, 1);
         order.splice(dstIdx, 0, sourceId);
+        setSortBy('order');
         void run(() => api.queues.reorder(targetQueueId, order));
       }
     },
@@ -951,7 +1075,7 @@ export function DownloadsView({
               <Layers size={14} className="queue-trigger-icon" />
               <span className="queue-trigger-prefix">{t('queue.label')}:</span>
               <span className="queue-trigger-name">
-                {currentQueue ? currentQueue.name : t('queue.all')}
+                {currentQueue ? queueDisplayName(currentQueue) : t('queue.all')}
               </span>
               {currentQueue && (
                 <span
@@ -1085,8 +1209,8 @@ export function DownloadsView({
                             className={`queue-dot ${q.enabled ? 'running' : 'stopped'}`}
                             title={q.enabled ? t('queue.start') : t('queue.stop')}
                           />
-                          <span className="queue-dropdown-item-title" title={q.name}>
-                            {q.name}
+                          <span className="queue-dropdown-item-title" title={queueDisplayName(q)}>
+                            {queueDisplayName(q)}
                           </span>
                         </div>
                         <div className="queue-dropdown-item-right" onClick={(e) => e.stopPropagation()}>
@@ -1226,71 +1350,84 @@ export function DownloadsView({
                   )}
                 </>
               ) : (
-                groups.map((grp) => {
-                  const isCollapsed = collapsedGroups.has(grp.id);
-                  return (
-                    <Fragment key={grp.id}>
-                      <tr className="group-header-row" role="row">
-                        <td colSpan={8}>
-                          <div className="group-header-content">
-                            <button
-                              type="button"
-                              className="group-collapse-btn"
-                              onClick={() => toggleGroupCollapse(grp.id)}
-                            >
-                              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                              <span>{grp.title}</span>
-                              <span className="group-count-pill">{grp.items.length}</span>
-                              {grp.totalBytes > 0 && (
-                                <span className="group-size-pill">({formatBytes(grp.totalBytes, language)})</span>
-                              )}
-                            </button>
-                            <div className="group-actions">
-                              {grp.items.some(canResume) && (
-                                <button
-                                  type="button"
-                                  className="btn ghost xs"
-                                  title={t('dl.resume')}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void run(() => api.downloads.resume(grp.items.filter(canResume).map((i) => i.id)));
-                                  }}
-                                >
-                                  <Play size={12} />
-                                </button>
-                              )}
-                              {grp.items.some(canPause) && (
-                                <button
-                                  type="button"
-                                  className="btn ghost xs"
-                                  title={t('dl.pause')}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void run(() => api.downloads.pause(grp.items.filter(canPause).map((i) => i.id)));
-                                  }}
-                                >
-                                  <Pause size={12} />
-                                </button>
-                              )}
+                <>
+                  {groupedVirtual.topHeight > 0 && (
+                    <tr className="dl-spacer" aria-hidden="true">
+                      <td colSpan={8} style={{ height: groupedVirtual.topHeight }} />
+                    </tr>
+                  )}
+                  {flatGroupedRows.slice(groupedVirtual.start, groupedVirtual.end).map((entry) => {
+                    if (entry.kind === 'group') {
+                      const grp = entry.group;
+                      const isCollapsed = entry.isCollapsed;
+                      return (
+                        <tr key={`group-${grp.id}`} className="group-header-row" role="row">
+                          <td colSpan={8}>
+                            <div className="group-header-content">
+                              <button
+                                type="button"
+                                className="group-collapse-btn"
+                                onClick={() => toggleGroupCollapse(grp.id)}
+                              >
+                                {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                                <span>{grp.title}</span>
+                                <span className="group-count-pill">{grp.items.length}</span>
+                                {grp.totalBytes > 0 && (
+                                  <span className="group-size-pill">({formatBytes(grp.totalBytes, language)})</span>
+                                )}
+                              </button>
+                              <div className="group-actions">
+                                {grp.items.some(canResume) && (
+                                  <button
+                                    type="button"
+                                    className="btn ghost xs"
+                                    title={t('dl.resume')}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void run(() => api.downloads.resume(grp.items.filter(canResume).map((i) => i.id)));
+                                    }}
+                                  >
+                                    <Play size={12} />
+                                  </button>
+                                )}
+                                {grp.items.some(canPause) && (
+                                  <button
+                                    type="button"
+                                    className="btn ghost xs"
+                                    title={t('dl.pause')}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void run(() => api.downloads.pause(grp.items.filter(canPause).map((i) => i.id)));
+                                    }}
+                                  >
+                                    <Pause size={12} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                      </tr>
-                      {!isCollapsed &&
-                        grp.items.map((item) => (
-                          <DownloadRow
-                            key={item.id}
-                            item={item}
-                            selected={selected.has(item.id)}
-                            isFocused={focusedId === item.id}
-                            queueName={selectedQueueId === 'all' && groupBy !== 'queue' ? queueNames.get(item.queueId || 'main') : undefined}
-                            actions={rowActions}
-                            density={density}
-                          />
-                        ))}
-                    </Fragment>
-                  );
-                })
+                          </td>
+                        </tr>
+                      );
+                    }
+                    const item = entry.item;
+                    return (
+                      <DownloadRow
+                        key={item.id}
+                        item={item}
+                        selected={selected.has(item.id)}
+                        isFocused={focusedId === item.id}
+                        queueName={selectedQueueId === 'all' && groupBy !== 'queue' ? queueNames.get(item.queueId || 'main') : undefined}
+                        actions={rowActions}
+                        density={density}
+                      />
+                    );
+                  })}
+                  {groupedVirtual.bottomHeight > 0 && (
+                    <tr className="dl-spacer" aria-hidden="true">
+                      <td colSpan={8} style={{ height: groupedVirtual.bottomHeight }} />
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
@@ -1371,7 +1508,7 @@ export function DownloadsView({
                     </option>
                     {queues.map((q) => (
                       <option key={q.id} value={q.id}>
-                        {q.name}
+                        {queueDisplayName(q)}
                       </option>
                     ))}
                   </select>
@@ -1547,7 +1684,7 @@ const DownloadRow = memo(function DownloadRow({
       <>
         {item.checksum?.verified === true && <span className="badge success">{t('dl.checksumOk')}</span>}
         {item.checksum?.verified === false && <span className="badge danger">{t('dl.checksumBad')}</span>}
-        {item.media?.author ?? new URL(item.url).hostname}
+        {item.media?.author ?? safeHostname(item.url)}
       </>
     );
   } else {
@@ -1678,7 +1815,9 @@ function DetailsPanel({
     }
   }, [item.speed, item.status]);
   const total = item.totalBytes ?? 0;
-  const where = item.filePath ?? `${item.directory}\\${item.fileName}`;
+  const sep = item.directory.includes('/') && !item.directory.includes('\\') ? '/' : '\\';
+  const baseDir = item.directory.replace(/[\\/]+$/, '');
+  const where = item.filePath ?? `${baseDir}${sep}${item.fileName}`;
   return (
     <motion.div
       className="details"

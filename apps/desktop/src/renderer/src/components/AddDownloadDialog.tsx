@@ -190,9 +190,11 @@ export function AddDownloadDialog({
   }, [single, referrer, headersText]);
 
   const effectiveCategory: Category = category === 'auto' ? (probe?.category ?? 'other') : category;
+  const pathSep = settings?.downloadDir.includes('/') && !settings.downloadDir.includes('\\') ? '/' : '\\';
+  const baseDownloadDir = settings ? settings.downloadDir.replace(/[\\/]+$/, '') : '';
   const defaultFolder = settings
     ? settings.categorySubfolders
-      ? `${settings.downloadDir}\\${CATEGORY_FOLDERS[effectiveCategory]}`
+      ? `${baseDownloadDir}${pathSep}${CATEGORY_FOLDERS[effectiveCategory]}`
       : settings.downloadDir
     : '';
   const algorithm = digestAlgorithm(checksum);
@@ -237,7 +239,11 @@ export function AddDownloadDialog({
     try {
       const content = await file.text();
       setBatchText((prev) => (prev.trim() ? `${prev.trim()}\n${content}` : content));
-      toast(t('grab.added', { count: 1 }), 'info');
+      const importedCount = content
+        .split(/\r?\n/)
+        .flatMap((line) => (line.trim().startsWith('#') ? [] : line.trim().split(/\s+/)))
+        .filter((token) => /^https?:\/\//i.test(token)).length;
+      toast(t('add.batchDetected', { count: importedCount }), 'info');
     } catch {
       toast('Failed to read file', 'error');
     }
@@ -270,7 +276,7 @@ export function AddDownloadDialog({
       return existing ? `${existing}\n${generatedPatternUrls.join('\n')}` : generatedPatternUrls.join('\n');
     });
     setMode('batch');
-    toast(t('grab.added', { count: generatedPatternUrls.length }), 'info');
+    toast(t('add.batchDetected', { count: generatedPatternUrls.length }), 'info');
   }
 
   async function submit(startPaused: boolean, forceDuplicate = false) {
@@ -764,7 +770,7 @@ export function AddDownloadDialog({
             try {
               await api.downloads.changeUrl(duplicateItem.id, single);
               await api.downloads.resume([duplicateItem.id]);
-              toast(t('dl.copied'), 'success');
+              toast(t('dl.linkRefreshed'), 'success');
               setDuplicateItem(null);
               onClose();
             } catch (err) {

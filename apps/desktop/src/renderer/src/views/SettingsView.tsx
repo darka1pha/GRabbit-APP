@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
 import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
@@ -7,18 +7,78 @@ import { DayPicker, Switch } from '../components/ui';
 import { QRCodeModal } from '../components/QRCodeModal';
 import { playCompletionChime } from '../utils/sound';
 
+const SettingsSearchContext = createContext<{
+  query: string;
+  reportMatch(id: string, matched: boolean): void;
+}>({
+  query: '',
+  reportMatch: () => {},
+});
+
+const SectionFilterContext = createContext<{
+  sectionMatches: boolean;
+  reportChild(id: string, matched: boolean): void;
+}>({
+  sectionMatches: true,
+  reportChild: () => {},
+});
+
 function Section({ id, title, icon, children }: { id?: string; title: string; icon: ReactNode; children: ReactNode }) {
+  const { query, reportMatch } = useContext(SettingsSearchContext);
+  const sectionId = useId();
+  const [matchedChildren, setMatchedChildren] = useState<Set<string>>(() => new Set());
+  const q = query.trim().toLowerCase();
+  const sectionMatches = !q || title.toLowerCase().includes(q);
+  const visible = sectionMatches || matchedChildren.size > 0;
+
+  const reportChild = useCallback((childId: string, matched: boolean) => {
+    setMatchedChildren((prev) => {
+      const has = prev.has(childId);
+      if (has === matched) return prev;
+      const next = new Set(prev);
+      if (matched) next.add(childId);
+      else next.delete(childId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    reportMatch(sectionId, visible);
+    return () => reportMatch(sectionId, false);
+  }, [sectionId, visible, reportMatch]);
+
+  const ctx = useMemo(() => ({ sectionMatches, reportChild }), [sectionMatches, reportChild]);
+
   return (
-    <div id={id} className="settings-section">
-      <h3>
-        {icon} {title}
-      </h3>
-      <div className="card">{children}</div>
-    </div>
+    <SectionFilterContext.Provider value={ctx}>
+      <div id={id} className="settings-section" style={visible ? undefined : { display: 'none' }}>
+        <h3>
+          {icon} {title}
+        </h3>
+        <div className="card">{children}</div>
+      </div>
+    </SectionFilterContext.Provider>
   );
 }
 
 function Setting({ label, hint, children, stack }: { label: string; hint?: string; children: ReactNode; stack?: boolean }) {
+  const { query } = useContext(SettingsSearchContext);
+  const { sectionMatches, reportChild } = useContext(SectionFilterContext);
+  const settingId = useId();
+  const q = query.trim().toLowerCase();
+  const matched =
+    !q ||
+    sectionMatches ||
+    label.toLowerCase().includes(q) ||
+    (hint ? hint.toLowerCase().includes(q) : false);
+
+  useEffect(() => {
+    reportChild(settingId, matched);
+    return () => reportChild(settingId, false);
+  }, [settingId, matched, reportChild]);
+
+  if (!matched) return null;
+
   return (
     <div className={`setting ${stack ? 'stack' : ''}`}>
       <div className="label">
@@ -75,6 +135,20 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
+  const [matchedSections, setMatchedSections] = useState<Set<string>>(() => new Set());
+
+  const reportMatch = useCallback((id: string, matched: boolean) => {
+    setMatchedSections((prev) => {
+      const has = prev.has(id);
+      if (has === matched) return prev;
+      const next = new Set(prev);
+      if (matched) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const searchCtx = useMemo(() => ({ query: searchQuery, reportMatch }), [searchQuery, reportMatch]);
 
   useEffect(() => {
     if (initialSection) {
@@ -136,7 +210,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
               { id: 'sec-downloads', label: t('set.downloads') },
               { id: 'sec-automation', label: t('set.automation') },
               { id: 'sec-media', label: t('set.media') },
-              { id: 'sec-extension', label: 'RPC Bridge' },
+              { id: 'sec-extension', label: t('status.rpcBridge') },
               { id: 'sec-tools', label: t('set.tools') },
               { id: 'sec-updates', label: t('set.appUpdates') },
             ].map((item) => (
@@ -152,6 +226,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
           </div>
         </div>
 
+        <SettingsSearchContext.Provider value={searchCtx}>
         <Section id="sec-general" title={t('set.general')} icon={<Settings size={15} />}>
           <Setting label={t('set.language')}>
             <div className="segmented">
@@ -339,7 +414,7 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             <LazyInput
               className="mono"
               value={s.automation?.customCommand ?? ''}
-              placeholder="e.g. cmd /c echo Finished {fileName}"
+              placeholder="e.g. echo Finished {fileName}"
               onSave={(v) => void save({ automation: { customCommand: v } })}
             />
           </Setting>
@@ -473,7 +548,11 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
                   min={1024}
                   max={65535}
                   value={s.extension.port}
-                  onSave={(v) => void save({ extension: { port: num(v) || 31542 } })}
+                  onSave={(v) => {
+                    const parsed = Math.trunc(num(v));
+                    const clamped = parsed > 0 ? Math.min(65535, Math.max(1024, parsed)) : 31542;
+                    void save({ extension: { port: clamped } });
+                  }}
                 />
               </Setting>
               <Setting label={t('set.extensionToken')} hint={t('set.extensionTokenHint')} stack>
@@ -602,7 +681,8 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
                     const status = await api.updater.check();
                     setUpdateStatus(status);
                     if (status.state === 'not-available') {
-                      toast(`${t('set.upToDate')} (v${status.version ?? tools?.appVersion ?? '1.2.1'})`, 'success');
+                      const ver = status.version ?? tools?.appVersion;
+                      toast(ver ? `${t('set.upToDate')} (v${ver})` : t('set.upToDate'), 'success');
                     }
                   } catch (err) {
                     toast(errorText(t, err), 'error');
@@ -633,6 +713,13 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
             <span />
           </Setting>
         </Section>
+
+        {searchQuery.trim() !== '' && matchedSections.size === 0 && (
+          <div className="empty" style={{ padding: '40px 16px' }}>
+            <p className="muted">{t('set.noMatchingSettings')}</p>
+          </div>
+        )}
+        </SettingsSearchContext.Provider>
 
         {showQrModal && tools?.lanIp && (
           <QRCodeModal

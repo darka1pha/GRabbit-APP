@@ -129,8 +129,8 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
     if (!el) return;
     const rect = el.getBoundingClientRect();
     setPos({
-      x: Math.min(x, window.innerWidth - rect.width - 8),
-      y: Math.min(y, window.innerHeight - rect.height - 8),
+      x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
     });
   }, [x, y]);
 
@@ -243,6 +243,7 @@ export function CategoryIcon({ category, size = 16 }: { category: Category; size
 export function FileIcon({ item }: { item: DownloadItem }) {
   const [broken, setBroken] = useState(false);
   const thumb = item.media?.thumbnailUrl;
+  useEffect(() => setBroken(false), [thumb]);
   return (
     <div className={`file-icon ${item.category}`}>
       {thumb && !broken ? (
@@ -322,6 +323,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
 
 export function Thumb({ src, className, square }: { src?: string; className?: string; square?: boolean }) {
   const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [src]);
   if (!src || broken) return <div className={`thumb ${square ? 'square' : ''} ${className ?? ''}`} />;
   return (
     <img

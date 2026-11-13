@@ -286,7 +286,12 @@ export function GrabView({
         )}
 
         {state.kind === 'media' && state.meta.isCollection && (
-          <Collection meta={state.meta} onDownload={(requests) => void add(requests)} />
+          <Collection
+            meta={state.meta}
+            directory={directory}
+            onDirectory={setDirectory}
+            onDownload={(requests) => void add(requests)}
+          />
         )}
 
         {state.kind === 'search' && (
@@ -316,7 +321,7 @@ export function GrabView({
                 <div className="row" style={{ marginBottom: 10 }}>
                   <Clock size={14} className="muted" />
                   <b className="small muted" style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Recent Grabs
+                    {t('grab.recent')}
                   </b>
                   <div className="grow" />
                   <button
@@ -490,7 +495,17 @@ function SingleMedia({
   );
 }
 
-function Collection({ meta, onDownload }: { meta: PlatformMetadata; onDownload(requests: AddMediaDownloadRequest[]): void }) {
+function Collection({
+  meta,
+  directory,
+  onDirectory,
+  onDownload,
+}: {
+  meta: PlatformMetadata;
+  directory?: string;
+  onDirectory(dir: string | undefined): void;
+  onDownload(requests: AddMediaDownloadRequest[]): void;
+}) {
   const { t, language } = useI18n();
   const { settings } = useApp();
   const downloadable = meta.items.filter((i) => i.isDownloadable);
@@ -555,6 +570,19 @@ function Collection({ meta, onDownload }: { meta: PlatformMetadata; onDownload(r
         <button className="btn sm" onClick={() => setSelected(new Set())}>
           {t('grab.selectNone')}
         </button>
+        <button
+          className="btn ghost sm"
+          title={directory ?? t('grab.default')}
+          onClick={async () => {
+            const dir = await api.settings.chooseDirectory(directory);
+            onDirectory(dir ?? undefined);
+          }}
+        >
+          <FolderOpen size={14} />
+          <span className="ellipsis" style={{ maxWidth: 220 }}>
+            {t('grab.saveTo')}: {directory ?? t('grab.default')}
+          </span>
+        </button>
         <div className="grow" />
         <span className="small muted">{t('grab.formatForAll')}</span>
         <select className="select" value={format} onChange={(e) => setFormat(e.target.value)}>
@@ -569,7 +597,7 @@ function Collection({ meta, onDownload }: { meta: PlatformMetadata; onDownload(r
           disabled={selected.size === 0}
           onClick={() => {
             const option = optionFor();
-            onDownload(meta.items.filter((i) => selected.has(i.id)).map((i) => toRequest(i, option)));
+            onDownload(meta.items.filter((i) => selected.has(i.id)).map((i) => toRequest(i, option, directory)));
           }}
         >
           <Download size={16} /> {t('grab.downloadSelected', { count: selected.size })}
