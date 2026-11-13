@@ -3,6 +3,9 @@ import {
   PlatformMetadata,
   MediaItem,
   MediaOption,
+  DownloadItem,
+  DownloadQueue,
+  DownloadsAggregate,
 } from '@grabbit/types';
 import {
   parsePlatformUrl,
@@ -171,6 +174,52 @@ export class MobileBridgeService {
     }
   }
 
+  /** Returns base URL and auth headers when Desktop RPC Bridge is configured, or null otherwise. */
+  private getDesktopRpcConfig(): { baseUrl: string; headers: Record<string, string> } | null {
+    const { desktopBridge } = mobileSettingsManager.getSettings();
+    if (!desktopBridge.enabled || !desktopBridge.host) {
+      return null;
+    }
+    return {
+      baseUrl: `http://${desktopBridge.host.trim()}:${desktopBridge.port || 31542}`,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(desktopBridge.token ? { 'X-GRabbit-Token': desktopBridge.token } : {}),
+      },
+    };
+  }
+
+  private async requestDesktopRpc<T = Record<string, unknown>>(
+    path: string,
+    init: { method?: 'GET' | 'POST'; body?: unknown; timeoutMs?: number } = {}
+  ): Promise<{ ok: boolean; data?: T; error?: string }> {
+    const cfg = this.getDesktopRpcConfig();
+    if (!cfg) {
+      return { ok: false, error: 'Desktop RPC Bridge is not enabled in Settings.' };
+    }
+    try {
+      const res = await fetchWithTimeout(
+        `${cfg.baseUrl}${path}`,
+        {
+          method: init.method ?? 'GET',
+          headers: cfg.headers,
+          ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        },
+        init.timeoutMs ?? 2500
+      );
+      const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+      if (!res.ok) {
+        return { ok: false, error: data?.error || `Desktop returned HTTP ${res.status}` };
+      }
+      return { ok: true, data: data ?? ({} as T) };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || `Could not reach Desktop at ${cfg.baseUrl}`,
+      };
+    }
+  }
+
   /**
    * Send a download request directly to the paired Desktop PC over Wi-Fi RPC Bridge.
    */
@@ -178,40 +227,119 @@ export class MobileBridgeService {
     url: string,
     options?: { fileName?: string; referrer?: string; startPaused?: boolean }
   ): Promise<{ success: boolean; error?: string }> {
-    const { desktopBridge } = mobileSettingsManager.getSettings();
-    if (!desktopBridge.enabled || !desktopBridge.host) {
-      return { success: false, error: 'Desktop RPC Bridge is not enabled in Settings.' };
+    const res = await this.requestDesktopRpc<{ success?: boolean; error?: string }>('/downloads/add', {
+      method: 'POST',
+      body: {
+        url,
+        fileName: options?.fileName,
+        referrer: options?.referrer,
+        startPaused: options?.startPaused,
+      },
+    });
+    if (res.ok && res.data?.success) {
+      return { success: true };
     }
-    try {
-      const rpcUrl = `http://${desktopBridge.host}:${desktopBridge.port}/downloads/add`;
-      const res = await fetchWithTimeout(
-        rpcUrl,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-GRabbit-Token': desktopBridge.token,
-          },
-          body: JSON.stringify({
-            url,
-            fileName: options?.fileName,
-            referrer: options?.referrer,
-            startPaused: options?.startPaused,
-          }),
-        },
-        2500
-      );
-      const data = await res.json();
-      if (res.ok && data?.success) {
-        return { success: true };
-      }
-      return { success: false, error: data?.error || `Desktop returned HTTP ${res.status}` };
-    } catch (err: any) {
-      return {
-        success: false,
-        error: err?.message || `Could not reach Desktop at ${desktopBridge.host}:${desktopBridge.port}`,
-      };
+    return { success: false, error: res.data?.error || res.error || 'Desktop download request failed' };
+  }
+
+  /** Fetches the current downloads list & aggregate speed from the paired Desktop PC. */
+  async getDesktopDownloads(): Promise<{
+    ok: boolean;
+    items: DownloadItem[];
+    aggregate?: DownloadsAggregate;
+    error?: string;
+  }> {
+    const res = await this.requestDesktopRpc<{ items?: DownloadItem[]; aggregate?: DownloadsAggregate }>(
+      '/downloads/list',
+      { method: 'GET', timeoutMs: 2500 }
+    );
+    if (!res.ok) {
+      return { ok: false, items: [], error: res.error };
     }
+    const items = Array.isArray(res.data?.items) ? res.data.items : [];
+    const activeItems = items.filter(
+      (i) => i.status === 'downloading' || i.status === 'starting' || i.status === 'processing'
+    );
+    const totalSpeed = activeItems.reduce((acc, i) => acc + (i.speed || 0), 0);
+    const aggregate: DownloadsAggregate = res.data?.aggregate ?? {
+      active: activeItems.length,
+      speed: totalSpeed,
+      percent: null,
+    };
+    return {
+      ok: true,
+      items,
+      aggregate,
+    };
+  }
+
+  /** Fetches queues defined on the paired Desktop PC. */
+  async getDesktopQueues(): Promise<{ ok: boolean; queues: DownloadQueue[]; error?: string }> {
+    const res = await this.requestDesktopRpc<{ queues?: DownloadQueue[] }>('/queues/list', {
+      method: 'GET',
+      timeoutMs: 2500,
+    });
+    if (!res.ok) {
+      return { ok: false, queues: [], error: res.error };
+    }
+    return {
+      ok: true,
+      queues: Array.isArray(res.data?.queues) ? res.data.queues : [],
+    };
+  }
+
+  async pauseDesktopDownloads(ids: string[]): Promise<{ success: boolean; error?: string }> {
+    const res = await this.requestDesktopRpc<{ success?: boolean }>('/downloads/pause', {
+      method: 'POST',
+      body: { ids },
+    });
+    return { success: Boolean(res.ok && res.data?.success), error: res.error };
+  }
+
+  async resumeDesktopDownloads(ids: string[]): Promise<{ success: boolean; error?: string }> {
+    const res = await this.requestDesktopRpc<{ success?: boolean }>('/downloads/resume', {
+      method: 'POST',
+      body: { ids },
+    });
+    return { success: Boolean(res.ok && res.data?.success), error: res.error };
+  }
+
+  async removeDesktopDownloads(
+    ids: string[],
+    deleteFiles = false
+  ): Promise<{ success: boolean; error?: string }> {
+    const res = await this.requestDesktopRpc<{ success?: boolean }>('/downloads/remove', {
+      method: 'POST',
+      body: { ids, deleteFiles },
+    });
+    return { success: Boolean(res.ok && res.data?.success), error: res.error };
+  }
+
+  async toggleDesktopQueue(
+    id: string,
+    action: 'start' | 'stop'
+  ): Promise<{ success: boolean; error?: string }> {
+    const res = await this.requestDesktopRpc<{ success?: boolean }>('/queues/toggle', {
+      method: 'POST',
+      body: { id, enabled: action === 'start' },
+    });
+    return { success: Boolean(res.ok && res.data?.success), error: res.error };
+  }
+
+  /** Builds a direct authenticated HTTP pull request for a completed Desktop file over Wi-Fi. */
+  getDesktopFilePullRequest(item: Pick<DownloadItem, 'id' | 'fileName'>): {
+    url: string;
+    fileName: string;
+    headers: Record<string, string>;
+  } | null {
+    const cfg = this.getDesktopRpcConfig();
+    if (!cfg) return null;
+    const tokenHeader = cfg.headers['X-GRabbit-Token'];
+    return {
+      url: `${cfg.baseUrl}/downloads/${encodeURIComponent(item.id)}/file`,
+      fileName: item.fileName || 'download.bin',
+      headers: tokenHeader ? { 'X-GRabbit-Token': tokenHeader } : {},
+    };
   }
 
   /**

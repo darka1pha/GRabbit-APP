@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,15 @@ import { useDownloads } from '../hooks/useDownloads';
 import { mobileRecognizer } from '../services/recognizer';
 import { mobileUpdater, MobileUpdateStatus } from '../services/updater';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
+import { ThemeColors } from '../constants/theme';
 import { PairingModal } from './PairingModal';
 import { hapticLight, hapticSuccess } from '../services/haptics';
 
 export function SettingsView() {
-  const { t, isRtl, formatBytes } = useI18n();
+  const { t, isRtl, textDirStyle, formatBytes } = useI18n();
+  const { colors, setTheme } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [settings, setSettings] = useState<MobileSettings>(mobileSettingsManager.getSettings());
   const [updateStatus, setUpdateStatus] = useState<MobileUpdateStatus>(mobileUpdater.getStatus());
   const [showPairingModal, setShowPairingModal] = useState(false);
@@ -53,9 +57,20 @@ export function SettingsView() {
 
   const handleCheckAndUpdate = async () => {
     void hapticLight();
-    const res = await mobileUpdater.checkAndInstallUpdate();
+    const res =
+      updateStatus.state === 'available' && updateStatus.downloadUrl && updateStatus.latestVersion
+        ? await mobileUpdater.downloadAndInstallApk(
+            updateStatus.downloadUrl,
+            updateStatus.latestVersion
+          )
+        : await mobileUpdater.checkAndInstallUpdate();
     if (res.state === 'up-to-date') {
-      Alert.alert(t('set.upToDate'), `GRabbit Mobile v${res.currentVersion} is already up to date.`);
+      Alert.alert(t('set.upToDate'), `GRabbit Mobile v${res.currentVersion}`);
+    } else if (res.state === 'available' && res.latestVersion) {
+      Alert.alert(
+        t('mobile.updateAvailable', { version: res.latestVersion }),
+        t('mobile.updateNotesPrompt', { version: res.latestVersion })
+      );
     } else if (res.state === 'error' && res.error) {
       Alert.alert(t('dl.error'), res.error);
     } else if (res.state === 'installing') {
@@ -112,10 +127,41 @@ export function SettingsView() {
       {/* General & Localization */}
       <View style={styles.section}>
         <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
-          <Ionicons name="globe-outline" size={18} color="#6366f1" />
+          <Ionicons name="globe-outline" size={18} color={colors.accent} />
           <Text style={styles.sectionTitle}>{t('set.general')}</Text>
         </View>
         <View style={styles.card}>
+          {/* Theme */}
+          <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
+              <Text style={[styles.settingLabel, textDirStyle]}>{t('set.theme')}</Text>
+            </View>
+            <View style={styles.segmentedRow}>
+              {(['system', 'dark', 'light'] as const).map((mode) => (
+                <TouchableOpacity
+                  key={mode}
+                  style={[styles.segBtn, settings.theme === mode && styles.segBtnActive]}
+                  onPress={() => {
+                    void hapticLight();
+                    setTheme(mode);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t(`set.theme.${mode}`)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text
+                    style={[
+                      styles.segBtnText,
+                      settings.theme === mode && styles.segBtnTextActive,
+                    ]}
+                  >
+                    {t(`set.theme.${mode}`)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
           {/* Language */}
           <View style={[styles.settingRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
             <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
@@ -242,8 +288,8 @@ export function SettingsView() {
             accessibilityRole="button"
             accessibilityLabel={t('mobile.scanQr')}
           >
-            <Ionicons name="qr-code-outline" size={18} color="#ffffff" />
-            <Text style={styles.qrPairBtnText}>{t('mobile.scanQr')} / Pairing Code</Text>
+            <Ionicons name="qr-code-outline" size={18} color={colors.accent} />
+            <Text style={styles.qrPairBtnText}>{t('mobile.scanQr')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -269,7 +315,7 @@ export function SettingsView() {
                 accessibilityLabel="Decrease concurrent downloads"
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="remove" size={16} color="#ffffff" />
+                <Ionicons name="remove" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
               <Text style={styles.stepperVal}>{settings.maxConcurrent}</Text>
               <TouchableOpacity
@@ -279,7 +325,7 @@ export function SettingsView() {
                 accessibilityLabel="Increase concurrent downloads"
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="add" size={16} color="#ffffff" />
+                <Ionicons name="add" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
           </View>
@@ -365,7 +411,7 @@ export function SettingsView() {
       {/* App Updates */}
       <View style={styles.section}>
         <View style={[styles.sectionHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
-          <Ionicons name="cloud-download-outline" size={18} color="#6366f1" />
+          <Ionicons name="cloud-download-outline" size={18} color={colors.accent} />
           <Text style={styles.sectionTitle}>{t('set.appUpdates')}</Text>
         </View>
         <View style={styles.card}>
@@ -375,10 +421,12 @@ export function SettingsView() {
               <Text style={styles.settingHint}>
                 {updateStatus.state === 'checking'
                   ? t('set.checkingUpdates')
+                  : updateStatus.state === 'available' && updateStatus.latestVersion
+                  ? t('set.updateAvailable', { version: updateStatus.latestVersion })
                   : updateStatus.state === 'downloading'
                   ? t('set.downloadingUpdate', { percent: updateStatus.progressPercent ?? 0 })
                   : updateStatus.state === 'installing'
-                  ? (updateStatus.localUri ? 'Update ready. Tap Install to open package installer.' : 'Launching installer…')
+                  ? t('set.updateReady')
                   : updateStatus.state === 'up-to-date'
                   ? t('set.upToDate')
                   : updateStatus.state === 'error'
@@ -399,11 +447,13 @@ export function SettingsView() {
               <Ionicons name="refresh-outline" size={15} color="#ffffff" />
               <Text style={styles.updateBtnText}>
                 {updateStatus.state === 'checking'
-                  ? 'Checking…'
+                  ? '…'
                   : updateStatus.state === 'downloading'
                   ? `${updateStatus.progressPercent ?? 0}%`
+                  : updateStatus.state === 'available'
+                  ? t('mobile.downloadApk')
                   : updateStatus.state === 'installing'
-                  ? 'Install'
+                  ? t('set.restartAndInstall')
                   : t('app.update')}
               </Text>
             </TouchableOpacity>
@@ -429,243 +479,244 @@ export function SettingsView() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0b0f19',
-  },
-  content: {
-    padding: 16,
-    gap: 20,
-    paddingBottom: 40,
-  },
-  header: {
-    marginVertical: 8,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-  section: {
-    gap: 8,
-  },
-  sectionHeader: {
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 4,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#6366f1',
-  },
-  card: {
-    backgroundColor: '#131b2e',
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#233253',
-    gap: 16,
-  },
-  settingRow: {
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  settingLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  settingHint: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  stepperBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: '#1e2b48',
-    borderWidth: 1,
-    borderColor: '#334155',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperVal: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#6366f1',
-    minWidth: 20,
-    textAlign: 'center',
-  },
-  segmentedRow: {
-    flexDirection: 'row',
-    backgroundColor: '#0b0f19',
-    borderRadius: 8,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: '#233253',
-  },
-  segBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    minHeight: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  segBtnActive: {
-    backgroundColor: '#6366f1',
-  },
-  segBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-  },
-  segBtnTextActive: {
-    color: '#ffffff',
-  },
-  numberInput: {
-    backgroundColor: '#0b0f19',
-    borderWidth: 1,
-    borderColor: '#233253',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    color: '#f8fafc',
-    fontSize: 14,
-    width: 90,
-    textAlign: 'center',
-    minHeight: 40,
-  },
-  storageSummaryBox: {
-    flexDirection: 'row',
-    backgroundColor: '#0b0f19',
-    borderRadius: 10,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#233253',
-  },
-  storageStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  storageStatLabel: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  storageStatVal: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#6366f1',
-  },
-  storageDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: '#233253',
-  },
-  cleanStorageBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#6366f1',
-    borderRadius: 10,
-    paddingVertical: 12,
-    minHeight: 44,
-  },
-  cleanStorageBtnText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  qrPairBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#1e2b48',
-    borderWidth: 1,
-    borderColor: '#6366f1',
-    borderRadius: 10,
-    paddingVertical: 12,
-    minHeight: 44,
-  },
-  qrPairBtnText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  clearBtnRow: {
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    minHeight: 44,
-  },
-  clearBtnTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#f8fafc',
-  },
-  clearBtnHint: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-  updateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#6366f1',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    minHeight: 40,
-  },
-  updateBtnText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  aboutCard: {
-    backgroundColor: '#131b2e',
-    borderRadius: 14,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#233253',
-    gap: 4,
-    marginTop: 8,
-  },
-  aboutTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  aboutVersion: {
-    fontSize: 12,
-    color: '#6366f1',
-    fontWeight: '600',
-  },
-  aboutDesc: {
-    fontSize: 12,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 16,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    content: {
+      padding: 16,
+      gap: 20,
+      paddingBottom: 40,
+    },
+    header: {
+      marginVertical: 8,
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: colors.textPrimary,
+    },
+    subtitle: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    section: {
+      gap: 8,
+    },
+    sectionHeader: {
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 4,
+    },
+    sectionTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.accent,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 16,
+    },
+    settingRow: {
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+    },
+    settingLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    settingHint: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    stepperRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    stepperBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 8,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepperVal: {
+      fontSize: 15,
+      fontWeight: 'bold',
+      color: colors.accent,
+      minWidth: 20,
+      textAlign: 'center',
+    },
+    segmentedRow: {
+      flexDirection: 'row',
+      backgroundColor: colors.background,
+      borderRadius: 8,
+      padding: 3,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    segBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 6,
+      minHeight: 36,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    segBtnActive: {
+      backgroundColor: colors.accent,
+    },
+    segBtnText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    segBtnTextActive: {
+      color: '#ffffff',
+    },
+    numberInput: {
+      backgroundColor: colors.background,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      color: colors.textPrimary,
+      fontSize: 14,
+      width: 90,
+      textAlign: 'center',
+      minHeight: 40,
+    },
+    storageSummaryBox: {
+      flexDirection: 'row',
+      backgroundColor: colors.background,
+      borderRadius: 10,
+      padding: 14,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    storageStat: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    storageStatLabel: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginBottom: 4,
+    },
+    storageStatVal: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: colors.accent,
+    },
+    storageDivider: {
+      width: 1,
+      height: 32,
+      backgroundColor: colors.border,
+    },
+    cleanStorageBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.accent,
+      borderRadius: 10,
+      paddingVertical: 12,
+      minHeight: 44,
+    },
+    cleanStorageBtnText: {
+      color: '#ffffff',
+      fontWeight: 'bold',
+      fontSize: 14,
+    },
+    qrPairBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.surfaceSubtle,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 10,
+      paddingVertical: 12,
+      minHeight: 44,
+    },
+    qrPairBtnText: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+      fontSize: 14,
+    },
+    clearBtnRow: {
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+      minHeight: 44,
+    },
+    clearBtnTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    clearBtnHint: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    updateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: colors.accent,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 8,
+      minHeight: 40,
+    },
+    updateBtnText: {
+      color: '#ffffff',
+      fontWeight: '600',
+      fontSize: 13,
+    },
+    aboutCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      padding: 16,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 4,
+      marginTop: 8,
+    },
+    aboutTitle: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: colors.textPrimary,
+    },
+    aboutVersion: {
+      fontSize: 12,
+      color: colors.accent,
+      fontWeight: '600',
+    },
+    aboutDesc: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: 6,
+      lineHeight: 16,
+    },
+  });

@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
+import { ThemeColors } from '../constants/theme';
 import { hapticSuccess, hapticError, hapticLight } from '../services/haptics';
 
 interface PairingModalProps {
@@ -22,7 +24,9 @@ interface PairingModalProps {
 }
 
 export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps) {
-  const { t, isRtl } = useI18n();
+  const { t, isRtl, textDirStyle } = useI18n();
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const currentBridge = mobileSettingsManager.getSettings().desktopBridge;
   const [host, setHost] = useState(currentBridge.host || '');
   const [port, setPort] = useState(String(currentBridge.port || 31542));
@@ -154,28 +158,28 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.instruction}>{t('mobile.qrInstruction')}</Text>
+          <Text style={[styles.instruction, textDirStyle]}>{t('mobile.qrInstruction')}</Text>
 
           {/* Quick Paste Button */}
           <TouchableOpacity
-            style={styles.pasteBtn}
+            style={[styles.pasteBtn, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
             onPress={handlePasteUri}
             accessibilityRole="button"
             accessibilityLabel={t('grab.paste')}
           >
-            <Ionicons name="clipboard-outline" size={18} color="#6366f1" />
-            <Text style={styles.pasteBtnText}>{t('grab.paste')} Pairing Code / URI</Text>
+            <Ionicons name="clipboard-outline" size={18} color={colors.accent} />
+            <Text style={styles.pasteBtnText}>{t('grab.paste')}</Text>
           </TouchableOpacity>
 
           {/* Manual inputs */}
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Desktop IP</Text>
+            <Text style={[styles.fieldLabel, textDirStyle]}>Desktop IP</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, textDirStyle]}
               value={host}
               onChangeText={setHost}
               placeholder="e.g. 192.168.1.100"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textMuted}
               keyboardType="numeric"
               autoCapitalize="none"
               accessibilityLabel="Desktop IP"
@@ -183,26 +187,26 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Port</Text>
+            <Text style={[styles.fieldLabel, textDirStyle]}>Port</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, textDirStyle]}
               value={port}
               onChangeText={setPort}
               placeholder="31542"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textMuted}
               keyboardType="numeric"
               accessibilityLabel="Port"
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>{t('set.extensionToken')}</Text>
+            <Text style={[styles.fieldLabel, textDirStyle]}>{t('set.extensionToken')}</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, textDirStyle]}
               value={token}
               onChangeText={setToken}
               placeholder="Paste token"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               accessibilityLabel={t('set.extensionToken')}
             />
@@ -266,136 +270,139 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#131b2e',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#233253',
-  },
-  header: {
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#f8fafc',
-  },
-  closeBtn: {
-    padding: 6,
-    minHeight: 44,
-    minWidth: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  instruction: {
-    fontSize: 13,
-    color: '#94a3b8',
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  pasteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-    borderWidth: 1,
-    borderColor: '#6366f1',
-    borderRadius: 10,
-    paddingVertical: 12,
-    marginBottom: 16,
-    minHeight: 44,
-  },
-  pasteBtnText: {
-    color: '#6366f1',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  field: {
-    marginBottom: 12,
-  },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  input: {
-    backgroundColor: '#0b0f19',
-    borderWidth: 1,
-    borderColor: '#233253',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#f8fafc',
-    fontSize: 14,
-    minHeight: 44,
-  },
-  resultBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 14,
-  },
-  resultSuccess: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-  },
-  resultError: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-  },
-  resultText: {
-    flex: 1,
-    fontSize: 13,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
-  cancelBtn: {
-    flex: 1,
-    backgroundColor: '#1e2b48',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  cancelText: {
-    color: '#94a3b8',
-    fontWeight: '600',
-  },
-  saveBtn: {
-    flex: 2,
-    backgroundColor: '#6366f1',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 8,
-    minHeight: 44,
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  saveText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    card: {
+      width: '100%',
+      maxWidth: 420,
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    header: {
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: colors.textPrimary,
+    },
+    closeBtn: {
+      padding: 6,
+      minHeight: 44,
+      minWidth: 44,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    instruction: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      lineHeight: 18,
+      marginBottom: 16,
+    },
+    pasteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.accentSubtle,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 10,
+      paddingVertical: 12,
+      marginBottom: 16,
+      minHeight: 44,
+    },
+    pasteBtnText: {
+      color: colors.accent,
+      fontWeight: '600',
+      fontSize: 14,
+    },
+    field: {
+      marginBottom: 12,
+    },
+    fieldLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+      marginBottom: 4,
+    },
+    input: {
+      backgroundColor: colors.background,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      color: colors.textPrimary,
+      fontSize: 14,
+      minHeight: 44,
+    },
+    resultBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 10,
+      borderRadius: 8,
+      marginBottom: 14,
+    },
+    resultSuccess: {
+      backgroundColor: colors.successSubtle,
+    },
+    resultError: {
+      backgroundColor: colors.errorSubtle,
+    },
+    resultText: {
+      flex: 1,
+      fontSize: 13,
+    },
+    actions: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: 8,
+    },
+    cancelBtn: {
+      flex: 1,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
+    },
+    cancelText: {
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    saveBtn: {
+      flex: 2,
+      backgroundColor: colors.accent,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 12,
+      borderRadius: 8,
+      minHeight: 44,
+    },
+    btnDisabled: {
+      opacity: 0.6,
+    },
+    saveText: {
+      color: '#ffffff',
+      fontWeight: 'bold',
+    },
+  });

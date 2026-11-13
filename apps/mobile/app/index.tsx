@@ -15,7 +15,8 @@ import { MobileDownloadTask } from '../services/download-manager';
 import { mobileBridge } from '../services/bridge';
 import { notificationService } from '../services/notification-service';
 import { useI18n } from '../hooks/useI18n';
-import { hapticLight } from '../services/haptics';
+import { useTheme } from '../hooks/useTheme';
+import { hapticLight, hapticSuccess } from '../services/haptics';
 import {
   GrabView,
   DownloadsView,
@@ -31,6 +32,7 @@ type AppTab = 'grab' | 'downloads' | 'recognize' | 'settings';
 
 export default function HomeScreen() {
   const { t, isRtl } = useI18n();
+  const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<AppTab>('grab');
   const [initialGrabUrl, setInitialGrabUrl] = useState('');
   const [addDirectUrl, setAddDirectUrl] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export default function HomeScreen() {
   const [playerVisible, setPlayerVisible] = useState(false);
   const [playerSource, setPlayerSource] = useState<MediaPlayerSource | null>(null);
 
-  const { tasks, activeTasks, saveToLibrary } = useDownloads();
+  const { tasks, activeTasks, startHttpDownload, saveToLibrary } = useDownloads();
 
   // Handle incoming notification tap (Item 6.2)
   useEffect(() => {
@@ -58,13 +60,35 @@ export default function HomeScreen() {
     };
   }, [tasks]);
 
-  // Share Intent
+  // Share Intent & Deep Links (grabbit://pair, grabbit://transfer)
   const handleIncomingShareUrl = useCallback((incomingUrl: string) => {
     setInitialGrabUrl(incomingUrl);
     setActiveTab('grab');
   }, []);
 
-  const { sharedUrl, clearSharedUrl } = useShareIntent(handleIncomingShareUrl);
+  const handleIncomingTransfer = useCallback(
+    async (transfer: { url: string; fileName: string }) => {
+      void hapticSuccess();
+      setActiveTab('downloads');
+      await startHttpDownload({ url: transfer.url, fileName: transfer.fileName });
+      Alert.alert(t('dl.transferReady'), transfer.fileName);
+    },
+    [startHttpDownload, t]
+  );
+
+  const handleIncomingPair = useCallback(
+    (pair: { host: string; port: number }) => {
+      void hapticSuccess();
+      Alert.alert(t('mobile.pairSuccess'), `${pair.host}:${pair.port}`);
+    },
+    [t]
+  );
+
+  const { sharedUrl, clearSharedUrl } = useShareIntent({
+    onUrlReceived: handleIncomingShareUrl,
+    onTransferReceived: handleIncomingTransfer,
+    onPairReceived: handleIncomingPair,
+  });
 
   const switchTab = (tab: AppTab) => {
     void hapticLight();
@@ -119,7 +143,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* View Content Stage */}
       <MotionView
         key={activeTab}
@@ -158,91 +182,81 @@ export default function HomeScreen() {
 
       {/* Sleek Bottom Navigation Bar */}
       <View
-        style={[styles.navBar, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
+        style={[
+          styles.navBar,
+          {
+            flexDirection: isRtl ? 'row-reverse' : 'row',
+            backgroundColor: colors.surface,
+            borderTopColor: colors.border,
+          },
+        ]}
         accessibilityRole="tablist"
       >
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => switchTab('grab')}
-          activeOpacity={0.7}
-          accessibilityRole="tab"
-          accessibilityLabel={t('nav.grab')}
-          accessibilityState={{ selected: activeTab === 'grab' }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name={activeTab === 'grab' ? 'flash' : 'flash-outline'}
-            size={22}
-            color={activeTab === 'grab' ? '#6366f1' : '#94a3b8'}
-          />
-          <Text style={[styles.navLabel, activeTab === 'grab' && styles.navLabelActive]}>
-            {t('nav.grab')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => switchTab('downloads')}
-          activeOpacity={0.7}
-          accessibilityRole="tab"
-          accessibilityLabel={t('nav.downloads')}
-          accessibilityState={{ selected: activeTab === 'downloads' }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <View>
-            <Ionicons
-              name={activeTab === 'downloads' ? 'download' : 'download-outline'}
-              size={22}
-              color={activeTab === 'downloads' ? '#6366f1' : '#94a3b8'}
-            />
-            {activeTasks.length > 0 && (
-              <View style={styles.navBadge}>
-                <Text style={styles.navBadgeText}>{activeTasks.length}</Text>
+        {(
+          [
+            { key: 'grab', activeIcon: 'flash', idleIcon: 'flash-outline', label: t('nav.grab') },
+            {
+              key: 'downloads',
+              activeIcon: 'download',
+              idleIcon: 'download-outline',
+              label: t('nav.downloads'),
+              badge: activeTasks.length,
+            },
+            {
+              key: 'recognize',
+              activeIcon: 'musical-notes',
+              idleIcon: 'musical-notes-outline',
+              label: t('nav.recognize'),
+            },
+            {
+              key: 'settings',
+              activeIcon: 'settings',
+              idleIcon: 'settings-outline',
+              label: t('nav.settings'),
+            },
+          ] as const
+        ).map((tab) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={styles.navItem}
+              onPress={() => switchTab(tab.key)}
+              activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityLabel={tab.label}
+              accessibilityState={{ selected: isActive }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <View>
+                <Ionicons
+                  name={isActive ? tab.activeIcon : tab.idleIcon}
+                  size={22}
+                  color={isActive ? colors.accent : colors.textSecondary}
+                />
+                {'badge' in tab && tab.badge > 0 && (
+                  <View
+                    style={[
+                      styles.navBadge,
+                      { backgroundColor: colors.accent, borderColor: colors.surface },
+                    ]}
+                  >
+                    <Text style={styles.navBadgeText}>{tab.badge}</Text>
+                  </View>
+                )}
               </View>
-            )}
-          </View>
-          <Text style={[styles.navLabel, activeTab === 'downloads' && styles.navLabelActive]}>
-            {t('nav.downloads')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => switchTab('recognize')}
-          activeOpacity={0.7}
-          accessibilityRole="tab"
-          accessibilityLabel={t('nav.recognize')}
-          accessibilityState={{ selected: activeTab === 'recognize' }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name={activeTab === 'recognize' ? 'musical-notes' : 'musical-notes-outline'}
-            size={22}
-            color={activeTab === 'recognize' ? '#6366f1' : '#94a3b8'}
-          />
-          <Text style={[styles.navLabel, activeTab === 'recognize' && styles.navLabelActive]}>
-            {t('nav.recognize')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => switchTab('settings')}
-          activeOpacity={0.7}
-          accessibilityRole="tab"
-          accessibilityLabel={t('nav.settings')}
-          accessibilityState={{ selected: activeTab === 'settings' }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name={activeTab === 'settings' ? 'settings' : 'settings-outline'}
-            size={22}
-            color={activeTab === 'settings' ? '#6366f1' : '#94a3b8'}
-          />
-          <Text style={[styles.navLabel, activeTab === 'settings' && styles.navLabelActive]}>
-            {t('nav.settings')}
-          </Text>
-        </TouchableOpacity>
+              <Text
+                style={[
+                  styles.navLabel,
+                  { color: colors.textSecondary },
+                  isActive && { color: colors.accent, fontWeight: '700' },
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Global In-App Media Player Modal */}

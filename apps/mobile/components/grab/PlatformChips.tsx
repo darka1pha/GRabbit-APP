@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { useTheme } from '../../hooks/useTheme';
+import { ThemeColors } from '../../constants/theme';
 
 const PLATFORM_CHIPS = [
   'YouTube',
@@ -13,6 +15,9 @@ const PLATFORM_CHIPS = [
 ];
 
 export function PlatformChips() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.container}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scroll}>
@@ -26,26 +31,27 @@ export function PlatformChips() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    marginVertical: 4,
-  },
-  scroll: {
-    gap: 8,
-  },
-  chip: {
-    backgroundColor: '#131b2e',
-    borderWidth: 1,
-    borderColor: '#233253',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    minHeight: 32,
-    justifyContent: 'center',
-  },
-  chipText: {
-    fontSize: 12,
-    color: '#94a3b8',
-    fontWeight: '500',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      marginVertical: 4,
+    },
+    scroll: {
+      gap: 8,
+    },
+    chip: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      minHeight: 32,
+      justifyContent: 'center',
+    },
+    chipText: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      fontWeight: '500',
+    },
+  });

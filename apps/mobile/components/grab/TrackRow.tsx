@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MediaItem } from '@grabbit/types';
-import { formatDuration } from '@grabbit/utils';
+import { useTheme } from '../../hooks/useTheme';
+import { useI18n } from '../../hooks/useI18n';
+import { ThemeColors } from '../../constants/theme';
 
 export interface TrackRowProps {
   item: MediaItem;
@@ -17,9 +19,17 @@ export const TrackRow = React.memo(function TrackRow({
   isChecked,
   onToggle,
 }: TrackRowProps) {
+  const { colors } = useTheme();
+  const { isRtl, formatDuration, textDirStyle } = useI18n();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <TouchableOpacity
-      style={[styles.trackRow, isChecked && styles.trackRowChecked]}
+      style={[
+        styles.trackRow,
+        { flexDirection: isRtl ? 'row-reverse' : 'row' },
+        isChecked && styles.trackRowChecked,
+      ]}
       onPress={() => onToggle(item.id)}
       accessibilityRole="checkbox"
       accessibilityState={{ checked: isChecked }}
@@ -29,15 +39,15 @@ export const TrackRow = React.memo(function TrackRow({
       <Ionicons
         name={isChecked ? 'checkbox' : 'square-outline'}
         size={20}
-        color={isChecked ? '#6366f1' : '#64748b'}
+        color={isChecked ? colors.accent : colors.textMuted}
       />
       <Text style={styles.trackIndex}>{index + 1}</Text>
       <View style={{ flex: 1 }}>
-        <Text style={styles.trackTitle} numberOfLines={1}>
+        <Text style={[styles.trackTitle, textDirStyle]} numberOfLines={1}>
           {item.title}
         </Text>
         {item.uploader ? (
-          <Text style={styles.trackAuthor} numberOfLines={1}>
+          <Text style={[styles.trackAuthor, textDirStyle]} numberOfLines={1}>
             {item.uploader}
           </Text>
         ) : null}
@@ -49,43 +59,43 @@ export const TrackRow = React.memo(function TrackRow({
   );
 });
 
-const styles = StyleSheet.create({
-  trackRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#0b0f19',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#233253',
-    minHeight: 44,
-  },
-  trackRowChecked: {
-    borderColor: '#6366f1',
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-  },
-  trackIndex: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748b',
-    width: 20,
-    textAlign: 'center',
-  },
-  trackTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#f8fafc',
-  },
-  trackAuthor: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 1,
-  },
-  trackDuration: {
-    fontSize: 11,
-    color: '#64748b',
-    fontWeight: '500',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    trackRow: {
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: colors.background,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      minHeight: 44,
+    },
+    trackRowChecked: {
+      borderColor: colors.accent,
+      backgroundColor: colors.accentSubtle,
+    },
+    trackIndex: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textMuted,
+      width: 20,
+      textAlign: 'center',
+    },
+    trackTitle: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    trackAuthor: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 1,
+    },
+    trackDuration: {
+      fontSize: 11,
+      color: colors.textMuted,
+      fontWeight: '500',
+    },
+  });

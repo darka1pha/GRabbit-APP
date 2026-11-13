@@ -103,6 +103,105 @@ export class MobileUpdaterService {
     }
   }
 
+  private async checkLatestRelease(silent = false): Promise<{
+    isOutdated: boolean;
+    hasApkAsset: boolean;
+    status: MobileUpdateStatus;
+  }> {
+    const currentVersion = this.getCurrentVersion();
+    if (!silent) {
+      this.emit({
+        state: 'checking',
+        currentVersion,
+        error: undefined,
+        progressPercent: undefined,
+      });
+    }
+
+    try {
+      const res = await fetch(GITHUB_LATEST_RELEASE_URL, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': `GRabbit-Mobile/${currentVersion}`,
+        },
+      });
+
+      if (!res.ok) {
+        const status = silent
+          ? this.status
+          : this.emit({
+              state: 'error',
+              currentVersion,
+              releaseUrl: GITHUB_RELEASES_PAGE,
+              error: `Update check failed (HTTP ${res.status})`,
+            });
+        return { isOutdated: false, hasApkAsset: false, status };
+      }
+
+      const data = (await res.json()) as {
+        tag_name?: string;
+        html_url?: string;
+        assets?: Array<{ name?: string; browser_download_url?: string }>;
+      };
+
+      const latestVersion = String(data.tag_name || currentVersion).replace(/^v/i, '');
+      const releaseUrl = data.html_url || GITHUB_RELEASES_PAGE;
+      const isOutdated = compareSemver(latestVersion, currentVersion) > 0;
+
+      if (!isOutdated) {
+        const status = silent
+          ? this.status
+          : this.emit({
+              state: 'up-to-date',
+              currentVersion,
+              latestVersion,
+              releaseUrl,
+            });
+        return { isOutdated: false, hasApkAsset: false, status };
+      }
+
+      const assets = Array.isArray(data.assets) ? data.assets : [];
+      const apkAsset = assets.find(
+        (a) => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.apk')
+      );
+      const downloadUrl = apkAsset?.browser_download_url || releaseUrl;
+
+      const status = this.emit({
+        state: 'available',
+        currentVersion,
+        latestVersion,
+        downloadUrl,
+        releaseUrl,
+      });
+
+      return {
+        isOutdated: true,
+        hasApkAsset: Boolean(apkAsset?.browser_download_url),
+        status,
+      };
+    } catch (err: any) {
+      const status = silent
+        ? this.status
+        : this.emit({
+            state: 'error',
+            currentVersion,
+            error: err?.message || 'Failed to check for updates',
+          });
+      return { isOutdated: false, hasApkAsset: false, status };
+    }
+  }
+
+  /**
+   * Silently checks for a newer APK release at startup without triggering download or error UI.
+   */
+  public async checkForUpdatesSilent(): Promise<MobileUpdateStatus> {
+    if (this.status.state === 'downloading' || this.status.state === 'installing') {
+      return this.status;
+    }
+    const { status } = await this.checkLatestRelease(true);
+    return status;
+  }
+
   /**
    * One-click check -> download -> install flow if the installed app is outdated.
    */
@@ -119,77 +218,19 @@ export class MobileUpdaterService {
       }
     }
 
-    const currentVersion = this.getCurrentVersion();
-    this.emit({
-      state: 'checking',
-      currentVersion,
-      error: undefined,
-      progressPercent: undefined,
-    });
+    const { isOutdated, hasApkAsset, status } = await this.checkLatestRelease(false);
+    if (!isOutdated) return status;
 
-    try {
-      const res = await fetch(GITHUB_LATEST_RELEASE_URL, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'User-Agent': `GRabbit-Mobile/${currentVersion}`,
-        },
-      });
-
-      if (!res.ok) {
-        return this.emit({
-          state: 'error',
-          currentVersion,
-          releaseUrl: GITHUB_RELEASES_PAGE,
-          error: `Update check failed (HTTP ${res.status})`,
-        });
-      }
-
-      const data = (await res.json()) as {
-        tag_name?: string;
-        html_url?: string;
-        assets?: Array<{ name?: string; browser_download_url?: string }>;
-      };
-
-      const latestVersion = String(data.tag_name || currentVersion).replace(/^v/i, '');
-      const releaseUrl = data.html_url || GITHUB_RELEASES_PAGE;
-      const isOutdated = compareSemver(latestVersion, currentVersion) > 0;
-
-      if (!isOutdated) {
-        return this.emit({
-          state: 'up-to-date',
-          currentVersion,
-          latestVersion,
-          releaseUrl,
-        });
-      }
-
-      const assets = Array.isArray(data.assets) ? data.assets : [];
-      const apkAsset = assets.find(
-        (a) => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.apk')
-      );
-      const downloadUrl = apkAsset?.browser_download_url || releaseUrl;
-
-      this.emit({
-        state: 'available',
-        currentVersion,
-        latestVersion,
-        downloadUrl,
-        releaseUrl,
-      });
-
-      if (!apkAsset?.browser_download_url) {
-        await Linking.openURL(releaseUrl);
-        return this.status;
-      }
-
-      return await this.downloadAndInstallApk(apkAsset.browser_download_url, latestVersion);
-    } catch (err: any) {
-      return this.emit({
-        state: 'error',
-        currentVersion,
-        error: err?.message || 'Failed to check for updates',
-      });
+    if (!hasApkAsset && status.releaseUrl) {
+      await Linking.openURL(status.releaseUrl);
+      return status;
     }
+
+    if (status.downloadUrl && status.latestVersion) {
+      return await this.downloadAndInstallApk(status.downloadUrl, status.latestVersion);
+    }
+
+    return status;
   }
 
   public async downloadAndInstallApk(downloadUrl: string, version: string): Promise<MobileUpdateStatus> {
