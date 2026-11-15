@@ -13,7 +13,7 @@ import { logger } from '../logger';
 
 const SAMPLE_SECONDS = 15;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type AnyRecord = any;
 
 export function parseShazamTrack(result: ShazamResponse): RecognizedTrack | null {

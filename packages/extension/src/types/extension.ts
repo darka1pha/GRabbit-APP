@@ -71,6 +71,11 @@ export interface ExtractedLink {
 declare global {
   namespace chrome {
     namespace runtime {
+      interface MessageSender {
+        id?: string;
+        url?: string;
+        tab?: { id?: number; url?: string; title?: string };
+      }
       const id: string;
       const lastError: { message?: string } | undefined;
       function getURL(path: string): string;
@@ -86,7 +91,7 @@ declare global {
         addListener(
           callback: (
             message: any,
-            sender: { tab?: { id?: number; url?: string; title?: string } },
+            sender: MessageSender,
             sendResponse: (response?: any) => void
           ) => boolean | void
         ): void;

@@ -416,7 +416,7 @@ class MobileDownloadManager {
         const startMin = (startH || 0) * 60 + (startM || 0);
         const stopMin = (stopH || 0) * 60 + (stopM || 0);
 
-        let inWindow = false;
+        let inWindow: boolean;
         if (startMin <= stopMin) {
           inWindow = currentMinutes >= startMin && currentMinutes < stopMin;
         } else {

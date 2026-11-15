@@ -92,6 +92,15 @@ export interface UseShareIntentOptions {
   onPairReceived?: (pair: IncomingPairPayload) => void;
 }
 
+/** Saves a pairing the user has confirmed. */
+export function applyDesktopPairing(pair: { host: string; port: number; token: string }): Promise<void> {
+  return Promise.resolve(
+    mobileSettingsManager.updateSettings({
+      desktopBridge: { enabled: true, host: pair.host, port: pair.port, token: pair.token },
+    })
+  ).then(() => undefined);
+}
+
 export function useShareIntent(
   onUrlOrOptions?: ((url: string) => void) | UseShareIntentOptions
 ) {
@@ -109,14 +118,8 @@ export function useShareIntent(
       try {
         const result = parseIncomingDeepLink(uri);
         if (result.kind === 'pair') {
-          void mobileSettingsManager.updateSettings({
-            desktopBridge: {
-              enabled: true,
-              host: result.pair.host,
-              port: result.pair.port,
-              token: result.pair.token,
-            },
-          });
+          // Any app or web page can open a grabbit:// link, so pairing is never applied here:
+          // the handler must ask the user and then call applyDesktopPairing().
           onPairReceived?.(result.pair);
           return;
         }

@@ -11,11 +11,10 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { AddHttpDownloadRequest, Category, ChecksumAlgorithm, CATEGORIES, DownloadQueue, ProbeResult } from '@grabbit/types';
+import { AddHttpDownloadRequest, Category, ChecksumAlgorithm, CATEGORIES, ProbeResult } from '@grabbit/types';
 import { formatBytes, isHttpUrl, looksLikeMediaPage } from '@grabbit/utils';
 import { useDownloads } from '../hooks/useDownloads';
 import { AdvancedOptionsSection } from './download/AdvancedOptionsSection';
-import { useI18n } from '../hooks/useI18n';
 
 function parseHeadersText(raw: string): Record<string, string> | undefined {
   const result: Record<string, string> = {};
@@ -32,7 +31,7 @@ function parseHeadersText(raw: string): Record<string, string> | undefined {
 function parseChecksumInput(raw: string): AddHttpDownloadRequest['checksum'] | undefined {
   const cleaned = raw.trim();
   if (!cleaned) return undefined;
-  const prefixed = /^(md5|sha1|sha256|sha512)[:\-]?\s*([0-9a-f]+)$/i.exec(cleaned);
+  const prefixed = /^(md5|sha1|sha256|sha512)[:-]?\s*([0-9a-f]+)$/i.exec(cleaned);
   if (prefixed) {
     return {
       algorithm: prefixed[1].toLowerCase() as ChecksumAlgorithm,

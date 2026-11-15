@@ -166,7 +166,7 @@ export function getYouTubeYtDlpExtraArgs(): string[] {
   if (cookiesFile) {
     // Copy master cookies file to a runtime copy so yt-dlp never corrupts or clears the master file on exit
     const runtimeCookiesFile = resolve(dirname(cookiesFile), 'youtube_cookies_runtime.txt');
-    let targetFile = cookiesFile;
+    let targetFile: string;
     try {
       copyFileSync(cookiesFile, runtimeCookiesFile);
       targetFile = runtimeCookiesFile;

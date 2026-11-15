@@ -9,10 +9,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo types lint ok"
+    "lint": "eslint ."
   },
   "devDependencies": {
     "typescript": "^5.8.2"
   }
 }
-

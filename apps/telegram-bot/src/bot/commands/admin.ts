@@ -284,11 +284,8 @@ export function saveYouTubeCookiesFile(content: string): string {
 
 export function isAdminUser(userId?: number): boolean {
   if (!userId) return false;
-  const config = getConfig();
-  if (config.ADMIN_USER_IDS.length === 0) {
-    return config.NODE_ENV !== 'production';
-  }
-  return config.ADMIN_USER_IDS.includes(userId);
+  // No configured admins means no admins: never fall back to granting everyone access
+  return getConfig().ADMIN_USER_IDS.includes(userId);
 }
 
 export function createAdminMainKeyboard(locale: SupportedLocale = 'en'): InlineKeyboard {

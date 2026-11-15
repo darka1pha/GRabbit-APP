@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createTranslator, errorText, formatBytes } from '@grabbit/utils';
+import { createTranslator, errorText } from '@grabbit/utils';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { mobileDownloadManager, MobileDownloadTask } from '../services/download-manager';
 import { notificationService } from '../services/notification-service';

@@ -28,6 +28,7 @@ describe('DesktopRpcBridge', () => {
   let mockSettings: Partial<SettingsService>;
   let currentSettings: AppSettings;
   let addedItemCallback: DownloadItem | null = null;
+  let addedCallbacks: DownloadItem[][] = [];
   const TEST_PORT = 31589;
   const TEST_TOKEN = 'secret-test-token-123';
   /** Stand-in for DNS: public by default, overridden per test. */
@@ -35,6 +36,7 @@ describe('DesktopRpcBridge', () => {
 
   beforeEach(() => {
     addedItemCallback = null;
+    addedCallbacks = [];
     lookupHost = async () => ['93.184.216.34'];
     currentSettings = {
       language: 'en',
@@ -143,8 +145,9 @@ describe('DesktopRpcBridge', () => {
       settings: mockSettings as SettingsService,
       version: '1.0.0-test',
       lookupHost: (hostname) => lookupHost(hostname),
-      onDownloadAdded: (item) => {
-        addedItemCallback = item;
+      onDownloadsAdded: (items) => {
+        addedItemCallback = items[0] ?? null;
+        addedCallbacks.push(items);
       },
     });
 
@@ -184,7 +187,7 @@ describe('DesktopRpcBridge', () => {
     const add = await fetch(`http://127.0.0.1:${TEST_PORT}/downloads/add`, {
       method: 'POST',
       headers: spoofed,
-      body: JSON.stringify({ url: 'https://example.com/evil.bat', directory: 'C:\Startup' }),
+      body: JSON.stringify({ url: 'https://example.com/evil.bat', directory: 'C:\\Startup' }),
     });
     expect(add.status).toBe(401);
     expect(mockManager.addHttp).not.toHaveBeenCalled();
@@ -354,6 +357,9 @@ describe('DesktopRpcBridge', () => {
     expect(data.success).toBe(true);
     expect(data.count).toBe(2);
     expect(mockManager.addHttp).toHaveBeenCalledTimes(2);
+    // One window/notification for the whole batch, not one per item
+    expect(addedCallbacks).toHaveLength(1);
+    expect(addedCallbacks[0]).toHaveLength(2);
   });
 
   describe('limits on what callers may ask for', () => {
@@ -425,6 +431,20 @@ describe('DesktopRpcBridge', () => {
       const locked = await get(TEST_TOKEN);
       expect(locked.status).toBe(429);
       expect(Number(locked.headers.get('retry-after'))).toBeGreaterThan(0);
+    });
+
+    it('counts wrong tokens presented to /ping toward the lockout', async () => {
+      const ping = (token: string) => fetch(`http://127.0.0.1:${TEST_PORT}/ping`, { headers: { 'X-GRabbit-Token': token } });
+      for (let i = 0; i < 20; i++) expect(((await (await ping(`guess-${i}`)).json()) as any).authenticated).toBe(false);
+      expect((await ping(TEST_TOKEN)).status).toBe(429);
+    });
+
+    it('answers malformed request paths and escapes instead of hanging', async () => {
+      expect(await rawGet('//', { Host: `127.0.0.1:${TEST_PORT}` })).toBe(400);
+      expect(await rawGet('/transfer/%E0%A4%A', { Host: `127.0.0.1:${TEST_PORT}` })).toBe(404);
+      expect(await rawGet('/downloads/%E0%A4%A/file', { Host: `127.0.0.1:${TEST_PORT}`, 'X-GRabbit-Token': TEST_TOKEN })).toBe(400);
+      // The bridge is still serving afterwards
+      expect(await rawGet('/ping', { Host: `127.0.0.1:${TEST_PORT}` })).toBe(200);
     });
 
     it('limits how many requests one address may make per minute', async () => {

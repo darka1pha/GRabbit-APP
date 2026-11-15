@@ -404,9 +404,11 @@ const rpcBridge = new DesktopRpcBridge({
   recognizer,
   settings,
   version: app.getVersion(),
-  onDownloadAdded: (item) => {
+  onDownloadsAdded: (items) => {
     showWindow('downloads');
-    notify(text('notify.addedRemote'), fileLabel(item), () => showWindow('downloads'));
+    const title = items.length === 1 ? text('notify.addedRemote') : text('notify.addedRemoteMany', { count: items.length });
+    const body = items.slice(0, 3).map(fileLabel).join('\n') + (items.length > 3 ? '\n…' : '');
+    notify(title, body, () => showWindow('downloads'));
   },
 });
 
@@ -476,11 +478,11 @@ app.whenReady().then(() => {
     createTransferLink: (itemId) => {
       const ext = settings.get().extension;
       if (!ext.enabled || ext.allowLan !== true) {
-        throw new Error('Enable Local Network Access (LAN) under Settings -> Mobile Pairing first.');
+        throw new Error(text('transfer.lanRequired'));
       }
       const lanIp = getPrimaryLanIp();
       if (!lanIp) {
-        throw new Error('No active Wi-Fi or Ethernet LAN IPv4 address was detected.');
+        throw new Error(text('transfer.noLanIp'));
       }
       const tokenInfo = rpcBridge.createTransferToken(itemId);
       if (!tokenInfo) return null;
