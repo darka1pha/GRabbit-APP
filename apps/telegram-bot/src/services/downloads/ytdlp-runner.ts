@@ -61,7 +61,7 @@ export interface YtDlpDownloadOptions {
   signal?: AbortSignal;
 }
 
-// eslint-disable-next-line no-control-regex
+ 
 const ANSI_REGEX = /\x1B\[[0-9;]*[a-zA-Z]/g;
 
 function stripAnsi(input: string): string {
@@ -218,6 +218,7 @@ export class YtDlpRunner {
       '--no-playlist',
       '--no-warnings',
       ...extraArgs,
+      '--',
       url,
     ];
 
@@ -374,6 +375,7 @@ export class YtDlpRunner {
       '--flat-playlist',
       '--no-warnings',
       ...extraArgs,
+      '--',
       searchTarget,
     ];
 
@@ -403,6 +405,7 @@ export class YtDlpRunner {
       '--playlist-end',
       String(Math.max(1, limit)),
       ...extraArgs,
+      '--',
       url,
     ];
 
@@ -450,7 +453,8 @@ export class YtDlpRunner {
       args.push(...options.extraArgs);
     }
 
-    args.push(options.url);
+    // Everything after '--' is a URL, never an option
+    args.push('--', options.url);
 
     logger.debug({ url: options.url, args }, 'Downloading media via yt-dlp');
     const { stdout } = await this.runProcess(

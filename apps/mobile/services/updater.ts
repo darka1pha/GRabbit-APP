@@ -362,7 +362,7 @@ export class MobileUpdaterService {
             // Re-throw original error
           }
         }
-        throw new Error(`Failed to launch Android package installer: ${err?.message || 'Access denied'}`);
+        throw new Error(`Failed to launch Android package installer: ${err?.message || 'Access denied'}`, { cause: err });
       }
     }
 

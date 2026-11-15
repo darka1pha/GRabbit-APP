@@ -794,7 +794,7 @@ export function DownloadsView({
         if (visible.length === 0) return;
         const currentId = focusedId ?? anchor ?? selectedItems[0]?.id;
         const currentIdx = visible.findIndex((d) => d.id === currentId);
-        let nextIdx = currentIdx;
+        let nextIdx: number;
         if (e.key === 'ArrowDown') {
           nextIdx = currentIdx < visible.length - 1 ? (currentIdx >= 0 ? currentIdx + 1 : 0) : 0;
         } else {

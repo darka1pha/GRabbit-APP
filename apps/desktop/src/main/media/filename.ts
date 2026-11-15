@@ -9,7 +9,7 @@ export function sanitizeFilename(input: string, fallback = 'download'): string {
   const normalized = input.trim().replace(/\\/g, '/');
   const base = posix.basename(normalized);
 
-  // eslint-disable-next-line no-control-regex
+   
   let sanitized = base
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
     .replace(/\s+/g, ' ')

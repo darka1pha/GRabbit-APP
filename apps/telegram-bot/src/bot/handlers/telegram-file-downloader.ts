@@ -78,7 +78,6 @@ export async function downloadTelegramMediaFile(
   }
 
   const fileStream = createWriteStream(targetPath);
-  // @ts-ignore Node ReadableStream pipeline compatibility
   await pipeline(response.body, fileStream);
 
   return {

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MediaItem, MediaOption } from '@grabbit/types';
-import { useShareIntent } from '../hooks/useShareIntent';
+import { applyDesktopPairing, useShareIntent } from '../hooks/useShareIntent';
 import { useDownloads } from '../hooks/useDownloads';
 import { MobileDownloadTask } from '../services/download-manager';
 import { mobileBridge } from '../services/bridge';
@@ -66,20 +66,47 @@ export default function HomeScreen() {
     setActiveTab('grab');
   }, []);
 
+  // grabbit:// links can come from any app or web page, so both actions wait for the user's OK
   const handleIncomingTransfer = useCallback(
-    async (transfer: { url: string; fileName: string }) => {
-      void hapticSuccess();
-      setActiveTab('downloads');
-      await startHttpDownload({ url: transfer.url, fileName: transfer.fileName });
-      Alert.alert(t('dl.transferReady'), transfer.fileName);
+    (transfer: { url: string; fileName: string }) => {
+      let host = transfer.url;
+      try {
+        host = new URL(transfer.url).host;
+      } catch {
+        // show the raw link
+      }
+      Alert.alert(t('mobile.transferConfirmTitle'), t('mobile.transferConfirmBody', { name: transfer.fileName, host }), [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('mobile.transferConfirmAction'),
+          onPress: () => {
+            void (async () => {
+              void hapticSuccess();
+              setActiveTab('downloads');
+              await startHttpDownload({ url: transfer.url, fileName: transfer.fileName });
+              Alert.alert(t('dl.transferReady', { name: transfer.fileName }), transfer.fileName);
+            })();
+          },
+        },
+      ]);
     },
     [startHttpDownload, t]
   );
 
   const handleIncomingPair = useCallback(
-    (pair: { host: string; port: number }) => {
-      void hapticSuccess();
-      Alert.alert(t('mobile.pairSuccess'), `${pair.host}:${pair.port}`);
+    (pair: { host: string; port: number; token: string }) => {
+      Alert.alert(t('mobile.pairConfirmTitle'), t('mobile.pairConfirmBody', { host: pair.host, port: pair.port }), [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('mobile.pairButton'),
+          onPress: () => {
+            void applyDesktopPairing(pair).then(() => {
+              void hapticSuccess();
+              Alert.alert(t('mobile.pairSuccess'), `${pair.host}:${pair.port}`);
+            });
+          },
+        },
+      ]);
     },
     [t]
   );

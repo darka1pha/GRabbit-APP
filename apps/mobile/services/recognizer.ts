@@ -143,7 +143,7 @@ class MobileRecognizerService {
       }
     } catch (err: any) {
       console.warn('Recognition error:', err);
-      throw new Error(err.message || 'Could not recognize track');
+      throw new Error(err.message || 'Could not recognize track', { cause: err });
     }
 
     return null;

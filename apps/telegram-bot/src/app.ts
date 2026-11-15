@@ -32,6 +32,9 @@ export class App {
     // 1. Validate environment configuration
     const config = getConfig();
     logger.info({ nodeEnv: config.NODE_ENV, logLevel: config.LOG_LEVEL }, 'Configuration validated');
+    if (config.ADMIN_USER_IDS.length === 0) {
+      logger.warn('ADMIN_USER_IDS is empty: admin commands are disabled until at least one admin ID is set');
+    }
 
     // 2. Run Database Migrations
     try {

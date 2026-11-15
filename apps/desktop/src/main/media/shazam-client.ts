@@ -12,7 +12,7 @@ const USER_AGENTS = [
   'Dalvik/2.1.0 (Linux; U; Android 5.0; SM-N9005 Build/LRX21V)',
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export type ShazamResponse = { matches?: unknown[]; track?: any };
 
 function endpoint(): string {

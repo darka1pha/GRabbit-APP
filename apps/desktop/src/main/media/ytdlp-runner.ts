@@ -74,7 +74,7 @@ export interface YtDlpDownloadOptions {
   signal?: AbortSignal;
 }
 
-// eslint-disable-next-line no-control-regex
+ 
 const ANSI_REGEX = /\x1B\[[0-9;]*[a-zA-Z]/g;
 const PROGRESS_MARK = 'GRABBIT_PROGRESS|';
 const MEDIA_EXTENSIONS_TO_SKIP = ['.part', '.ytdl', '.jpg', '.jpeg', '.webp', '.png', '.temp', '.txt'];
@@ -132,7 +132,7 @@ type InnerTubeRun = {
 /** Extracts song rows (video id, title, artists, duration) from a YouTube Music search response. */
 export function parseYouTubeMusicSongs(data: unknown): YtDlpSearchResult[] {
   const results: YtDlpSearchResult[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const tabs = (data as any)?.contents?.tabbedSearchResultsRenderer?.tabs ?? [];
   const sections = tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents ?? [];
 
@@ -262,7 +262,7 @@ export class YtDlpRunner {
   }
 
   public async getMetadata(url: string, extraArgs: string[] = []): Promise<YtDlpMetadata> {
-    const args = ['--dump-json', '--no-playlist', '--no-warnings', ...extraArgs, url];
+    const args = ['--dump-json', '--no-playlist', '--no-warnings', ...extraArgs, '--', url];
     logger.debug({ url }, 'Fetching metadata via yt-dlp');
     const { stdout } = await this.runProcess(args);
     try {
@@ -288,7 +288,7 @@ export class YtDlpRunner {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const data = (await res.json()) as any;
       const sections =
         data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
@@ -359,7 +359,7 @@ export class YtDlpRunner {
     const fastResults = await this.fastYoutubeInnerTubeSearch(cleanQuery, safeLimit);
     if (fastResults.length > 0) return fastResults;
 
-    const args = ['--dump-json', '--flat-playlist', '--no-warnings', ...extraArgs, `ytsearch${safeLimit}:${cleanQuery}`];
+    const args = ['--dump-json', '--flat-playlist', '--no-warnings', ...extraArgs, '--', `ytsearch${safeLimit}:${cleanQuery}`];
     const { stdout } = await this.runProcess(args);
     return parseFlatEntries(stdout, (id) => `https://www.youtube.com/watch?v=${id}`).slice(0, safeLimit);
   }
@@ -378,6 +378,7 @@ export class YtDlpRunner {
       '--playlist-end',
       String(Math.max(1, limit)),
       ...extraArgs,
+      '--',
       url,
     ];
     const { stdout } = await this.runProcess(args);
@@ -420,7 +421,8 @@ export class YtDlpRunner {
     if (options.formatSelector) args.push('-f', options.formatSelector);
     args.push('-o', options.outputTemplate);
     if (options.extraArgs?.length) args.push(...options.extraArgs);
-    args.push(options.url);
+    // Everything after '--' is a URL, never an option
+    args.push('--', options.url);
 
     logger.debug({ url: options.url }, 'Downloading media via yt-dlp');
     await this.runProcess(

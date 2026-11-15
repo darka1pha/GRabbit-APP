@@ -1,9 +1,7 @@
 import type { DetectedMediaStream, RpcAddDownloadRequest } from '@grabbit/types';
 import {
   compareSemver,
-  extractFileExtension,
   extractFilenameFromUrl,
-  isHlsOrDashUrl,
   isLoopbackHost,
   loadExtensionConfig,
   saveExtensionConfig,
@@ -489,13 +487,37 @@ chrome.downloads.onChanged.addListener((delta) => {
 // Message Hub
 // ---------------------------------------------------------------------------
 
+/** Messages only the extension's own pages (popup, options) may send; content scripts run on any site. */
+const PRIVILEGED_MESSAGES = new Set<string>([
+  'SAVE_CONFIG',
+  'CHECK_CONNECTION',
+  'GET_PAGE_MEDIA',
+  'DOWNLOAD_BATCH',
+  'CHECK_EXTENSION_UPDATE',
+  'RELOAD_EXTENSION',
+]);
+
+/** True for the popup, options page and other pages served from this extension. */
+export function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id) return false;
+  const origin = chrome.runtime.getURL('');
+  return typeof sender.url === 'string' && sender.url.startsWith(origin);
+}
+
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return false;
+  const trusted = isExtensionPage(sender);
+  if (!trusted && PRIVILEGED_MESSAGES.has(message.type)) {
+    sendResponse({ ok: false, error: 'Not allowed from a web page' });
+    return false;
+  }
   const tabId = sender.tab?.id ?? 0;
 
   if (message.type === 'MEDIA_DETECTED') {
     const payload = message.payload as MediaDetectedPayload;
     const media = payload.media;
-    const currentTabId = payload.tabId || tabId;
+    // A content script may only report media for its own tab
+    const currentTabId = trusted ? payload.tabId || tabId : tabId;
 
     if (!tabMediaMap.has(currentTabId)) {
       tabMediaMap.set(currentTabId, []);
@@ -582,7 +604,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       const ping = await rpc.ping(800);
       sendResponse({
         ok: true,
-        config,
+        // Content scripts get everything except the bridge token
+        config: trusted ? config : { ...config, bridgeToken: '' },
         connected: Boolean(ping.ok && ping.data?.authenticated),
       });
     })();

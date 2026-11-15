@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as FileSystem from 'expo-file-system';
 import { base64ToBytes, compareSemver, md5Hex, sha1Hex, sha256Hex, createIncrementalHasher } from '@grabbit/utils';
 import { detectCategory, mobileDownloadManager } from '../services/download-manager';

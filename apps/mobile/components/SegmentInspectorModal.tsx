@@ -22,8 +22,6 @@ export function SegmentInspectorModal({ visible, task, onClose }: SegmentInspect
 
   const total = task.totalBytes || 1;
   const segments = task.segments || [];
-  const activeConn = task.activeConnections;
-  const totalConn = task.connections;
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>

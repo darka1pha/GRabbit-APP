@@ -93,7 +93,7 @@ export class FFprobeRunner {
             tagTitle: tags.title || undefined,
             tagArtist: tags.artist || tags.album_artist || undefined,
           });
-        } catch (err) {
+        } catch {
           reject(new ProcessingError('Failed to parse FFprobe JSON output'));
         }
       });

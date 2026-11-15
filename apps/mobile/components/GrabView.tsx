@@ -167,10 +167,17 @@ export function GrabView({
     [input, onOpenDirectDownload, t, errorText]
   );
 
+  // Grab a shared/deep-linked URL once when it arrives, using the latest handleGrab
+  // without re-running every time the text input (and so handleGrab) changes
+  const handleGrabRef = useRef(handleGrab);
+  useEffect(() => {
+    handleGrabRef.current = handleGrab;
+  }, [handleGrab]);
+
   useEffect(() => {
     if (initialUrl) {
       setInput(initialUrl);
-      void handleGrab(initialUrl);
+      void handleGrabRef.current(initialUrl);
     }
   }, [initialUrl]);
 

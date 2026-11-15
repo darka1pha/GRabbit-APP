@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { URL } from 'node:url';
@@ -95,6 +95,41 @@ export type HostLookup = (hostname: string) => Promise<string[]>;
 
 const systemLookup: HostLookup = async (hostname) => (await lookup(hostname, { all: true })).map((a) => a.address);
 
+/** Reads a response body, giving up (null) as soon as it grows past maxBytes. */
+async function readBodyLimited(res: Response, maxBytes: number): Promise<Buffer | null> {
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** decodeURIComponent that answers null instead of throwing on malformed escapes. */
+function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Callers on this machine (the browser extension) as opposed to other devices on the LAN. */
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  const a = address.replace(/^::ffff:/i, '');
+  return a === '::1' || a.startsWith('127.');
+}
+
 /** Constant-time comparison (hashing first makes both sides the same length). */
 function tokensMatch(given: string, expected: string): boolean {
   const a = createHash('sha256').update(given).digest();
@@ -108,7 +143,8 @@ export interface RpcBridgeDeps {
   recognizer?: MusicRecognizer;
   settings: SettingsService;
   version: string;
-  onDownloadAdded?: (item: DownloadItem) => void;
+  /** Called once per request with everything it added (one item, or a whole batch). */
+  onDownloadsAdded?: (items: DownloadItem[]) => void;
   /** Resolves a host name to its addresses (defaults to the system resolver). */
   lookupHost?: HostLookup;
 }
@@ -275,7 +311,13 @@ export class DesktopRpcBridge {
 
     this.stop();
 
-    const server = createServer((req, res) => this.handleRequest(req, res));
+    const server = createServer((req, res) => {
+      this.handleRequest(req, res).catch((err) => {
+        logger.error({ err, url: req.url }, 'RPC bridge request failed unexpectedly');
+        if (!res.headersSent) this.sendJson(res, 500, { success: false, error: 'Internal error' });
+        else res.destroy();
+      });
+    });
     server.maxConnections = MAX_OPEN_CONNECTIONS;
     this.currentPort = s.port;
     this.currentHost = bindHost;
@@ -431,13 +473,20 @@ export class DesktopRpcBridge {
     }
     this.requests.add(client);
 
-    const rawUrl = req.url ?? '/';
-    const parsedUrl = new URL(rawUrl, `http://127.0.0.1:${this.currentPort}`);
-    const pathname = parsedUrl.pathname;
+    let pathname: string;
+    try {
+      pathname = new URL(req.url ?? '/', `http://127.0.0.1:${this.currentPort}`).pathname;
+    } catch {
+      this.sendJson(res, 400, { success: false, error: 'Malformed request path' });
+      return;
+    }
 
     // Public ping / health check endpoint
     if (req.method === 'GET' && (pathname === '/ping' || pathname === '/health')) {
       const authenticated = this.authenticate(req);
+      // A wrong token presented here counts toward the lockout like anywhere else
+      const presented = typeof req.headers['x-grabbit-token'] === 'string' || typeof req.headers['authorization'] === 'string';
+      if (presented && !authenticated) this.authFailures.add(client);
       const pingResp: RpcPingResponse = {
         app: 'GRabbit',
         version: this.deps.version,
@@ -451,8 +500,8 @@ export class DesktopRpcBridge {
     // One-click Wi-Fi transfer pull endpoint (gated by short-lived 192-bit random token)
     if ((req.method === 'GET' || req.method === 'HEAD') && pathname.startsWith('/transfer/')) {
       this.pruneTransferTokens();
-      const token = decodeURIComponent(pathname.slice('/transfer/'.length));
-      const entry = this.transferTokens.get(token);
+      const token = safeDecode(pathname.slice('/transfer/'.length));
+      const entry = token ? this.transferTokens.get(token) : undefined;
       if (!entry) {
         this.sendJson(res, 404, { success: false, error: 'Transfer link expired or invalid' });
         return;
@@ -470,6 +519,9 @@ export class DesktopRpcBridge {
       });
       return;
     }
+
+    // Other devices on the LAN may not use the desktop to reach this machine's own network
+    const remoteCaller = !isLoopbackAddress(req.socket.remoteAddress);
 
     try {
       if (req.method === 'GET' && pathname === '/status') {
@@ -494,12 +546,11 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && pathname === '/downloads/add') {
         const body = this.parse(RpcAddDownloadRequestSchema, await this.readBodyJson(req));
+        if (remoteCaller) await this.publicHttpUrl(body.url.trim());
 
         const added = await this.processDownloadRequest(body);
         if (added) {
-          if (this.deps.onDownloadAdded) {
-            this.deps.onDownloadAdded(added);
-          }
+          this.deps.onDownloadsAdded?.([added]);
           this.sendJson(res, 200, { success: true, item: added });
         } else {
           this.sendJson(res, 500, { success: false, error: 'Failed to enqueue download' });
@@ -519,14 +570,17 @@ export class DesktopRpcBridge {
           // A malformed entry is skipped rather than failing the whole batch
           const reqItem = RpcAddDownloadRequestSchema.safeParse(rawItem);
           if (!reqItem.success) continue;
-          const added = await this.processDownloadRequest(reqItem.data);
-          if (added) {
-            results.push(added);
-            if (this.deps.onDownloadAdded) {
-              this.deps.onDownloadAdded(added);
+          if (remoteCaller) {
+            try {
+              await this.publicHttpUrl(reqItem.data.url.trim());
+            } catch {
+              continue;
             }
           }
+          const added = await this.processDownloadRequest(reqItem.data);
+          if (added) results.push(added);
         }
+        if (results.length > 0) this.deps.onDownloadsAdded?.(results);
 
         this.sendJson(res, 200, { success: true, count: results.length, items: results });
         return;
@@ -546,7 +600,7 @@ export class DesktopRpcBridge {
 
       if ((req.method === 'GET' || req.method === 'HEAD') && pathname.startsWith('/downloads/') && pathname.endsWith('/file')) {
         const rawId = pathname.slice('/downloads/'.length, -'/file'.length);
-        const itemId = rawId ? decodeURIComponent(rawId) : '';
+        const itemId = rawId ? safeDecode(rawId) : '';
         if (!itemId) {
           this.sendJson(res, 400, { success: false, error: 'Missing download id' });
           return;
@@ -650,43 +704,59 @@ export class DesktopRpcBridge {
           });
           return;
         }
+        if (process.platform !== 'win32') {
+          this.sendJson(res, 501, { success: false, error: 'Extension updates can only be installed on Windows' });
+          return;
+        }
+        const downloadDir = this.deps.settings.get().downloadDir;
+        if (!downloadDir) {
+          this.sendJson(res, 400, { success: false, error: 'No download folder is configured' });
+          return;
+        }
         const version = String(body.version || 'latest').replace(/[^a-zA-Z0-9._-]/g, '');
         const zipRes = await fetch(body.downloadUrl);
         if (!zipRes.ok) {
           this.sendJson(res, 502, { success: false, error: `Failed to download extension zip (HTTP ${zipRes.status})` });
           return;
         }
-        const buf = Buffer.from(await zipRes.arrayBuffer());
-        if (buf.length > MAX_EXTENSION_ZIP_BYTES) {
+        // Checked while reading, so an oversized download is never held in memory
+        const declaredSize = Number(zipRes.headers.get('content-length'));
+        const buf = declaredSize > MAX_EXTENSION_ZIP_BYTES ? null : await readBodyLimited(zipRes, MAX_EXTENSION_ZIP_BYTES);
+        if (!buf) {
+          await zipRes.body?.cancel().catch(() => undefined);
           this.sendJson(res, 502, { success: false, error: 'Extension zip is unexpectedly large' });
           return;
         }
         const zipPath = join(tmpdir(), `GRabbit-Chrome-Extension-v${version}.zip`);
-        writeFileSync(zipPath, buf);
-
-        const targetDirs: string[] = [];
-        const downloadDir = this.deps.settings.get().downloadDir;
-        if (downloadDir) {
-          const dlExtDir = join(downloadDir, 'GRabbit-Chrome-Extension');
-          mkdirSync(dlExtDir, { recursive: true });
-          targetDirs.push(dlExtDir);
-        }
-
-        for (const dest of targetDirs) {
-          await new Promise<void>((resolveExec) => {
+        const dest = join(downloadDir, 'GRabbit-Chrome-Extension');
+        let extractError: string | null = null;
+        try {
+          writeFileSync(zipPath, buf);
+          mkdirSync(dest, { recursive: true });
+          const quote = (p: string) => `'${p.replace(/'/g, "''")}'`;
+          extractError = await new Promise<string | null>((resolveExec) => {
             execFile(
               'powershell.exe',
-              ['-NoProfile', '-Command', `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`],
-              () => resolveExec()
+              [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `Expand-Archive -Path ${quote(zipPath)} -DestinationPath ${quote(dest)} -Force -ErrorAction Stop`,
+              ],
+              { windowsHide: true },
+              (err, _stdout, stderr) => resolveExec(err ? String(stderr || err.message).trim() || 'Extraction failed' : null)
             );
           });
+        } finally {
+          rmSync(zipPath, { force: true });
+        }
+        if (extractError) {
+          logger.error({ err: extractError, dest }, 'Extension update could not be extracted');
+          this.sendJson(res, 500, { success: false, error: `Could not extract the extension: ${extractError}` });
+          return;
         }
 
-        this.sendJson(res, 200, {
-          success: true,
-          installedVersion: version,
-          extractedDirs: targetDirs,
-        });
+        this.sendJson(res, 200, { success: true, installedVersion: version, extractedDirs: [dest] });
         return;
       }
 

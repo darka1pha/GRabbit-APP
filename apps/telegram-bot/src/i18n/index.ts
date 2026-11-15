@@ -24,7 +24,7 @@ export function translate(
   try {
     const raw = i18n.t(locale, key, params);
     return stripFluentIsolates(raw);
-  } catch (err) {
+  } catch {
     // Fallback to key if translation fails
     return key;
   }

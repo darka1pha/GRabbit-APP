@@ -9,7 +9,6 @@ import {
 } from '@grabbit/types';
 import {
   parsePlatformUrl,
-  detectPlatform,
   extractUrlFromText,
   standardMediaOptions,
   spotifyAudioOptions,
@@ -395,7 +394,8 @@ export class MobileBridgeService {
       return await this.resolveStandalone(normalizedUrl, platform, signal);
     } catch (err: any) {
       throw new Error(
-        `Resolver unavailable — pair with desktop. Standalone extractor could not resolve ${PLATFORM_NAMES[platform] || platform}: ${err?.message || 'Remote mirrors unreachable'}. Connect to GRabbit Desktop in Settings for full yt-dlp extraction.`
+        `Resolver unavailable — pair with desktop. Standalone extractor could not resolve ${PLATFORM_NAMES[platform] || platform}: ${err?.message || 'Remote mirrors unreachable'}. Connect to GRabbit Desktop in Settings for full yt-dlp extraction.`,
+        { cause: err }
       );
     }
   }

@@ -3,22 +3,30 @@
 # ==============================================================================
 
 # Stage 1: Build stage
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Enable corepack and prepare pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Enable corepack and prepare the pnpm version pinned in package.json
+RUN corepack enable && corepack prepare pnpm@12.5.1 --activate
 
-# Copy workspace manifests and config (pnpm-workspace.yaml holds allowBuilds approvals)
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
+# Copy workspace manifests and config (pnpm-workspace.yaml holds allowBuilds approvals).
+# Every workspace manifest is copied so the workspace matches pnpm-lock.yaml exactly and
+# --frozen-lockfile can be enforced; the filter below still installs only the bot's deps.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/telegram-bot/package.json ./apps/telegram-bot/
+COPY apps/desktop/package.json ./apps/desktop/
+COPY apps/mobile/package.json ./apps/mobile/
+COPY packages/api/package.json ./packages/api/
+COPY packages/config/package.json ./packages/config/
 COPY packages/core/package.json ./packages/core/
+COPY packages/extension/package.json ./packages/extension/
+COPY packages/schemas/package.json ./packages/schemas/
 COPY packages/types/package.json ./packages/types/
 COPY packages/utils/package.json ./packages/utils/
 
 # Install dependencies for telegram-bot and workspace packages
-RUN pnpm --filter @grabbit/telegram-bot... install --frozen-lockfile || pnpm --filter @grabbit/telegram-bot... install --config.strict-dep-builds=false
+RUN pnpm --filter @grabbit/telegram-bot... install --frozen-lockfile
 
 # Copy workspace packages & telegram-bot source code and build config
 COPY packages/types ./packages/types
@@ -33,7 +41,7 @@ COPY apps/telegram-bot/scripts ./apps/telegram-bot/scripts
 RUN pnpm --filter @grabbit/telegram-bot build
 
 # Stage 2: Production runtime image
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 
 WORKDIR /app
 
@@ -49,31 +57,41 @@ RUN printf 'Acquire::Retries "10";\nAcquire::http::Timeout "60";\nAcquire::https
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install latest yt-dlp binary safely
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+# Pinned yt-dlp release, verified against its published SHA-256.
+# To upgrade, bump both values from https://github.com/yt-dlp/yt-dlp/releases (SHA2-256SUMS).
+ARG YTDLP_VERSION=2026.10.26
+ARG YTDLP_SHA256=e51e69e89489f199530f13d32a4342da3ddb2cf34842f364603a066db05afbf3
+RUN curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" -o /usr/local/bin/yt-dlp \
+    && echo "${YTDLP_SHA256}  /usr/local/bin/yt-dlp" | sha256sum -c - \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && yt-dlp --version
 
 # Enable pnpm for production install
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@12.5.1 --activate
 
-# Copy manifests
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
+# Copy manifests (all of them, for the same reason as in the build stage)
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/telegram-bot/package.json ./apps/telegram-bot/
+COPY apps/desktop/package.json ./apps/desktop/
+COPY apps/mobile/package.json ./apps/mobile/
+COPY packages/api/package.json ./packages/api/
+COPY packages/config/package.json ./packages/config/
 COPY packages/core/package.json ./packages/core/
+COPY packages/extension/package.json ./packages/extension/
+COPY packages/schemas/package.json ./packages/schemas/
 COPY packages/types/package.json ./packages/types/
 COPY packages/utils/package.json ./packages/utils/
 
 # Install only production dependencies
-RUN pnpm --filter @grabbit/telegram-bot... install --prod --ignore-scripts --config.strict-dep-builds=false
+RUN pnpm --filter @grabbit/telegram-bot... install --prod --frozen-lockfile --ignore-scripts
 
 # Copy build artifacts and runtime resources
 COPY --from=builder /app/apps/telegram-bot/dist ./apps/telegram-bot/dist
 COPY --from=builder /app/apps/telegram-bot/locales ./apps/telegram-bot/locales
 COPY apps/telegram-bot/src/database/migrations ./apps/telegram-bot/src/database/migrations
 
-# Create temp media directory
-RUN mkdir -p /app/temp
+# Temp media directory, owned by the unprivileged runtime user
+RUN mkdir -p /app/temp && chown -R node:node /app/temp
 
 WORKDIR /app/apps/telegram-bot
 
@@ -82,6 +100,9 @@ ENV YTDLP_PATH=/usr/local/bin/yt-dlp
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV FFPROBE_PATH=/usr/bin/ffprobe
 ENV TEMP_DIR=/app/temp
+
+# Run as the image's built-in unprivileged user
+USER node
 
 # Run application
 CMD ["node", "dist/index.js"]

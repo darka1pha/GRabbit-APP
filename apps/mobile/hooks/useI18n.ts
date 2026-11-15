@@ -1,12 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
-import { I18nManager, TextStyle } from 'react-native';
+import { TextStyle } from 'react-native';
 import {
   createTranslator,
   errorText as getErrorText,
   formatBytes as fmtBytes,
   formatSpeed as fmtSpeed,
   formatDuration as fmtDuration,
-  type MessageKey,
   type Translate,
 } from '@grabbit/utils';
 import { mobileSettingsManager } from '../services/settings-manager';

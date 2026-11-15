@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo schemas lint ok"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@grabbit/types": "workspace:*",
@@ -19,4 +19,3 @@
     "typescript": "^5.8.2"
   }
 }
-

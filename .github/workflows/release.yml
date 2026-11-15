@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.2.1)'
-        required: false
-        default: 'v1.2.1'
+        description: 'Release tag to build and publish (e.g. v1.2.1)'
+        required: true
+        type: string
       draft:
         description: 'Create draft release?'
         type: boolean
@@ -19,8 +19,13 @@ on:
         type: boolean
         default: false
 
+# Read-only by default; only the publish job may write to the repository
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # Inputs are passed through env, never pasted into scripts
+  RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
 
 jobs:
   # ==============================================================
@@ -39,14 +44,14 @@ jobs:
         with:
           version: 12.5.1
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Run typecheck
         run: pnpm typecheck
@@ -103,14 +108,14 @@ jobs:
         with:
           version: 12.5.1
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck & test Mobile
         run: |
@@ -132,8 +137,7 @@ jobs:
       - name: Prepare APK Artifact
         id: prepare-apk
         run: |
-          VERSION="${{ github.event.inputs.tag_name || github.ref_name }}"
-          VERSION="${VERSION#v}"
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist-apk
           APK_PATH=$(find apps/mobile/android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
@@ -167,14 +171,14 @@ jobs:
         with:
           version: 12.5.1
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Extension Icons & Build Extension
         run: |
@@ -185,8 +189,7 @@ jobs:
 
       - name: Package Extension ZIP
         run: |
-          VERSION="${{ github.event.inputs.tag_name || github.ref_name }}"
-          VERSION="${VERSION#v}"
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p dist-extension
           cd packages/extension/dist
           zip -r "../../../dist-extension/GRabbit-Chrome-Extension-v${VERSION}.zip" .
@@ -206,6 +209,8 @@ jobs:
     name: Publish Release to GitHub
     needs: [build-desktop, build-mobile, build-extension]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -246,11 +251,12 @@ jobs:
       - name: Determine Release Tag
         id: get_tag
         run: |
-          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
-          if [ -z "$TAG" ] || [ "$TAG" = "main" ] || [ "$TAG" = "master" ]; then
-            TAG="v1.2.1"
+          TAG="$RELEASE_TAG"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "Error: '$TAG' is not a release tag like v1.2.3" >&2
+            exit 1
           fi
-          echo "release_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Clean Conflicting Release Assets
         env:

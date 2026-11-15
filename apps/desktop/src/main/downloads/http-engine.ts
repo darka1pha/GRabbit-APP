@@ -400,7 +400,7 @@ export class HttpDownloadTask {
         res.body.resume();
         res = undefined;
       }
-    } catch (err) {
+    } catch {
       if (signal.aborted) throw new JobCancelledError();
       res = undefined;
     }
@@ -524,7 +524,7 @@ export class HttpDownloadTask {
     await mkdir(dir, { recursive: true });
 
     for (const seg of item.segments!) {
-      let size = 0;
+      let size: number;
       try {
         size = (await stat(this.partPath(seg))).size;
       } catch {

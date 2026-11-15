@@ -227,8 +227,8 @@ class Md5IncrementalHasher implements IncrementalHasher {
     let D = this.d0;
 
     for (let i = 0; i < 64; i++) {
-      let F = 0;
-      let g = 0;
+      let F: number;
+      let g: number;
       if (i < 16) {
         F = (B & C) | (~B & D);
         g = i;
@@ -323,8 +323,8 @@ class Sha1IncrementalHasher implements IncrementalHasher {
     let e = this.h4;
 
     for (let i = 0; i < 80; i++) {
-      let f = 0;
-      let k = 0;
+      let f: number;
+      let k: number;
       if (i < 20) {
         f = (b & c) | (~b & d);
         k = 0x5a827999;
@@ -581,7 +581,7 @@ class Sha512IncrementalHasher implements IncrementalHasher {
         ((l2 << 3) | (h2 >>> 29)) ^
         ((l2 >>> 6) | (h2 << 26));
 
-      let loSum =
+      const loSum =
         (this.wLo[i - 16] >>> 0) +
         (s0Lo >>> 0) +
         (this.wLo[i - 7] >>> 0) +

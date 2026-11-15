@@ -42,7 +42,7 @@ export class ClipboardWatcher {
     if (text.length > 4096) return;
     const url = extractUrlFromText(text);
     if (!url) return;
-    let host = '';
+    let host: string;
     try {
       host = new URL(url).hostname;
     } catch {

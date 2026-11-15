@@ -86,7 +86,7 @@ export function getPrimaryLanIp(): string | undefined {
   return undefined;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type Handler = (...args: any[]) => unknown;
 
 /** The renderer sent arguments of the wrong shape. */
