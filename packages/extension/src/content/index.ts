@@ -55,6 +55,25 @@ document.addEventListener(
     if (!anchor || !anchor.href) return;
 
     const href = anchor.href;
+
+    // Magnet links go to GRabbit's torrent engine; the desktop app asks nothing more of the page
+    if (/^magnet:\?/i.test(href)) {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        chrome.runtime.sendMessage({ type: 'DOWNLOAD_URL', payload: { url: href, referrer: window.location.href } }, (res) => {
+          if (chrome.runtime.lastError || !res || !res.success) {
+            // Desktop offline, or it refused the link (e.g. already added): fall back to the browser
+            desktopConnected = false;
+            window.location.assign(href);
+          }
+        });
+      } catch {
+        window.location.assign(href);
+      }
+      return;
+    }
+
     if (!href.startsWith('http://') && !href.startsWith('https://')) return;
 
     // Do not intercept navigation to streaming social media pages (those use the floating video grabber)

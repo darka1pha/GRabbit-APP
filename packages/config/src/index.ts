@@ -74,6 +74,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     token: 'grabbit-token-local',
     autoCapture: true,
   },
+  torrent: {
+    seedRatio: 0,
+    maxUploadKBps: 0,
+    enableDht: true,
+    handleMagnetLinks: false,
+  },
 };
 
 export const DEFAULT_RPC_PORT = 31542;

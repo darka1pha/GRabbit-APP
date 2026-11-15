@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DesktopRpcBridge } from '../src/main/rpc-bridge';
+import { TorrentError } from '../src/main/media/errors';
 import type { DownloadManager } from '../src/main/downloads/manager';
 import type { PlatformRouter } from '../src/main/media/router';
 import type { SettingsService } from '../src/main/settings';
@@ -88,6 +89,7 @@ describe('DesktopRpcBridge', () => {
         token: TEST_TOKEN,
         autoCapture: true,
       },
+      torrent: { seedRatio: 0, maxUploadKBps: 0, enableDht: true, handleMagnetLinks: false },
     };
 
     const mockItem: DownloadItem = {
@@ -335,6 +337,28 @@ describe('DesktopRpcBridge', () => {
         }),
       }),
     ]);
+  });
+
+  it('sends magnet links to the torrent engine and reports its refusals', async () => {
+    const magnet = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Show';
+    mockManager.addTorrent = vi.fn().mockResolvedValue([{ id: 'tor-1', kind: 'torrent', fileName: 'Show' }]);
+    const post = () =>
+      fetch(`http://127.0.0.1:${TEST_PORT}/downloads/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-GRabbit-Token': TEST_TOKEN },
+        body: JSON.stringify({ url: magnet }),
+      });
+
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(mockManager.addTorrent).toHaveBeenCalledWith([{ magnet, startPaused: undefined }]);
+    expect(mockManager.addHttp).not.toHaveBeenCalled();
+    expect(mockRouter.resolve).not.toHaveBeenCalled();
+
+    (mockManager.addTorrent as any).mockRejectedValue(new TorrentError('This torrent is already in your downloads', 'TORRENT_DUPLICATE'));
+    const dup = await post();
+    expect(dup.status).toBe(400);
+    expect(((await dup.json()) as any).error).toContain('already');
   });
 
   it('adds batch downloads on POST /downloads/batch', async () => {

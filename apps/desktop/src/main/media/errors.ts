@@ -52,6 +52,16 @@ export class ProcessingError extends AppError {
   }
 }
 
+/** Anything the torrent engine reports. `code` is TORRENT_* or a shared code such as DISK_FULL. */
+export class TorrentError extends AppError {
+  constructor(
+    message: string,
+    public readonly code: string = 'TORRENT_FAILED'
+  ) {
+    super(message);
+  }
+}
+
 export class JobCancelledError extends AppError {
   public readonly code = 'CANCELLED';
   constructor(message = 'aborted') {

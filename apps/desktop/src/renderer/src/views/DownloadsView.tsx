@@ -36,6 +36,7 @@ import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
 import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '../format';
 import { ContextMenu, FileIcon, MenuEntry, Modal, ProgressBar } from '../components/ui';
+import { TorrentFileChecklist } from '../components/TorrentFileChecklist';
 import { QueueConfigModal } from '../components/QueueConfigModal';
 import { QRCodeModal } from '../components/QRCodeModal';
 import { downloadStore, useDownloadsAggregate, useLiveDownload, useSegmentWatch } from '../downloads-store';
@@ -92,6 +93,11 @@ function fraction(item: DownloadItem): number {
 function canPause(item: DownloadItem): boolean {
   return item.status === 'queued' || ACTIVE.includes(item.status);
 }
+/** A finished multi-file torrent is a folder: it cannot be verified or sent as one file. */
+function isFolderDownload(item: DownloadItem): boolean {
+  return item.kind === 'torrent' && (item.torrent?.files?.length ?? 0) > 1;
+}
+
 function canResume(item: DownloadItem): boolean {
   return item.status === 'paused' || item.status === 'error';
 }
@@ -733,6 +739,8 @@ export function DownloadsView({
 
   function onDoubleClick(item: DownloadItem) {
     if (item.status === 'completed') void run(() => api.downloads.openFile(item.id));
+    // A torrent waiting for its files to be chosen only shows its details (selecting the row does)
+    else if (item.torrent?.needsSelection) return;
     else if (canResume(item)) void run(() => api.downloads.resume([item.id]));
   }
 
@@ -891,14 +899,19 @@ export function DownloadsView({
           }),
       },
       { label: t('dl.changeLink'), icon: <Link size={15} />, disabled: item.kind !== 'http' || done, onClick: () => setDialog({ kind: 'url', item }) },
-      { label: t('dl.speedLimit'), icon: <Gauge size={15} />, disabled: item.kind !== 'http' || done, onClick: () => setDialog({ kind: 'limit', item }) },
+      {
+        label: t('dl.speedLimit'),
+        icon: <Gauge size={15} />,
+        disabled: (item.kind !== 'http' && item.kind !== 'torrent') || done,
+        onClick: () => setDialog({ kind: 'limit', item }),
+      },
       {
         label: t('dl.inspectSegments'),
         icon: <Activity size={15} />,
         disabled: item.kind !== 'http' || done,
         onClick: () => setDialog({ kind: 'segments', item }),
       },
-      { label: t('dl.verify'), icon: <ShieldCheck size={15} />, disabled: !done, onClick: () => setDialog({ kind: 'verify', item }) },
+      { label: t('dl.verify'), icon: <ShieldCheck size={15} />, disabled: !done || isFolderDownload(item), onClick: () => setDialog({ kind: 'verify', item }) },
       { separator: true },
       ...queues
         .filter((q) => q.id !== (item.queueId || 'main'))
@@ -1807,6 +1820,16 @@ const DownloadRow = memo(function DownloadRow({
         )}
       </span>
     );
+  } else if (item.kind === 'torrent' && item.torrent?.needsSelection && !active) {
+    sub = <span style={{ color: 'var(--accent)' }}>{t('torrent.chooseFiles')}</span>;
+  } else if (item.kind === 'torrent' && active && item.torrent?.stage === 'Fetching metadata') {
+    sub = t('torrent.fetchingMetadata');
+  } else if (item.kind === 'torrent' && item.status === 'downloading') {
+    sub = (
+      <>
+        {t('status.downloading')} · {t('torrent.peers', { peers: item.torrent?.peers ?? 0, seeds: item.torrent?.seeders ?? 0 })}
+      </>
+    );
   } else if (item.status === 'downloading' && item.kind === 'http') {
     sub = (
       <>
@@ -1821,7 +1844,7 @@ const DownloadRow = memo(function DownloadRow({
       <>
         {item.checksum?.verified === true && <span className="badge success">{t('dl.checksumOk')}</span>}
         {item.checksum?.verified === false && <span className="badge danger">{t('dl.checksumBad')}</span>}
-        {item.media?.author ?? safeHostname(item.url)}
+        {item.media?.author ?? (item.kind === 'torrent' ? t('torrent.label') : safeHostname(item.url))}
       </>
     );
   } else if (item.status === 'queued' && waitingWindow) {
@@ -1912,14 +1935,16 @@ const DownloadRow = memo(function DownloadRow({
               >
                 <ExternalLink size={15} />
               </button>
-              <button
-                className="btn ghost sm icon"
-                title={t('dl.sendToMobile')}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => actions.sendToMobile?.(item)}
-              >
-                <Smartphone size={14} />
-              </button>
+              {!isFolderDownload(item) && (
+                <button
+                  className="btn ghost sm icon"
+                  title={t('dl.sendToMobile')}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => actions.sendToMobile?.(item)}
+                >
+                  <Smartphone size={14} />
+                </button>
+              )}
             </>
           ) : (
             <button
@@ -1943,6 +1968,85 @@ const DownloadRow = memo(function DownloadRow({
   );
 });
 
+/** Info hash, peers, upload and file list (with selection) of a torrent. */
+function TorrentDetails({ item }: { item: DownloadItem }) {
+  const { t, language } = useI18n();
+  const { toast } = useApp();
+  const torrent = item.torrent!;
+  const files = torrent.files ?? [];
+  const active = ACTIVE.includes(item.status);
+  const done = item.status === 'completed';
+  const savedKey = files.map((f) => (f.selected !== false ? 1 : 0)).join('');
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(files.flatMap((f, i) => (f.selected !== false ? [i] : []))));
+  const [saving, setSaving] = useState(false);
+  // Follow the saved selection when it changes elsewhere (or a new file list arrives)
+  useEffect(() => {
+    setSelected(new Set(files.flatMap((f, i) => (f.selected !== false ? [i] : []))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey, item.id]);
+  const changed = files.some((f, i) => (f.selected !== false) !== selected.has(i));
+
+  async function save(start: boolean) {
+    setSaving(true);
+    try {
+      await api.downloads.setTorrentFiles(item.id, [...selected].sort((a, b) => a - b));
+      if (start) await api.downloads.resume([item.id]);
+    } catch (err) {
+      toast(errorText(t, err), 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      {torrent.needsSelection && !active && (
+        <div className="banner full">
+          <span className="grow">{t('torrent.needsSelection')}</span>
+          <button className="btn sm primary" disabled={saving || selected.size === 0} onClick={() => void save(true)}>
+            {t('torrent.startSelected')}
+          </button>
+        </div>
+      )}
+      <dl className="kv full">
+        <dt>{t('torrent.infoHash')}</dt>
+        <dd className="mono small">{torrent.infoHash}</dd>
+      </dl>
+      {active && (
+        <dl className="kv">
+          <dt>{t('torrent.label')}</dt>
+          <dd>{t('torrent.peers', { peers: torrent.peers ?? 0, seeds: torrent.seeders ?? 0 })}</dd>
+        </dl>
+      )}
+      {(torrent.uploadedBytes ?? 0) > 0 && (
+        <dl className="kv">
+          <dt>{t('torrent.uploaded')}</dt>
+          <dd>
+            {formatBytes(torrent.uploadedBytes ?? 0, language)}
+            {active && torrent.uploadSpeed ? ` · ${formatSpeed(torrent.uploadSpeed, language)}` : ''}
+          </dd>
+        </dl>
+      )}
+      {files.length > 1 && (
+        <dl className="kv full">
+          <dt>{t('torrent.files')}</dt>
+          <dd style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <TorrentFileChecklist files={files} selected={selected} onChange={setSelected} showProgress disabled={done || saving} />
+            {changed && !torrent.needsSelection && !done && (
+              <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                {selected.size === 0 && <span className="small" style={{ color: 'var(--danger)' }}>{t('torrent.noneSelected')}</span>}
+                <button className="btn sm primary" disabled={saving || selected.size === 0} onClick={() => void save(false)}>
+                  {t('torrent.applySelection')}
+                </button>
+              </span>
+            )}
+          </dd>
+        </dl>
+      )}
+    </>
+  );
+}
+
 function DetailsPanel({
   item: listed,
   onClose,
@@ -1963,7 +2067,8 @@ function DetailsPanel({
   const { t, language } = useI18n();
   const item = useLiveDownload(listed);
   // The segment map needs per-segment progress, which is only sent for watched downloads
-  useSegmentWatch(item.kind === 'http' && item.status !== 'completed' ? item.id : null);
+  // Live segment maps (http) and per-file progress (torrents) are only sent for watched downloads
+  useSegmentWatch((item.kind === 'http' || item.kind === 'torrent') && item.status !== 'completed' ? item.id : null);
   const [speedHistory, setSpeedHistory] = useState<number[]>([]);
   useEffect(() => {
     if (item.status === 'downloading') {
@@ -1998,9 +2103,11 @@ function DetailsPanel({
             <button className="btn sm primary" onClick={onOpenFile}>
               <ExternalLink size={13} /> {t('dl.open')}
             </button>
-            <button className="btn sm" onClick={onSendToMobile}>
-              <Smartphone size={13} /> {t('dl.sendToMobile')}
-            </button>
+            {!isFolderDownload(item) && (
+              <button className="btn sm" onClick={onSendToMobile}>
+                <Smartphone size={13} /> {t('dl.sendToMobile')}
+              </button>
+            )}
           </>
         )}
         <button className="btn sm" onClick={onOpenFolder}>
@@ -2036,6 +2143,7 @@ function DetailsPanel({
           </dd>
         </dl>
       )}
+      {item.kind === 'torrent' && item.torrent && <TorrentDetails item={item} />}
       {item.status === 'downloading' && (
         <dl className="kv full">
           <dt>{t('dl.col.speed')}</dt>

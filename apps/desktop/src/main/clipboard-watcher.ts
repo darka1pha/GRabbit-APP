@@ -1,11 +1,14 @@
 import { clipboard } from 'electron';
+import { isMagnetLink } from '@grabbit/utils';
 import type { ClipboardLink } from '../shared/types';
 import { looksLikeDirectFile } from './downloads/categories';
 import { detectPlatform, extractUrlFromText } from './media/url-parser';
 
 const POLL_MS = 1000;
 
-/** Watches the clipboard for media links and direct file links. */
+const MAGNET_IN_TEXT = /magnet:\?[^\s"'<>]+/i;
+
+/** Watches the clipboard for media links, direct file links and magnet links. */
 export class ClipboardWatcher {
   private timer: NodeJS.Timeout | null = null;
   private last = '';
@@ -39,6 +42,14 @@ export class ClipboardWatcher {
     const text = await this.read();
     if (!text || text === this.last) return;
     this.last = text;
+    // Magnet links with many trackers run long, so they get a larger allowance than web links
+    if (text.length <= 16_384) {
+      const magnet = MAGNET_IN_TEXT.exec(text)?.[0];
+      if (magnet && isMagnetLink(magnet)) {
+        this.onLink({ url: magnet, kind: 'torrent' });
+        return;
+      }
+    }
     if (text.length > 4096) return;
     const url = extractUrlFromText(text);
     if (!url) return;

@@ -20,6 +20,12 @@ extraResources:
   - from: resources/icon.png
     to: icon.png
 asar: true
+fileAssociations:
+  # Lets Explorer open .torrent files with GRabbit (the app asks before adding them)
+  - ext: torrent
+    name: BitTorrent file
+    description: BitTorrent file
+    role: Viewer
 win:
   executableName: GRabbit
   icon: build/icon.png

@@ -325,7 +325,7 @@ RPC media resolution where yt-dlp fetches and remuxes the complete stream.
 | 9.4 | Native Web Audio Completion Chime | Done | Implemented offline procedural dual-tone chime (D5 587Hz -> A5 880Hz) in `apps/desktop/src/renderer/src/utils/sound.ts` via Web Audio API `AudioContext`, triggered on download completion IPC without requiring external sound files. |
 | 9.5 | Subtitles, chapters, and SponsorBlock | Pending | Auto-subtitles and chapter splitting in Grab view. |
 | 9.6 | Remote control & Wi-Fi Push | Pending | Mobile-to-Desktop queue inspection and Wi-Fi direct file transfer. |
-| 9.7 | BitTorrent / Magnet Link Engine | Pending | Torrent engine integration via WebTorrent or aria2. |
+| 9.7 | BitTorrent / Magnet Link Engine | Done | Bundled aria2 1.37.0 (pinned, SHA-256 checked) driven over loopback JSON-RPC by `downloads/aria2.ts` + `torrent-engine.ts`; torrents run through the normal queues, limits and schedules. Magnet metadata is fetched into a private folder, then the torrent is placed by content type. Add dialog, magnet/.torrent handoff from Grab box, paste, drag-and-drop, clipboard, extension and Explorer; Settings → Torrents (seeding, upload limit, DHT, magnet handler). File picker: choose files when adding a .torrent, "choose files when the list arrives" for magnets, change the selection while downloading; skipped-file fragments and the resume file are removed when done. |
 
 ---
 

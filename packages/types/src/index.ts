@@ -74,7 +74,7 @@ export type SongRecognitionResult = RecognizedTrack;
 // Download manager
 // ---------------------------------------------------------------------------
 
-export type DownloadKind = 'http' | 'media';
+export type DownloadKind = 'http' | 'media' | 'torrent';
 
 export type DownloadStatus =
   | 'queued'
@@ -128,6 +128,45 @@ export interface MediaJobInfo {
   sponsorBlock?: boolean;
 }
 
+export interface TorrentFileInfo {
+  /** Path inside the torrent, '/' separated, without the torrent's own folder. */
+  path: string;
+  length: number;
+  completedLength: number;
+  /** Downloaded or skipped. Missing means selected. */
+  selected?: boolean;
+}
+
+/** Numbers of a running torrent that change several times a second. */
+export interface TorrentLiveStats {
+  /** Connected peers. */
+  peers?: number;
+  /** Connected peers that have the whole torrent. */
+  seeders?: number;
+  /** Bytes per second sent to other peers. */
+  uploadSpeed?: number;
+  uploadedBytes?: number;
+  /** Human readable stage, e.g. "Fetching metadata". */
+  stage?: string;
+}
+
+export interface TorrentJobInfo extends TorrentLiveStats {
+  /** Lowercase hex info hash. */
+  infoHash: string;
+  /** Where the torrent came from: a magnet link, or a .torrent file the app keeps a copy of. */
+  source: 'magnet' | 'file';
+  /** Copy of the .torrent file in the app's data folder (source 'file'). */
+  torrentFile?: string;
+  /** Root name reported by the torrent: a file, or the folder of a multi-file torrent. */
+  name?: string;
+  /** Known once the metadata has arrived. */
+  files?: TorrentFileInfo[];
+  /** Magnet added with "choose files first": stop once the file list is known. */
+  pickFiles?: boolean;
+  /** Paused, waiting for the user to choose which files to download. */
+  needsSelection?: boolean;
+}
+
 export interface DownloadItem {
   id: string;
   kind: DownloadKind;
@@ -165,6 +204,7 @@ export interface DownloadItem {
     verified?: boolean;
   };
   media?: MediaJobInfo;
+  torrent?: TorrentJobInfo;
   mimeType?: string;
   etag?: string;
   lastModified?: string;
@@ -198,6 +238,8 @@ export interface DownloadProgressPatch {
   stage?: string;
   /** Only for downloads the renderer asked to watch (segment map / inspector). */
   segments?: SegmentState[];
+  /** Peers, upload and stage of a running torrent; per-file progress only for watched downloads. */
+  torrent?: TorrentLiveStats & { files?: TorrentFileInfo[] };
 }
 
 /** Totals across all running downloads, for the title bar, sidebar and tray. */
@@ -265,6 +307,35 @@ export interface AddMediaDownloadRequest {
   sponsorBlock?: boolean;
 }
 
+/** Exactly one of `magnet` and `torrentPath` is set. */
+export interface AddTorrentDownloadRequest {
+  magnet?: string;
+  /** A .torrent file on this computer. */
+  torrentPath?: string;
+  directory?: string;
+  startPaused?: boolean;
+  queueId?: string;
+  speedLimitKBps?: number;
+  /** Indices (into the .torrent's file list) to download; missing means all of them. */
+  selectedFiles?: number[];
+  /** Magnet links: pause once the file list arrives so the user can choose. */
+  pickFiles?: boolean;
+}
+
+/** What the add dialog shows before a torrent is added. */
+export interface TorrentPreview {
+  infoHash: string;
+  name?: string;
+  /** Known for .torrent files; magnet links only learn it once metadata arrives. */
+  totalBytes?: number;
+  fileCount?: number;
+  /** The file list of a .torrent file (magnet links have none yet). */
+  files?: { path: string; length: number }[];
+  trackers: number;
+  /** An unfinished download of the same torrent that is already in the list. */
+  existingId?: string;
+}
+
 export interface LanTransferInfo {
   url: string;
   deepLink: string;
@@ -326,6 +397,17 @@ export interface SpeedScheduleSettings {
   days?: number[];
 }
 
+export interface TorrentSettings {
+  /** Keep seeding until this upload/download ratio, 0 = stop as soon as the download completes. */
+  seedRatio: number;
+  /** KB/s uploaded across all torrents, 0 = unlimited. */
+  maxUploadKBps: number;
+  /** Find peers through the DHT and local peer discovery as well as trackers. */
+  enableDht: boolean;
+  /** Register GRabbit as the handler for magnet: links. */
+  handleMagnetLinks: boolean;
+}
+
 export interface AppSettings {
   language: Language;
   theme: Theme;
@@ -380,6 +462,7 @@ export interface AppSettings {
     instagramSessionId: string;
   };
   extension: ExtensionSettings;
+  torrent: TorrentSettings;
   /** Whether the user has completed the initial onboarding wizard. */
   onboarded?: boolean;
 }
@@ -444,6 +527,7 @@ export interface ToolInfo {
   ytdlp: { path: string; version: string | null };
   ffmpeg: { path: string; version: string | null };
   ffprobe: { path: string; version: string | null };
+  aria2: { path: string; version: string | null };
   appVersion: string;
   dataDir: string;
   lanIp?: string;
@@ -451,8 +535,8 @@ export interface ToolInfo {
 
 export interface ClipboardLink {
   url: string;
-  /** 'media' when a platform adapter (or yt-dlp) should handle it, 'file' for the download manager. */
-  kind: 'media' | 'file';
+  /** 'media' when a platform adapter (or yt-dlp) should handle it, 'file' for the download manager, 'torrent' for magnet links and .torrent files. */
+  kind: 'media' | 'file' | 'torrent';
 }
 
 export interface AppError {
@@ -496,6 +580,11 @@ export interface GrabbitApi {
     probe(url: string, headers?: Record<string, string>): Promise<ProbeResult>;
     addHttp(requests: AddHttpDownloadRequest[]): Promise<DownloadItem[]>;
     addMedia(requests: AddMediaDownloadRequest[]): Promise<DownloadItem[]>;
+    addTorrent(requests: AddTorrentDownloadRequest[]): Promise<DownloadItem[]>;
+    /** Reads a magnet link or .torrent file without adding it. */
+    inspectTorrent(source: { magnet?: string; torrentPath?: string }): Promise<TorrentPreview>;
+    /** Chooses which files of a torrent to download (indices into its file list). */
+    setTorrentFiles(id: string, selected: number[]): Promise<DownloadItem>;
     pause(ids: string[]): Promise<void>;
     resume(ids: string[]): Promise<void>;
     retry(ids: string[]): Promise<void>;
@@ -563,6 +652,8 @@ export interface GrabbitApi {
     openPath(path: string): Promise<void>;
     getPathForFile(file: File): string;
     onClipboardLink(listener: (link: ClipboardLink) => void): () => void;
+    /** A magnet link or .torrent file was opened with GRabbit (browser, Explorer): ask the user to add it. */
+    onTorrentRequested(listener: (source: { magnet?: string; torrentPath?: string }) => void): () => void;
     onNavigate(listener: (view: string) => void): () => void;
     toggleMiniMode(enable?: boolean): Promise<boolean>;
     isMiniMode(): Promise<boolean>;
@@ -583,6 +674,9 @@ export const IPC = {
   downloadsProbe: 'downloads:probe',
   downloadsAddHttp: 'downloads:add-http',
   downloadsAddMedia: 'downloads:add-media',
+  downloadsAddTorrent: 'downloads:add-torrent',
+  downloadsInspectTorrent: 'downloads:inspect-torrent',
+  downloadsSetTorrentFiles: 'downloads:set-torrent-files',
   downloadsPause: 'downloads:pause',
   downloadsResume: 'downloads:resume',
   downloadsRetry: 'downloads:retry',
@@ -629,6 +723,7 @@ export const IPC = {
   openExternal: 'app:open-external',
   openPath: 'app:open-path',
   clipboardLink: 'app:clipboard-link',
+  torrentRequested: 'app:torrent-requested',
   navigate: 'app:navigate',
   toggleMiniMode: 'app:toggle-mini-mode',
   isMiniMode: 'app:is-mini-mode',

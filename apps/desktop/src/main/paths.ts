@@ -26,6 +26,8 @@ export interface BinaryPaths {
   ffprobe: string;
   /** Folder with both ffmpeg and ffprobe, for yt-dlp's --ffmpeg-location. */
   ffmpegDir: string;
+  /** aria2c, the BitTorrent engine. */
+  aria2: string;
 }
 
 function devFallback(...parts: string[]): string {
@@ -79,6 +81,8 @@ export function resolveBinaries(): BinaryPaths {
     ffmpeg: hasBundled ? bundledFfmpeg : devFfmpeg,
     ffprobe: hasBundled ? bundledFfprobe : devFfprobe,
     ffmpegDir: hasBundled ? bundledBin : existsSync(devFfmpeg) ? dirname(devFfmpeg) : '',
+    // Shipped with the app (scripts/fetch-binaries.mjs); a copy in the per-user bin folder also works
+    aria2: [join(bundledBin, `aria2c${EXE}`), join(userBin, `aria2c${EXE}`)].find((p) => existsSync(p)) ?? join(bundledBin, `aria2c${EXE}`),
   };
 }
 

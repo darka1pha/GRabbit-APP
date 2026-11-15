@@ -19,6 +19,7 @@ import {
   RpcUrlRequestSchema,
   type ZodTypeAny,
 } from '@grabbit/schemas';
+import { isMagnetLink } from '@grabbit/utils';
 import type {
   AddHttpDownloadRequest,
   DownloadItem,
@@ -32,7 +33,7 @@ import type { PlatformRouter } from './media/router';
 import type { MusicRecognizer } from './media/recognizer';
 import { YtDlpRunner } from './media/ytdlp-runner';
 import { detectPlatform, isPrivateHost, parseHttpUrl } from './media/url-parser';
-import { InvalidUrlError } from './media/errors';
+import { InvalidUrlError, TorrentError } from './media/errors';
 import { logger } from './logger';
 
 /** Platforms whose content is music: links from the browser become audio downloads. */
@@ -183,6 +184,12 @@ export class DesktopRpcBridge {
     if (!item || item.status !== 'completed' || !item.filePath || !existsSync(item.filePath)) {
       return null;
     }
+    // A multi-file torrent finishes as a folder, which cannot be sent as one file
+    try {
+      if (!statSync(item.filePath).isFile()) return null;
+    } catch {
+      return null;
+    }
 
     if (this.transferTokens.size >= 100) {
       const oldestKey = this.transferTokens.keys().next().value;
@@ -211,7 +218,12 @@ export class DesktopRpcBridge {
 
     let size: number;
     try {
-      size = statSync(item.filePath).size;
+      const info = statSync(item.filePath);
+      if (!info.isFile()) {
+        this.sendJson(res, 404, { success: false, error: 'This download is a folder, not a file' });
+        return;
+      }
+      size = info.size;
     } catch {
       this.sendJson(res, 404, { success: false, error: 'Completed file is inaccessible' });
       return;
@@ -546,7 +558,8 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && pathname === '/downloads/add') {
         const body = this.parse(RpcAddDownloadRequestSchema, await this.readBodyJson(req));
-        if (remoteCaller) await this.publicHttpUrl(body.url.trim());
+        // A magnet link names no host, so there is no network for it to reach into
+        if (remoteCaller && !isMagnetLink(body.url)) await this.publicHttpUrl(body.url.trim());
 
         const added = await this.processDownloadRequest(body);
         if (added) {
@@ -570,14 +583,14 @@ export class DesktopRpcBridge {
           // A malformed entry is skipped rather than failing the whole batch
           const reqItem = RpcAddDownloadRequestSchema.safeParse(rawItem);
           if (!reqItem.success) continue;
-          if (remoteCaller) {
+          if (remoteCaller && !isMagnetLink(reqItem.data.url)) {
             try {
               await this.publicHttpUrl(reqItem.data.url.trim());
             } catch {
               continue;
             }
           }
-          const added = await this.processDownloadRequest(reqItem.data);
+          const added = await this.processDownloadRequest(reqItem.data).catch(() => null);
           if (added) results.push(added);
         }
         if (results.length > 0) this.deps.onDownloadsAdded?.(results);
@@ -763,7 +776,7 @@ export class DesktopRpcBridge {
       // 404 for any other route
       this.sendJson(res, 404, { success: false, error: `Route not found: ${req.method} ${pathname}` });
     } catch (err) {
-      if (err instanceof RpcRequestError || err instanceof InvalidUrlError) {
+      if (err instanceof RpcRequestError || err instanceof InvalidUrlError || err instanceof TorrentError) {
         this.sendJson(res, 400, { success: false, error: err.message });
         return;
       }
@@ -793,6 +806,12 @@ export class DesktopRpcBridge {
 
   private async processDownloadRequest(req: RpcAddDownloadRequest): Promise<DownloadItem | null> {
     const rawUrl = req.url.trim();
+
+    // Magnet links go to the torrent engine; its errors (duplicate, malformed) reach the caller
+    if (isMagnetLink(rawUrl)) {
+      const [added] = await this.deps.manager.addTorrent([{ magnet: rawUrl, startPaused: req.startPaused }]);
+      return added ?? null;
+    }
     const headers: Record<string, string> = { ...(req.headers ?? {}) };
 
     if (req.cookies && !headers['Cookie'] && !headers['cookie']) {

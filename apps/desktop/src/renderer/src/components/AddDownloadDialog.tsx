@@ -13,7 +13,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { hasUrlPattern, expandUrlPatterns } from '@grabbit/utils';
+import { hasUrlPattern, expandUrlPatterns, isMagnetLink } from '@grabbit/utils';
 import { CATEGORIES, type Category, type ChecksumAlgorithm, type DownloadItem, type ProbeResult } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
 import { api, useApp } from '../state';
@@ -56,11 +56,14 @@ export function AddDownloadDialog({
   initialMode,
   onClose,
   onOpenInGrab,
+  onOpenTorrent,
 }: {
   initialUrl?: string;
   initialMode?: AddMode;
   onClose(): void;
   onOpenInGrab(url: string): void;
+  /** The user pasted a magnet link: it belongs in the torrent dialog. */
+  onOpenTorrent(magnet: string): void;
 }) {
   const { t, language } = useI18n();
   const { settings, queues, downloads, toast } = useApp();
@@ -386,6 +389,15 @@ export function AddDownloadDialog({
             />
             <span className="hint">{t('add.singleHint')}</span>
           </div>
+
+          {isMagnetLink(singleUrlTrimmed) && (
+            <div className="banner">
+              <span className="grow">{t('torrent.isMagnet')}</span>
+              <button className="btn sm primary" onClick={() => onOpenTorrent(singleUrlTrimmed)}>
+                {t('torrent.openAsTorrent')}
+              </button>
+            </div>
+          )}
 
           {single && (
             <div className="card card-pad" style={{ padding: '12px 14px' }}>

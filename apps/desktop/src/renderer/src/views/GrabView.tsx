@@ -23,6 +23,7 @@ import {
 import type { AddMediaDownloadRequest, ClipboardLink, MediaItem, MediaOption, PlatformMetadata } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
 import { api, useApp } from '../state';
+import { isMagnetLink } from '@grabbit/utils';
 import { formatBytes, formatDuration, isHttpUrl, looksLikeDirectFile } from '../format';
 import { Thumb } from '../components/ui';
 
@@ -115,12 +116,15 @@ export function GrabView({
   clipboardLink,
   onConsumePending,
   onOpenAddDialog,
+  onOpenTorrent,
   onAdded,
 }: {
   pendingInput: string | null;
   clipboardLink: ClipboardLink | null;
   onConsumePending(): void;
   onOpenAddDialog(url: string): void;
+  /** Magnet links belong in the torrent dialog, not in a media lookup or a search. */
+  onOpenTorrent(magnet: string): void;
   onAdded(): void;
 }) {
   const { t } = useI18n();
@@ -143,6 +147,11 @@ export function GrabView({
   async function submit(value = input) {
     const text = value.trim();
     if (!text) return;
+    if (isMagnetLink(text)) {
+      setInput('');
+      onOpenTorrent(text);
+      return;
+    }
     setInput(text);
     if (isHttpUrl(text)) {
       if (looksLikeDirectFile(text)) {
@@ -246,8 +255,8 @@ export function GrabView({
               </button>
             )}
             <button className="btn primary lg" type="submit" disabled={!input.trim() || state.kind === 'loading'}>
-              {isHttpUrl(input) || !input.trim() ? <Download size={17} /> : <Search size={17} />}
-              {isHttpUrl(input) || !input.trim() ? t('grab.button') : t('grab.search')}
+              {isHttpUrl(input) || isMagnetLink(input) || !input.trim() ? <Download size={17} /> : <Search size={17} />}
+              {isHttpUrl(input) || isMagnetLink(input) || !input.trim() ? t('grab.button') : t('grab.search')}
             </button>
           </form>
           <div className="platforms">
@@ -273,7 +282,13 @@ export function GrabView({
                 </div>
                 <button
                   className="btn sm primary"
-                  onClick={() => (clipboardLink.kind === 'file' ? onOpenAddDialog(clipboardLink.url) : void submit(clipboardLink.url))}
+                  onClick={() =>
+                    clipboardLink.kind === 'file'
+                      ? onOpenAddDialog(clipboardLink.url)
+                      : clipboardLink.kind === 'torrent'
+                        ? onOpenTorrent(clipboardLink.url)
+                        : void submit(clipboardLink.url)
+                  }
                 >
                   {t('grab.useIt')}
                 </button>

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { shell } from 'electron';
 import { StoredDownloadItemSchema, StoredQueueSchema } from '@grabbit/schemas';
+import { magnetFor, MAX_TORRENT_FILE_BYTES, parseMagnet, parseTorrentFile, type TorrentMetadata } from '@grabbit/utils';
 import type {
   AddHttpDownloadRequest,
   AddMediaDownloadRequest,
+  AddTorrentDownloadRequest,
   AfterQueueAction,
   AppSettings,
   Category,
@@ -15,8 +17,10 @@ import type {
   DownloadProgressPatch,
   DownloadQueue,
   DownloadStatus,
+  TorrentFileInfo,
+  TorrentPreview,
 } from '../../shared/types';
-import { codeOf, JobCancelledError } from '../media/errors';
+import { codeOf, JobCancelledError, TorrentError } from '../media/errors';
 import { sanitizeFilename, splitExtension } from '../media/filename';
 import { parseHttpUrl } from '../media/url-parser';
 import type { PlatformRouter } from '../media/router';
@@ -26,6 +30,8 @@ import { CATEGORY_FOLDERS, categoryForFileName, categoryForMime, extensionForMim
 import { filenameFromUrl } from './http-client';
 import { HttpDownloadTask, ProbeInfo, ResourceChangedError } from './http-engine';
 import { MediaDownloadTask } from './media-engine';
+import { TorrentDownloadTask, TorrentSelectionNeededError, type TorrentPlacement } from './torrent-engine';
+import type { Aria2Rpc } from './aria2';
 import { hashFile, moveFile, uniqueFileName } from './files';
 import { RateLimiter } from './throttle';
 import { insideWindow, ScheduleTracker } from './scheduler';
@@ -38,10 +44,22 @@ const TERMINAL_STATUSES: DownloadStatus[] = ['completed', 'error'];
 const MAX_HISTORY_ITEMS = 5000;
 const MAX_AUTO_RESTARTS = 2;
 
+/** The torrent engine (aria2), when this build has one. */
+export interface TorrentEngineDeps {
+  rpc(): Promise<Aria2Rpc>;
+  /** aria2 options for every new torrent (seeding). */
+  options(): Record<string, string>;
+  /** Overall torrent download cap, following the app's global speed limit (bytes/s). */
+  setDownloadLimit?(bytesPerSecond: number): void;
+  /** No torrent is running any more. */
+  onIdle?(): void;
+}
+
 export interface ManagerDeps {
   dataDir: string;
   tempRoot: string;
   router: PlatformRouter;
+  torrent?: TorrentEngineDeps;
   getSettings(): AppSettings;
   /** Whole items: new downloads and every change other than running progress. */
   onItemsChanged(items: DownloadItem[]): void;
@@ -52,6 +70,8 @@ export interface ManagerDeps {
   onQueuesChanged?(queues: DownloadQueue[]): void;
   onCompleted(item: DownloadItem): void;
   onFailed(item: DownloadItem): void;
+  /** A torrent paused itself to ask which files to download. */
+  onNeedsSelection?(item: DownloadItem): void;
   /**
    * Nothing is left to download (and at least one download finished during this run).
    * `action` is set when a queue that just finished asked for a specific action; otherwise
@@ -72,6 +92,7 @@ interface RunningEntry {
   controller: AbortController;
   promise: Promise<void>;
   http?: HttpDownloadTask;
+  torrent?: TorrentDownloadTask;
   /** What the item becomes once its task stops after an abort. */
   stopAs: DownloadStatus;
   lastBytes: number;
@@ -102,6 +123,8 @@ export class DownloadManager {
   private schedules = new ScheduleTracker();
   /** Power action requested by a finished queue, run once everything else is done too. */
   private pendingAfter: AfterQueueAction | null = null;
+  /** Finished torrents aria2 is still seeding: item id -> aria2 gid. */
+  private seeding = new Map<string, string>();
 
   constructor(private readonly deps: ManagerDeps) {
     this.activeStore = new JsonStore<DownloadItem[]>(join(deps.dataDir, 'active.json'), 500);
@@ -174,6 +197,10 @@ export class DownloadManager {
       }
       const item = parsed.data as unknown as DownloadItem;
       if (this.items.has(item.id)) continue;
+      if (item.kind === 'torrent' && !item.torrent?.infoHash) {
+        logger.warn({ id: item.id }, `Dropped a torrent without an info hash from ${source}`);
+        continue;
+      }
       if (ACTIVE_STATUSES.includes(item.status)) item.status = settings.resumeOnStartup ? 'queued' : 'paused';
       item.speed = 0;
       item.eta = null;
@@ -221,6 +248,7 @@ export class DownloadManager {
     if (this.globalLimiter.rate !== targetRate) {
       this.globalLimiter.setRate(targetRate);
     }
+    this.deps.torrent?.setDownloadLimit?.(targetRate);
   }
 
   /** Stops every task and saves synchronously (app quit). Running items resume next launch. */
@@ -257,6 +285,10 @@ export class DownloadManager {
 
   public hasActive(): boolean {
     return this.running.size > 0;
+  }
+
+  public hasActiveTorrents(): boolean {
+    return [...this.running.keys()].some((id) => this.items.get(id)?.kind === 'torrent');
   }
 
   // ---------------------------------------------------------------- adding
@@ -375,6 +407,220 @@ export class DownloadManager {
     return added;
   }
 
+  private torrentsDir(): string {
+    return join(this.deps.dataDir, 'torrents');
+  }
+
+  /** Reads a .torrent file, refusing anything too large to be one. */
+  private async readTorrentFile(path: string): Promise<{ bytes: Buffer; meta: TorrentMetadata }> {
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      throw new TorrentError('The .torrent file could not be found', 'TORRENT_INVALID');
+    }
+    if (!info.isFile() || info.size > MAX_TORRENT_FILE_BYTES) {
+      throw new TorrentError('That is not a .torrent file', 'TORRENT_INVALID');
+    }
+    const bytes = await readFile(path);
+    try {
+      return { bytes, meta: parseTorrentFile(bytes) };
+    } catch (err) {
+      throw new TorrentError(err instanceof Error ? err.message : 'Not a valid .torrent file', 'TORRENT_INVALID');
+    }
+  }
+
+  private findTorrent(infoHash: string, unfinishedOnly: boolean): DownloadItem | undefined {
+    for (const item of this.items.values()) {
+      if (item.kind === 'torrent' && item.torrent?.infoHash === infoHash && (!unfinishedOnly || item.status !== 'completed')) return item;
+    }
+    return undefined;
+  }
+
+  /** Category from the torrent's biggest file (a season of episodes is video, not "other"). */
+  private categoryForTorrent(name: string, files: { path: string; length: number }[]): Category {
+    const biggest = [...files].sort((a, b) => b.length - a.length)[0];
+    const byFile = biggest ? categoryForFileName(biggest.path) : 'other';
+    return byFile !== 'other' ? byFile : categoryForFileName(name);
+  }
+
+  /**
+   * Chooses the folder a torrent downloads into. aria2 writes `<directory>/<name>`; when that
+   * name is already taken by something that is not this torrent's own partial download, the
+   * torrent gets a folder of its own so nothing existing is ever overwritten.
+   */
+  private placeTorrent(item: DownloadItem, name: string, files: { path: string; length: number }[]): void {
+    if (item.autoPlace) {
+      item.category = this.categoryForTorrent(name, files);
+      item.directory = this.directoryFor(item.category);
+    }
+    const root = join(item.directory, name);
+    const ownPartial = existsSync(`${root}.aria2`);
+    const takenByOther = [...this.items.values()].some(
+      (other) => other.id !== item.id && other.directory === item.directory && other.fileName.toLowerCase() === name.toLowerCase()
+    );
+    if ((existsSync(root) && !ownPartial) || takenByOther) {
+      item.directory = join(item.directory, uniqueFileName(item.directory, name, this.reservedNames(item.directory, item.id)));
+    }
+    item.fileName = sanitizeFilename(name, item.fileName);
+  }
+
+  /** What the add dialog shows for a magnet link or .torrent file, without adding it. */
+  public async inspectTorrent(source: { magnet?: string; torrentPath?: string }): Promise<TorrentPreview> {
+    if (source.magnet) {
+      const magnet = parseMagnet(source.magnet);
+      if (!magnet) throw new TorrentError('That is not a valid magnet link', 'TORRENT_INVALID');
+      return {
+        infoHash: magnet.infoHash,
+        name: magnet.name,
+        trackers: magnet.trackers.length,
+        existingId: this.findTorrent(magnet.infoHash, true)?.id,
+      };
+    }
+    if (!source.torrentPath) throw new TorrentError('Give a magnet link or a .torrent file', 'TORRENT_INVALID');
+    const { meta } = await this.readTorrentFile(source.torrentPath);
+    return {
+      infoHash: meta.infoHash,
+      name: meta.name,
+      totalBytes: meta.totalBytes,
+      fileCount: meta.files.length,
+      files: meta.files,
+      trackers: meta.trackers.length,
+      existingId: this.findTorrent(meta.infoHash, true)?.id,
+    };
+  }
+
+  /**
+   * Marks which files to download. Returns them, or throws when the indices do not fit the
+   * torrent or select nothing.
+   */
+  private applySelection<T extends { length: number }>(files: T[], indices: number[] | undefined): (T & { selected: boolean })[] {
+    const wanted = indices ? new Set(indices) : null;
+    if (wanted && ([...wanted].some((i) => i >= files.length) || wanted.size === 0)) {
+      throw new TorrentError('That file selection does not match this torrent', 'TORRENT_INVALID');
+    }
+    return files.map((f, i) => ({ ...f, selected: !wanted || wanted.has(i) }));
+  }
+
+  /** Bytes the user actually asked for. */
+  private selectedBytes(files: { length: number; selected?: boolean }[]): number {
+    return files.reduce((sum, f) => sum + (f.selected !== false ? f.length : 0), 0);
+  }
+
+  /**
+   * Chooses which files of a torrent to download. A running torrent switches straight away;
+   * one that paused to ask stays paused until it is started.
+   */
+  public async setTorrentFiles(id: string, selected: number[]): Promise<DownloadItem> {
+    const item = this.items.get(id);
+    const torrent = item?.torrent;
+    if (!item || item.kind !== 'torrent' || !torrent) throw new TorrentError('No such torrent', 'TORRENT_INVALID');
+    if (!torrent.files) throw new TorrentError('The file list is not known yet', 'TORRENT_INVALID');
+    if (item.status === 'completed') throw new TorrentError('This torrent has finished', 'TORRENT_INVALID');
+    torrent.files = this.applySelection(torrent.files, selected);
+    torrent.needsSelection = false;
+    torrent.pickFiles = false;
+    item.totalBytes = this.selectedBytes(torrent.files);
+    await this.running.get(id)?.torrent?.setSelection();
+    this.markDirty(item);
+    this.persist();
+    return item;
+  }
+
+  /**
+   * Adds torrents from magnet links or .torrent files. A torrent that is already downloading is
+   * not added twice. Throws only when nothing could be added.
+   */
+  public async addTorrent(requests: AddTorrentDownloadRequest[]): Promise<DownloadItem[]> {
+    if (!this.deps.torrent) throw new TorrentError('This build has no torrent engine', 'TORRENT_ENGINE_MISSING');
+    const added: DownloadItem[] = [];
+    let firstError: unknown = null;
+
+    for (const req of requests) {
+      try {
+        let infoHash: string;
+        let name: string | undefined;
+        let url: string;
+        let source: 'magnet' | 'file';
+        let torrentFile: string | undefined;
+        let meta: TorrentMetadata | undefined;
+
+        if (req.magnet) {
+          const magnet = parseMagnet(req.magnet);
+          if (!magnet) throw new TorrentError('That is not a valid magnet link', 'TORRENT_INVALID');
+          infoHash = magnet.infoHash;
+          name = magnet.name;
+          url = req.magnet.trim();
+          source = 'magnet';
+        } else if (req.torrentPath) {
+          const read = await this.readTorrentFile(req.torrentPath);
+          meta = read.meta;
+          infoHash = meta.infoHash;
+          name = meta.name;
+          url = magnetFor(infoHash, name);
+          source = 'file';
+          // Keep our own copy: the original may be a browser download the user deletes later
+          await mkdir(this.torrentsDir(), { recursive: true });
+          torrentFile = join(this.torrentsDir(), `${infoHash}.torrent`);
+          await writeFile(torrentFile, read.bytes);
+        } else {
+          throw new TorrentError('Give a magnet link or a .torrent file', 'TORRENT_INVALID');
+        }
+
+        if (this.findTorrent(infoHash, true)) {
+          throw new TorrentError('This torrent is already in your downloads', 'TORRENT_DUPLICATE');
+        }
+
+        const files: TorrentFileInfo[] | undefined = meta
+          ? this.applySelection(meta.files.map((f) => ({ ...f, completedLength: 0 })), req.selectedFiles)
+          : undefined;
+        // Filed by what was actually chosen: just the images of an album go to Images
+        const chosen = files?.filter((f) => f.selected !== false);
+        const category: Category = meta && chosen ? this.categoryForTorrent(meta.name, chosen) : 'other';
+        const queueId = req.queueId && this.queues.has(req.queueId) ? req.queueId : 'main';
+        const item: DownloadItem = {
+          id: randomUUID(),
+          kind: 'torrent',
+          url,
+          fileName: sanitizeFilename(name ?? infoHash, infoHash),
+          directory: req.directory?.trim() || this.directoryFor(category),
+          autoPlace: !req.directory?.trim(),
+          category,
+          queueId,
+          status: req.startPaused ? 'paused' : 'queued',
+          totalBytes: files ? this.selectedBytes(files) : null,
+          receivedBytes: 0,
+          speed: 0,
+          eta: null,
+          percent: 0,
+          resumable: true,
+          connections: 0,
+          activeConnections: 0,
+          speedLimit: req.speedLimitKBps ? req.speedLimitKBps * 1024 : 0,
+          retries: 0,
+          createdAt: Date.now(),
+          torrent: { infoHash, source, torrentFile, name, files, pickFiles: !meta && req.pickFiles ? true : undefined },
+        };
+        // A .torrent file already lists its files, so it is placed now; a magnet once metadata arrives
+        if (meta && chosen) {
+          this.placeTorrent(item, meta.name, chosen);
+          item.autoPlace = false;
+        }
+        this.insert(item);
+        added.push(item);
+      } catch (err) {
+        firstError ??= err;
+        logger.warn({ err }, 'Could not add a torrent');
+      }
+    }
+
+    if (added.length === 0 && firstError) throw firstError;
+    if (added.length > 0) this.persistQueues();
+    this.persist();
+    this.pump();
+    return added;
+  }
+
   /** Adds a new item (fresh id) to the list and its queue. The caller saves the queues once per batch. */
   private insert(item: DownloadItem): void {
     this.items.set(item.id, item);
@@ -435,7 +681,8 @@ export class DownloadManager {
   }
 
   public resumeAll(): void {
-    this.resume(this.order.filter((id) => this.items.get(id)?.status === 'paused'));
+    // A torrent waiting for the user to choose its files is not resumed in bulk
+    this.resume(this.order.filter((id) => this.items.get(id)?.status === 'paused' && !this.items.get(id)?.torrent?.needsSelection));
   }
 
   /** Stops (and awaits) a running task. */
@@ -453,6 +700,7 @@ export class DownloadManager {
       const item = this.items.get(id);
       if (!item) continue;
       await this.stop(id);
+      await this.stopSeeding(id);
       await this.discardWork(item);
       if (deleteFiles && item.status === 'completed' && item.filePath && existsSync(item.filePath)) {
         // Recycle Bin, not a permanent delete
@@ -530,6 +778,7 @@ export class DownloadManager {
     if (!item) return;
     item.speedLimit = Math.max(0, kbps) * 1024;
     this.limiters.get(id)?.setRate(item.speedLimit);
+    void this.running.get(id)?.torrent?.setSpeedLimit(item.speedLimit);
     this.markDirty(item);
     this.persist();
   }
@@ -634,7 +883,7 @@ export class DownloadManager {
     queue.enabled = true;
     for (const itemId of queue.order) {
       const item = this.items.get(itemId);
-      if (item && (item.status === 'paused' || item.status === 'error')) {
+      if (item && (item.status === 'paused' || item.status === 'error') && !item.torrent?.needsSelection) {
         item.status = 'queued';
         item.error = undefined;
         this.markDirty(item);
@@ -731,11 +980,16 @@ export class DownloadManager {
     this.running.set(item.id, entry);
     item.status = 'starting';
     item.startedAt ??= Date.now();
+    if (item.torrent?.needsSelection) {
+      item.torrent.needsSelection = false;
+      item.torrent.pickFiles = false;
+    }
     item.error = undefined;
     item.errorCode = undefined;
     this.markDirty(item);
 
-    const work = item.kind === 'http' ? this.runHttp(item, entry) : this.runMedia(item, entry);
+    const work =
+      item.kind === 'http' ? this.runHttp(item, entry) : item.kind === 'torrent' ? this.runTorrent(item, entry) : this.runMedia(item, entry);
     entry.promise = work
       .then(() => this.onSuccess(item))
       .catch((err) => this.onFailure(item, entry, err))
@@ -748,6 +1002,9 @@ export class DownloadManager {
         this.markDirty(item);
         this.persist();
         this.pump();
+        if (item.kind === 'torrent' && ![...this.running.keys()].some((id) => this.items.get(id)?.kind === 'torrent')) {
+          this.deps.torrent?.onIdle?.();
+        }
         // Pausing or failing the last item is not "the queue finished"
         if (item.status === 'completed') this.checkQueueDrained(item.queueId || 'main');
         this.checkDrained();
@@ -825,6 +1082,86 @@ export class DownloadManager {
     await rm(MediaDownloadTask.workDir(this.deps.tempRoot, item.id), { recursive: true, force: true });
   }
 
+  private async runTorrent(item: DownloadItem, entry: RunningEntry): Promise<void> {
+    const engine = this.deps.torrent;
+    if (!engine) throw new TorrentError('This build has no torrent engine', 'TORRENT_ENGINE_MISSING');
+    await mkdir(this.torrentsDir(), { recursive: true });
+    // A magnet's folder is only chosen once its metadata arrives: don't create a guess now
+    if (item.torrent?.files) await mkdir(item.directory, { recursive: true });
+    const task = new TorrentDownloadTask(item, {
+      rpc: () => engine.rpc(),
+      metadataDir: this.torrentsDir(),
+      options: () => engine.options(),
+      keepsSeeding: () => this.deps.getSettings().torrent.seedRatio > 0,
+      onMetadata: (info) => this.onTorrentMetadata(item, info),
+      onSeeding: (gid) => this.seeding.set(item.id, gid),
+      onUpdate: () => this.markProgress(item),
+    });
+    entry.torrent = task;
+    const result = await task.run(entry.controller.signal);
+    item.filePath = result.path;
+    item.fileName = sanitizeFilename(item.torrent?.name ?? item.fileName, item.fileName);
+    if (!result.seeding) {
+      await this.removeSkippedFiles(item, result.path);
+      // aria2 only deletes its resume file when the whole torrent is done; after a partial
+      // download it would stay next to the user's files for good
+      await rm(`${result.path}.aria2`, { force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Pieces that straddle a wanted and a skipped file leave fragments of the skipped file on
+   * disk (often a full-size file that is mostly zeros). Once the torrent is done they are of no
+   * use, so they go. Only paths inside the torrent's own folder are ever touched.
+   */
+  private async removeSkippedFiles(item: DownloadItem, root: string): Promise<void> {
+    const files = item.torrent?.files;
+    if (!files || files.length < 2 || files.every((f) => f.selected !== false)) return;
+    const base = resolve(root);
+    for (const f of files) {
+      if (f.selected !== false) continue;
+      const target = resolve(base, f.path);
+      if (!target.startsWith(base + sep)) continue;
+      await rm(target, { force: true }).catch((err) => logger.warn({ err, target }, 'Could not remove a skipped torrent file'));
+    }
+  }
+
+  /** A magnet's file list arrived: name it and, the first time, choose its folder. */
+  private async onTorrentMetadata(
+    item: DownloadItem,
+    info: { name: string; totalBytes: number; files: TorrentFileInfo[] }
+  ): Promise<TorrentPlacement> {
+    const torrent = item.torrent!;
+    const firstTime = !torrent.files;
+    torrent.name = info.name;
+    if (firstTime) torrent.files = info.files.map((f) => ({ ...f, selected: true }));
+    item.totalBytes = this.selectedBytes(torrent.files!) || item.totalBytes;
+    if (firstTime) {
+      this.placeTorrent(item, info.name, info.files);
+      item.autoPlace = false;
+    }
+    const hold = firstTime && torrent.pickFiles === true && info.files.length > 1;
+    if (hold) torrent.needsSelection = true;
+    else await mkdir(item.directory, { recursive: true });
+    this.markDirty(item);
+    this.persist();
+    return { directory: item.directory, hold };
+  }
+
+  /** Stops aria2 seeding a finished torrent (before it is removed from the list). */
+  private async stopSeeding(id: string): Promise<void> {
+    const gid = this.seeding.get(id);
+    if (!gid || !this.deps.torrent) return;
+    this.seeding.delete(id);
+    try {
+      const rpc = await this.deps.torrent.rpc();
+      await rpc.call('forceRemove', [gid]).catch(() => undefined);
+      await rpc.call('removeDownloadResult', [gid]).catch(() => undefined);
+    } catch (err) {
+      logger.warn({ err, id }, 'Could not stop seeding');
+    }
+  }
+
   private onSuccess(item: DownloadItem): void {
     item.status = 'completed';
     item.completedAt = Date.now();
@@ -840,6 +1177,11 @@ export class DownloadManager {
   private async onFailure(item: DownloadItem, entry: RunningEntry, err: unknown): Promise<void> {
     if (entry.controller.signal.aborted || err instanceof JobCancelledError) {
       item.status = entry.stopAs;
+      return;
+    }
+    if (err instanceof TorrentSelectionNeededError) {
+      item.status = 'paused';
+      this.deps.onNeedsSelection?.(item);
       return;
     }
 
@@ -867,7 +1209,12 @@ export class DownloadManager {
   private resetProgress(item: DownloadItem, singleConnection = false): void {
     item.segments = undefined;
     item.receivedBytes = 0;
-    item.totalBytes = item.kind === 'media' ? (item.media?.estimatedSizeBytes ?? null) : null;
+    item.totalBytes =
+      item.kind === 'media'
+        ? (item.media?.estimatedSizeBytes ?? null)
+        : item.kind === 'torrent' && item.torrent?.files
+          ? item.torrent.files.reduce((sum, f) => sum + f.length, 0)
+          : null;
     item.percent = 0;
     if (singleConnection) item.connections = 1;
   }
@@ -877,11 +1224,32 @@ export class DownloadManager {
       if (item.kind === 'http') {
         await HttpDownloadTask.discardParts(item);
         await rm(join(item.directory, `${item.fileName}.gdownload`), { force: true });
+      } else if (item.kind === 'torrent') {
+        await this.discardTorrentWork(item);
       } else {
         await rm(MediaDownloadTask.workDir(this.deps.tempRoot, item.id), { recursive: true, force: true });
       }
     } catch (err) {
       logger.warn({ err, id: item.id }, 'Could not delete temporary files');
+    }
+  }
+
+  /**
+   * An unfinished torrent's partial data goes to the Recycle Bin (it may be gigabytes the user
+   * still wants), together with aria2's resume file. The app's copy of the .torrent file goes too.
+   */
+  private async discardTorrentWork(item: DownloadItem): Promise<void> {
+    const torrent = item.torrent;
+    const name = torrent?.name ?? item.fileName;
+    if (item.status !== 'completed' && name) {
+      const root = item.filePath ?? join(item.directory, name);
+      if (existsSync(`${root}.aria2`)) {
+        if (existsSync(root)) await shell.trashItem(root).catch((err) => logger.warn({ err }, 'Could not move partial torrent data to the Recycle Bin'));
+        await rm(`${root}.aria2`, { force: true });
+      }
+    }
+    if (torrent?.torrentFile && ![...this.items.values()].some((o) => o.id !== item.id && o.torrent?.torrentFile === torrent.torrentFile)) {
+      await rm(torrent.torrentFile, { force: true });
     }
   }
 
@@ -1011,6 +1379,17 @@ export class DownloadManager {
       retries: item.retries,
       stage: item.media?.stage,
       segments: this.watchedSegments.has(item.id) ? item.segments : undefined,
+      torrent: item.torrent
+        ? {
+            peers: item.torrent.peers,
+            seeders: item.torrent.seeders,
+            uploadSpeed: item.torrent.uploadSpeed,
+            uploadedBytes: item.torrent.uploadedBytes,
+            stage: item.torrent.stage,
+            // The details panel's file list, only while it is open
+            ...(this.watchedSegments.has(item.id) && item.torrent.files ? { files: item.torrent.files } : {}),
+          }
+        : undefined,
     };
   }
 

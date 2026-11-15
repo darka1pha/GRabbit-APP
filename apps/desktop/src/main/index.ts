@@ -2,8 +2,8 @@ const startupStartTime = performance.now();
 
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   IPC,
   type AfterQueueAction,
@@ -15,6 +15,7 @@ import {
 import { initLogger, logger } from './logger';
 import { SettingsService } from './settings';
 import { DownloadManager } from './downloads/manager';
+import { Aria2Service, seedOptions } from './downloads/aria2';
 import { configureHttpProxy } from './downloads/http-client';
 import { PlatformRouter } from './media/router';
 import { MusicRecognizer } from './media/recognizer';
@@ -97,6 +98,50 @@ function applyMediaConfig(s: AppSettings): void {
   });
 }
 
+// ---------------------------------------------------------------- torrents
+
+const aria2 = new Aria2Service({
+  getBinary: () => resolveBinaries().aria2,
+  getSettings: () => settings.get(),
+  stateDir: join(dataDir, 'aria2'),
+});
+
+/** A magnet link or .torrent file Windows handed to GRabbit on its command line. */
+function torrentFromArgv(argv: string[]): { magnet?: string; torrentPath?: string } | null {
+  for (const arg of argv.slice(1)) {
+    if (/^magnet:\?/i.test(arg)) return { magnet: arg };
+    if (/\.torrent$/i.test(arg) && existsSync(arg)) return { torrentPath: resolve(arg) };
+  }
+  return null;
+}
+
+/** Waits for the renderer before asking it to show the add-torrent dialog. */
+let pendingTorrentRequest = torrentFromArgv(process.argv);
+
+function requestTorrent(source: { magnet?: string; torrentPath?: string }): void {
+  pendingTorrentRequest = source;
+  showWindow('downloads');
+  if (mainWindow && !mainWindow.webContents.isLoading()) flushTorrentRequest();
+}
+
+function flushTorrentRequest(): void {
+  if (!pendingTorrentRequest) return;
+  send(IPC.torrentRequested, pendingTorrentRequest);
+  pendingTorrentRequest = null;
+}
+
+/** Registers (or unregisters) GRabbit for magnet: links, as the user chose in Settings. */
+function syncMagnetHandler(enabled: boolean): void {
+  try {
+    // In development Electron runs the app folder, which has to be passed along
+    const args = process.defaultApp && process.argv.length >= 2 ? [resolve(process.argv[1])] : [];
+    if (enabled) app.setAsDefaultProtocolClient('magnet', process.execPath, args);
+    else if (app.isDefaultProtocolClient('magnet', process.execPath, args)) app.removeAsDefaultProtocolClient('magnet', process.execPath, args);
+  } catch (err) {
+    logger.warn({ err }, 'Could not update the magnet link handler');
+  }
+}
+
 // ---------------------------------------------------------------- download manager
 
 const fileLabel = (item: DownloadItem) => item.media?.title ?? item.fileName;
@@ -105,6 +150,12 @@ const manager = new DownloadManager({
   dataDir,
   tempRoot,
   router,
+  torrent: {
+    rpc: () => aria2.rpc(),
+    options: () => seedOptions(settings.get().torrent),
+    setDownloadLimit: (rate) => aria2.setDownloadLimit(rate),
+    onIdle: () => aria2.onIdle(),
+  },
   getSettings: () => settings.get(),
   onItemsChanged: (items) => send(IPC.downloadsChanged, items),
   onItemsProgress: (patches) => send(IPC.downloadsProgress, patches),
@@ -121,6 +172,7 @@ const manager = new DownloadManager({
       if (item.filePath) shell.showItemInFolder(item.filePath);
     });
   },
+  onNeedsSelection: (item) => notify(text('notify.chooseFiles'), fileLabel(item), () => showWindow('downloads')),
   onFailed: (item) => notify(text('notify.failed'), `${fileLabel(item)}\n${item.error ?? ''}`.trim(), () => showWindow('downloads')),
   onQueueDrained: (action) => void runAfterQueueAction(action),
   onAggregateProgress: ({ fraction, active, speed, hasError, hasPaused }) => {
@@ -227,7 +279,9 @@ const clipboardWatcher = new ClipboardWatcher((link: ClipboardLink) => {
   send(IPC.clipboardLink, link);
   const focused = mainWindow?.isFocused();
   if (!focused) {
-    notify(text(link.kind === 'media' ? 'notify.mediaLinkCopied' : 'notify.fileLinkCopied'), `${link.url}\n${text('notify.clickToGrab')}`, () => {
+    const title = link.kind === 'media' ? 'notify.mediaLinkCopied' : link.kind === 'torrent' ? 'notify.magnetLinkCopied' : 'notify.fileLinkCopied';
+    const shown = link.kind === 'torrent' && link.url.length > 120 ? `${link.url.slice(0, 117)}…` : link.url;
+    notify(text(title), `${shown}\n${text('notify.clickToGrab')}`, () => {
       showWindow(link.kind === 'media' ? 'grab' : 'downloads');
       send(IPC.clipboardLink, link);
     });
@@ -316,7 +370,11 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
-    if (!process.argv.includes('--hidden')) mainWindow?.show();
+    if (!process.argv.includes('--hidden') || pendingTorrentRequest) mainWindow?.show();
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    // Give the renderer a moment to subscribe before it is asked for the add-torrent dialog
+    setTimeout(flushTorrentRequest, 300);
   });
 
   mainWindow.on('close', (event) => {
@@ -427,17 +485,39 @@ const grabPill = new GrabPillManager({
   },
 });
 
-app.on('second-instance', () => showWindow());
+app.on('second-instance', (_event, argv) => {
+  const torrent = torrentFromArgv(argv);
+  if (torrent) requestTorrent(torrent);
+  else showWindow();
+});
 
-app.on('before-quit', () => {
+let managerShutDown = false;
+let aria2Stopped = false;
+
+app.on('before-quit', (event) => {
   quitting = true;
+  // aria2 gets a moment to write its resume files; the manager saves first so the running
+  // torrents are recorded as paused / queued rather than failed by the engine going away
+  if (!aria2Stopped && aria2.isRunning()) {
+    event.preventDefault();
+    aria2Stopped = true;
+    if (!managerShutDown) {
+      managerShutDown = true;
+      manager.shutdown();
+    }
+    void aria2.stop().finally(() => app.quit());
+  }
 });
 
 app.on('will-quit', () => {
   grabPill.destroy();
   clipboardWatcher.setEnabled(false);
   rpcBridge.stop();
-  manager.shutdown();
+  if (!managerShutDown) {
+    managerShutDown = true;
+    manager.shutdown();
+  }
+  aria2.killNow();
   settings.flush();
 });
 
@@ -475,6 +555,7 @@ app.whenReady().then(() => {
     dataDir,
     updater,
     grabPill,
+    aria2,
     createTransferLink: (itemId) => {
       const ext = settings.get().extension;
       if (!ext.enabled || ext.allowLan !== true) {
@@ -530,6 +611,12 @@ app.whenReady().then(() => {
     ) {
       grabPill.updateShortcut();
     }
+    if (aria2.applySettings(next.torrent, previous.torrent) && !manager.hasActiveTorrents()) aria2.onIdle();
+    if (next.proxy !== previous.proxy) {
+      aria2.requestRestart();
+      if (!manager.hasActiveTorrents()) aria2.onIdle();
+    }
+    if (next.torrent.handleMagnetLinks !== previous.torrent.handleMagnetLinks) syncMagnetHandler(next.torrent.handleMagnetLinks);
     clipboardWatcher.setEnabled(next.clipboardMonitor);
     manager.applySettings(next);
   });
@@ -539,6 +626,7 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   syncLoginItemSettings(s.startOnBoot, s.startMinimized);
+  if (s.torrent.handleMagnetLinks) syncMagnetHandler(true);
   grabPill.init();
   manager.init();
   clipboardWatcher.setEnabled(s.clipboardMonitor);

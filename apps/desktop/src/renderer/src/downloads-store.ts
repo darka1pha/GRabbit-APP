@@ -88,10 +88,11 @@ export class DownloadStore {
     for (const patch of patches) {
       const previous = this.byId.get(patch.id);
       if (!previous) continue;
-      const { id: _id, stage, segments, ...numbers } = patch;
+      const { id: _id, stage, segments, torrent, ...numbers } = patch;
       const next: DownloadItem = { ...previous, ...numbers };
       if (previous.media && previous.media.stage !== stage) next.media = { ...previous.media, stage };
       if (segments) next.segments = segments;
+      if (torrent && previous.torrent) next.torrent = { ...previous.torrent, ...torrent };
       this.byId.set(patch.id, next);
       // The list is filtered, counted and labelled by status, so a status change is a list change
       if (previous.status !== next.status) listChanged = true;

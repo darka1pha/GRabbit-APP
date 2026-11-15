@@ -69,6 +69,12 @@ export function defaultSettings(): AppSettings {
       autoCapture: true,
       allowLan: false,
     },
+    torrent: {
+      seedRatio: 0,
+      maxUploadKBps: 0,
+      enableDht: true,
+      handleMagnetLinks: false,
+    },
   };
 }
 
@@ -133,6 +139,13 @@ function sanitize(s: AppSettings): AppSettings {
       token: s.extension?.token?.trim() || d.extension.token,
       autoCapture: typeof s.extension?.autoCapture === 'boolean' ? s.extension.autoCapture : true,
       allowLan: typeof s.extension?.allowLan === 'boolean' ? s.extension.allowLan : false,
+    },
+    torrent: {
+      // Ratio in tenths is plenty: 0, 0.5, 1.0, 2.0...
+      seedRatio: Number.isFinite(s.torrent?.seedRatio) ? Math.min(100, Math.max(0, Math.round(s.torrent.seedRatio * 10) / 10)) : 0,
+      maxUploadKBps: clamp(s.torrent?.maxUploadKBps ?? 0, 0, 10_000_000, 0),
+      enableDht: typeof s.torrent?.enableDht === 'boolean' ? s.torrent.enableDht : true,
+      handleMagnetLinks: typeof s.torrent?.handleMagnetLinks === 'boolean' ? s.torrent.handleMagnetLinks : false,
     },
   };
 }

@@ -813,3 +813,4 @@ export function compareSemver(a: string, b: string): number {
 export * from './i18n';
 export * from './pattern-expander';
 
+export * from './torrent';

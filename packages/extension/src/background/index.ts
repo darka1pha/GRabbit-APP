@@ -285,7 +285,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     let targetUrl = info.linkUrl || info.srcUrl;
     if (!targetUrl && info.selectionText) {
       const text = info.selectionText.trim();
-      if (/^https?:\/\//i.test(text)) {
+      if (/^https?:\/\//i.test(text) || /^magnet:\?/i.test(text)) {
         targetUrl = text;
       }
     }
@@ -295,7 +295,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       return;
     }
 
-    const cookies = await getCookiesHeader(targetUrl, config);
+    // Magnet links have no site to send cookies to
+    const cookies = /^magnet:/i.test(targetUrl) ? '' : await getCookiesHeader(targetUrl, config);
     const res = await rpc.addDownload({
       url: targetUrl,
       referrer: info.pageUrl || tab?.url,
@@ -542,7 +543,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     void (async () => {
       const config = await loadExtensionConfig();
       const rpc = new ExtensionRpcClient(config);
-      const rawCookies = payload.cookies || (await getCookiesHeader(payload.url, config));
+      const rawCookies = /^magnet:/i.test(payload.url) ? '' : payload.cookies || (await getCookiesHeader(payload.url, config));
       const cookies = !isLoopbackHost(config.bridgeHost) && !config.allowRemoteCookies ? '' : rawCookies;
       const res = await rpc.addDownload({
         url: payload.url,

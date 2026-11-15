@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Clock, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Clock, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Magnet, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
@@ -163,7 +163,7 @@ function formatSampleCustomCommand(template: string, downloadDir: string): strin
 }
 
 export function SettingsView({ initialSection }: { initialSection?: string } = {}) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { settings, updateSettings, toast } = useApp();
   const [tools, setTools] = useState<ToolInfo | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -523,6 +523,37 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
           </Setting>
         </Section>
 
+        <Section id="sec-torrents" title={t('set.torrents')} icon={<Magnet size={15} />}>
+          <Setting label={t('set.seedRatio')} hint={t('set.seedRatioHint')}>
+            <select
+              className="select"
+              value={String(s.torrent.seedRatio)}
+              onChange={(e) => void save({ torrent: { seedRatio: Number(e.target.value) } })}
+            >
+              <option value="0">{t('set.seedOff')}</option>
+              {[0.5, 1, 1.5, 2, 3, 5].map((r) => (
+                <option key={r} value={String(r)}>
+                  {r.toLocaleString(language === 'fa' ? 'fa-IR' : 'en-US')}×
+                </option>
+              ))}
+            </select>
+          </Setting>
+          <Setting label={t('set.maxUpload')} hint={t('set.maxUploadHint')}>
+            <LazyInput
+              type="number"
+              min={0}
+              value={s.torrent.maxUploadKBps}
+              onSave={(v) => void save({ torrent: { maxUploadKBps: Math.max(0, Math.round(num(v))) } })}
+            />
+          </Setting>
+          <Setting label={t('set.dht')} hint={t('set.dhtHint')}>
+            <Switch checked={s.torrent.enableDht} onChange={(enableDht) => void save({ torrent: { enableDht } })} />
+          </Setting>
+          <Setting label={t('set.magnetHandler')} hint={t('set.magnetHandlerHint')}>
+            <Switch checked={s.torrent.handleMagnetLinks} onChange={(handleMagnetLinks) => void save({ torrent: { handleMagnetLinks } })} />
+          </Setting>
+        </Section>
+
         <Section id="sec-media" title={t('set.media')} icon={<Music size={15} />}>
           <Setting label={t('set.audioFormat')}>
             <div className="segmented">
@@ -683,10 +714,11 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
         </Section>
 
         <Section id="sec-tools" title={t('set.tools')} icon={<Wrench size={15} />}>
-          {(['ytdlp', 'ffmpeg', 'ffprobe'] as const).map((key) => {
+          {(['ytdlp', 'ffmpeg', 'ffprobe', 'aria2'] as const).map((key) => {
             const info = tools?.[key];
+            const label = { ytdlp: 'yt-dlp', ffmpeg: 'FFmpeg', ffprobe: 'FFprobe', aria2: 'aria2' }[key];
             return (
-              <Setting key={key} label={key === 'ytdlp' ? 'yt-dlp' : key === 'ffmpeg' ? 'FFmpeg' : 'FFprobe'} hint={info?.path}>
+              <Setting key={key} label={label} hint={info?.path}>
                 {!tools ? (
                   <LoaderCircle size={16} className="spin" />
                 ) : info?.version ? (

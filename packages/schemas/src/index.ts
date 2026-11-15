@@ -121,6 +121,27 @@ export const AddMediaDownloadRequestSchema = z.object({
   sponsorBlock: opt(z.boolean()),
 });
 
+/** A magnet link or a .torrent file path, never both. Contents are checked by the download manager. */
+export const TorrentSourceSchema = z
+  .object({ magnet: opt(text(16_384)), torrentPath: opt(text(4096)) })
+  .refine((s) => Boolean(s.magnet) !== Boolean(s.torrentPath), 'Give either a magnet link or a .torrent file');
+
+export const AddTorrentDownloadRequestSchema = z
+  .object({
+    magnet: opt(text(16_384)),
+    torrentPath: opt(text(4096)),
+    directory: opt(text(1024)),
+    startPaused: opt(z.boolean()),
+    queueId: opt(IdSchema),
+    speedLimitKBps: opt(count),
+    selectedFiles: opt(z.array(z.number().int().nonnegative()).min(1).max(100_000)),
+    pickFiles: opt(z.boolean()),
+  })
+  .refine((s) => Boolean(s.magnet) !== Boolean(s.torrentPath), 'Give either a magnet link or a .torrent file');
+
+/** Indices of the files to download; at least one. */
+export const TorrentFileSelectionSchema = z.array(z.number().int().nonnegative()).min(1).max(100_000);
+
 export const WeekdaysSchema = z.array(z.number().int().min(0).max(6)).max(7);
 
 export const QueueSchedulerSchema = z.object({
@@ -208,6 +229,14 @@ export const SettingsPatchSchema = z
         allowLan: z.boolean(),
       })
       .partial(),
+    torrent: z
+      .object({
+        seedRatio: z.number(),
+        maxUploadKBps: z.number(),
+        enableDht: z.boolean(),
+        handleMagnetLinks: z.boolean(),
+      })
+      .partial(),
   })
   .partial();
 
@@ -266,7 +295,7 @@ const StoredSegmentSchema = z.object({
 export const StoredDownloadItemSchema = z
   .object({
     id: IdSchema,
-    kind: z.enum(['http', 'media']),
+    kind: z.enum(['http', 'media', 'torrent']),
     url: z.string().min(1),
     fileName: z.string().min(1),
     directory: z.string().min(1),

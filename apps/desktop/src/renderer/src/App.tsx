@@ -15,6 +15,7 @@ import {
   Sun,
   TvMinimal,
 } from 'lucide-react';
+import { isMagnetLink } from '@grabbit/utils';
 import { CATEGORIES, type Category, type ClipboardLink, type UpdateStatusInfo } from '../../shared/types';
 import { createTranslator, I18nContext, useI18n, type MessageKey } from './i18n';
 import { api, AppProvider, useApp } from './state';
@@ -30,6 +31,7 @@ import { DownloadsView } from './views/DownloadsView';
 
 // Views and modals that are not on screen at launch load when first opened
 const AddDownloadDialog = lazy(() => import('./components/AddDownloadDialog').then((m) => ({ default: m.AddDownloadDialog })));
+const AddTorrentDialog = lazy(() => import('./components/AddTorrentDialog').then((m) => ({ default: m.AddTorrentDialog })));
 const RecognizeView = lazy(() => import('./views/RecognizeView').then((m) => ({ default: m.RecognizeView })));
 const SettingsView = lazy(() => import('./views/SettingsView').then((m) => ({ default: m.SettingsView })));
 import iconUrl from './assets/icon.png';
@@ -110,6 +112,7 @@ function Shell() {
   const [view, setView] = useState<View>('grab');
   const [category, setCategory] = useState<Category | 'all'>('all');
   const [addDialog, setAddDialog] = useState<{ url?: string; mode?: 'single' | 'batch' | 'pattern' } | null>(null);
+  const [torrentDialog, setTorrentDialog] = useState<{ magnet?: string; torrentPath?: string } | null>(null);
   const [grabInput, setGrabInput] = useState<string | null>(null);
   const [clipboardLink, setClipboardLink] = useState<ClipboardLink | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
@@ -144,11 +147,28 @@ function Shell() {
   }
 
   function handleLink(url: string) {
-    if (looksLikeDirectFile(url)) setAddDialog({ url });
+    if (isMagnetLink(url)) setTorrentDialog({ magnet: url });
+    else if (looksLikeDirectFile(url)) setAddDialog({ url });
     else openGrab(url);
   }
 
+  function showDownload(id: string) {
+    setView('downloads');
+    setCategory('all');
+    setTimeout(() => window.dispatchEvent(new CustomEvent('select-download', { detail: id })), 50);
+  }
+
   useEffect(() => api.app.onNavigate((v) => setView(v as View)), []);
+
+  // A magnet link or .torrent file opened with GRabbit from the browser or Explorer
+  useEffect(
+    () =>
+      api.app.onTorrentRequested((source) => {
+        setView('downloads');
+        setTorrentDialog(source);
+      }),
+    []
+  );
 
   useEffect(
     () =>
@@ -157,7 +177,12 @@ function Shell() {
         if (document.hasFocus() && view !== 'grab') {
           toast(link.url, 'info', {
             label: t('grab.useIt'),
-            run: () => (link.kind === 'file' ? setAddDialog({ url: link.url }) : openGrab(link.url)),
+            run: () =>
+              link.kind === 'torrent'
+                ? setTorrentDialog({ magnet: link.url })
+                : link.kind === 'file'
+                  ? setAddDialog({ url: link.url })
+                  : openGrab(link.url),
           });
         }
       }),
@@ -169,9 +194,9 @@ function Shell() {
   handleLinkRef.current = handleLink;
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if ((e.target as HTMLElement | null)?.closest('input, textarea')) return;
+      if (e.target instanceof Element && e.target.closest('input, textarea')) return;
       const text = e.clipboardData?.getData('text')?.trim();
-      if (text && isHttpUrl(text)) {
+      if (text && (isHttpUrl(text) || isMagnetLink(text))) {
         e.preventDefault();
         handleLinkRef.current(text);
       }
@@ -243,7 +268,11 @@ function Shell() {
         className="app"
         onDragOver={(e) => {
           if (view === 'recognize') return;
-          if (e.dataTransfer.types.includes('text/uri-list') || e.dataTransfer.types.includes('text/plain')) {
+          if (
+            e.dataTransfer.types.includes('text/uri-list') ||
+            e.dataTransfer.types.includes('text/plain') ||
+            e.dataTransfer.types.includes('Files')
+          ) {
             e.preventDefault();
             setDraggingOverWindow(true);
           }
@@ -254,8 +283,15 @@ function Shell() {
         onDrop={(e) => {
           if (view === 'recognize') return;
           setDraggingOverWindow(false);
+          const torrentFile = Array.from(e.dataTransfer.files).find((f) => f.name.toLowerCase().endsWith('.torrent'));
+          if (torrentFile) {
+            e.preventDefault();
+            const path = api.app.getPathForFile(torrentFile);
+            if (path) setTorrentDialog({ torrentPath: path });
+            return;
+          }
           const text = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').trim();
-          if (text && isHttpUrl(text)) {
+          if (text && (isHttpUrl(text) || isMagnetLink(text))) {
             e.preventDefault();
             handleLink(text);
           }
@@ -402,6 +438,7 @@ function Shell() {
                     clipboardLink={clipboardLink}
                     onConsumePending={() => setGrabInput(null)}
                     onOpenAddDialog={(url) => setAddDialog({ url })}
+                    onOpenTorrent={(magnet) => setTorrentDialog({ magnet })}
                     onAdded={() => {
                       setCategory('all');
                       setView('downloads');
@@ -461,6 +498,22 @@ function Shell() {
               setAddDialog(null);
               openGrab(url);
             }}
+            onOpenTorrent={(magnet) => {
+              setAddDialog(null);
+              setTorrentDialog({ magnet });
+            }}
+          />
+        </Suspense>
+      )}
+
+      {torrentDialog && (
+        <Suspense fallback={null}>
+          <AddTorrentDialog
+            // A new request while the dialog is open replaces it rather than editing it
+            key={torrentDialog.magnet ?? torrentDialog.torrentPath ?? 'new'}
+            initial={torrentDialog}
+            onClose={() => setTorrentDialog(null)}
+            onShowExisting={showDownload}
           />
         </Suspense>
       )}
@@ -473,13 +526,7 @@ function Shell() {
           if (s) setSettingsSection(s);
         }}
         onOpenAdd={(mode) => setAddDialog({ mode })}
-        onSelectDownload={(d) => {
-          setView('downloads');
-          setCategory('all');
-          setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('select-download', { detail: d.id }));
-          }, 50);
-        }}
+        onSelectDownload={(d) => showDownload(d.id)}
       />
 
       {settings && settings.onboarded === false && (

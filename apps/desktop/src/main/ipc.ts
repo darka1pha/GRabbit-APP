@@ -1,10 +1,12 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import {
   AddHttpDownloadRequestSchema,
   AddMediaDownloadRequestSchema,
+  AddTorrentDownloadRequestSchema,
   ChecksumAlgorithmSchema,
   describeIssue,
   FileFiltersSchema,
@@ -14,6 +16,8 @@ import {
   MoveDirectionSchema,
   QueuePatchSchema,
   SettingsPatchSchema,
+  TorrentFileSelectionSchema,
+  TorrentSourceSchema,
   UrlTextSchema,
   z,
   type ZodTypeAny,
@@ -22,6 +26,7 @@ import {
   IPC,
   type AddHttpDownloadRequest,
   type AddMediaDownloadRequest,
+  type AddTorrentDownloadRequest,
   type AppSettings,
   type ChecksumAlgorithm,
   type DeepPartial,
@@ -47,6 +52,7 @@ import { parseHttpUrl } from './media/url-parser';
 import { installYtDlp } from './paths';
 import type { ClipboardWatcher } from './clipboard-watcher';
 import type { AutoUpdaterService } from './updater';
+import type { Aria2Service } from './downloads/aria2';
 import type { GrabPillManager } from './grab-pill';
 import { logger } from './logger';
 
@@ -62,6 +68,7 @@ export interface IpcDeps {
   dataDir: string;
   updater: AutoUpdaterService;
   grabPill: GrabPillManager;
+  aria2: Aria2Service;
   createTransferLink?(itemId: string): LanTransferInfo | null;
   toggleMiniMode?(enable?: boolean): boolean;
   isMiniMode?(): boolean;
@@ -133,6 +140,19 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+/** aria2's version: from the running engine, or by asking the binary itself. */
+async function aria2Version(aria2: Aria2Service): Promise<string | null> {
+  if (aria2.getVersion()) return aria2.getVersion();
+  const binary = aria2.binaryPath();
+  if (!existsSync(binary)) return null;
+  return new Promise((resolve) => {
+    execFile(binary, ['--version'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      const match = /aria2 version (\S+)/i.exec(String(stdout));
+      resolve(err || !match ? null : match[1]);
+    });
+  });
+}
+
 export function registerIpc(deps: IpcDeps): void {
   const { settings, manager, router, recognizer } = deps;
   const ytdlp = new YtDlpRunner();
@@ -177,6 +197,11 @@ export function registerIpc(deps: IpcDeps): void {
   });
   handle(IPC.downloadsAddHttp, [z.array(AddHttpDownloadRequestSchema).max(5000)], (requests: AddHttpDownloadRequest[]) => manager.addHttp(requests));
   handle(IPC.downloadsAddMedia, [z.array(AddMediaDownloadRequestSchema).max(5000)], (requests: AddMediaDownloadRequest[]) => manager.addMedia(requests));
+  handle(IPC.downloadsAddTorrent, [z.array(AddTorrentDownloadRequestSchema).min(1).max(500)], (requests: AddTorrentDownloadRequest[]) =>
+    manager.addTorrent(requests)
+  );
+  handle(IPC.downloadsInspectTorrent, [TorrentSourceSchema], (source: { magnet?: string; torrentPath?: string }) => manager.inspectTorrent(source));
+  handle(IPC.downloadsSetTorrentFiles, [IdSchema, TorrentFileSelectionSchema], (id: string, selected: number[]) => manager.setTorrentFiles(id, selected));
   handle(IPC.downloadsPause, [IdListSchema], (ids: string[]) => manager.pause(ids));
   handle(IPC.downloadsResume, [IdListSchema], (ids: string[]) => manager.resume(ids));
   handle(IPC.downloadsRetry, [IdListSchema], (ids: string[]) => manager.retry(ids));
@@ -243,6 +268,7 @@ export function registerIpc(deps: IpcDeps): void {
       ytdlp: { path: cfg.ytdlpPath, version: y },
       ffmpeg: { path: cfg.ffmpegPath, version: f },
       ffprobe: { path: cfg.ffprobePath, version: p },
+      aria2: { path: deps.aria2.binaryPath(), version: await aria2Version(deps.aria2) },
       appVersion: deps.appVersion,
       dataDir: deps.dataDir,
       lanIp,
