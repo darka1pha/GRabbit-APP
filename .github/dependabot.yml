@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # One pnpm workspace: Dependabot reads the root lockfile and updates every package in it.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      # Minor and patch bumps land together; majors get their own PR to review
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Expo pins react-native, react and its own modules to one SDK; upgrade those as one change
+      - dependency-name: react-native
+      - dependency-name: expo
+        update-types: [version-update:semver-major]
+      - dependency-name: 'expo-*'
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directory: /apps/telegram-bot
+    schedule:
+      interval: weekly
+      day: monday

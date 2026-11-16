@@ -1,5 +1,5 @@
-import { isIP } from 'node:net';
 import type { PlatformId } from '../../shared/types';
+import { detectPlatform } from '@grabbit/core';
 import { InvalidUrlError } from './errors';
 
 export interface ParsedPlatformUrl {
@@ -8,32 +8,8 @@ export interface ParsedPlatformUrl {
   platform: PlatformId;
 }
 
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/i;
-
-export function extractUrlFromText(text?: string | null): string | null {
-  if (!text) return null;
-  const match = text.match(URL_REGEX);
-  if (!match) return null;
-  return match[0].replace(/[.,!;?)]+$/, '');
-}
-
-const HOSTS: Record<Exclude<PlatformId, 'generic'>, string[]> = {
-  youtube: ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'],
-  spotify: ['open.spotify.com', 'spotify.com'],
-  instagram: ['instagram.com', 'www.instagram.com', 'instagr.am', 'www.instagr.am'],
-  soundcloud: ['soundcloud.com', 'www.soundcloud.com', 'on.soundcloud.com', 'm.soundcloud.com'],
-  tiktok: ['tiktok.com', 'www.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com', 'm.tiktok.com'],
-  twitter: ['twitter.com', 'www.twitter.com', 'mobile.twitter.com', 'x.com', 'www.x.com', 'vxtwitter.com', 'fxtwitter.com'],
-  reddit: ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'v.redd.it', 'redd.it'],
-};
-
-export function detectPlatform(hostname: string): PlatformId {
-  const host = hostname.toLowerCase();
-  for (const [platform, hosts] of Object.entries(HOSTS)) {
-    if (hosts.includes(host)) return platform as PlatformId;
-  }
-  return 'generic';
-}
+// URL extraction and platform detection are shared with the bot and mobile app
+export { detectPlatform, extractUrlFromText, HOSTS } from '@grabbit/core';
 
 export function parseHttpUrl(raw: string): URL {
   let parsed: URL;
@@ -77,26 +53,8 @@ export function parsePlatformUrl(inputUrl: string): ParsedPlatformUrl {
   return { originalUrl: inputUrl, normalizedUrl: clean.toString(), platform };
 }
 
-const PRIVATE_IP_RANGES = [
-  /^127\./, // loopback
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
-  /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./, // carrier-grade NAT
-  /^169\.254\./, // link-local
-  /^0\./,
-  /^::1?$/, // IPv6 loopback / unspecified
-  /^::ffff:/i, // IPv4-mapped IPv6
-  /^f[cd][0-9a-f]{2}:/i, // IPv6 unique local
-  /^fe80:/i, // IPv6 link-local
-];
-
 /**
- * True for hostnames that name this machine or the local network. Checks the name as written
- * (no DNS lookup), so a public name that resolves to a private address is not caught.
+ * Shared with the bot and mobile: see @grabbit/core network/private-host. Checks the name as
+ * written (no DNS lookup), so callers must also check what a name resolves to.
  */
-export function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().trim().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  return isIP(host) !== 0 && PRIVATE_IP_RANGES.some((range) => range.test(host));
-}
+export { isPrivateHost } from '@grabbit/core';

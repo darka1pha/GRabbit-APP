@@ -32,6 +32,7 @@ import {
 } from '../../bot/formatting.js';
 import { createJobProgressKeyboard } from '../../bot/keyboards/index.js';
 import { DownloadProgress } from '../../core/types/platform.js';
+import { jobMetrics } from '../../observability/health-server.js';
 
 export class MediaProcessingWorker {
   private static activeAbortControllers = new Map<string, AbortController>();
@@ -93,7 +94,14 @@ export class MediaProcessingWorker {
       }
     );
 
+    this.worker.on('completed', (job) => {
+      jobMetrics.completed++;
+      if (job.processedOn && job.finishedOn) jobMetrics.durationSecondsSum += (job.finishedOn - job.processedOn) / 1000;
+    });
+
     this.worker.on('failed', (job, err) => {
+      // Counted once, when no retry is left
+      if (!job || job.attemptsMade >= (job.opts?.attempts ?? 1)) jobMetrics.failed++;
       logger.error({ jobId: job?.id, err }, 'Worker reported job failure');
     });
 

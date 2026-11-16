@@ -1,8 +1,9 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import {
   AddHttpDownloadRequestSchema,
   AddMediaDownloadRequestSchema,
@@ -55,6 +56,7 @@ import type { AutoUpdaterService } from './updater';
 import type { Aria2Service } from './downloads/aria2';
 import type { GrabPillManager } from './grab-pill';
 import { logger } from './logger';
+import { buildDiagnosticsReport } from './diagnostics';
 
 export interface IpcDeps {
   getWindow(): BrowserWindow | null;
@@ -316,5 +318,39 @@ export function registerIpc(deps: IpcDeps): void {
     }
     const error = await shell.openPath(path);
     if (error) throw new Error(error);
+  });
+
+  handle(IPC.exportDiagnostics, [], async (): Promise<string | null> => {
+    const cfg = getMediaConfig();
+    const [y, f, p, a] = await Promise.all([
+      ytdlp.getVersion().catch(() => null),
+      new FFmpegRunner().getVersion().catch(() => null),
+      new FFprobeRunner().getVersion().catch(() => null),
+      aria2Version(deps.aria2).catch(() => null),
+    ]);
+    const report = buildDiagnosticsReport({
+      appVersion: deps.appVersion,
+      electronVersion: process.versions.electron,
+      settings: settings.get(),
+      tools: {
+        'yt-dlp': { path: cfg.ytdlpPath, version: y },
+        ffmpeg: { path: cfg.ffmpegPath, version: f },
+        ffprobe: { path: cfg.ffprobePath, version: p },
+        aria2: { version: a },
+      },
+      items: manager.list(),
+      logDir: join(deps.dataDir, 'logs'),
+    });
+    const options = {
+      title: 'Export diagnostics',
+      defaultPath: join(app.getPath('desktop'), `grabbit-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`),
+      filters: [{ name: 'Text', extensions: ['txt'] }],
+    };
+    const win = deps.getWindow();
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, report, 'utf8');
+    shell.showItemInFolder(result.filePath);
+    return result.filePath;
   });
 }

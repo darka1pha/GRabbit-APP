@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
-import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Clock, Copy, Download, FolderOpen, Globe, Info, LoaderCircle, Magnet, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
+import { AppWindow, ArrowUpCircle, CircleCheck, CircleX, Clock, Copy, Download, FileText, FolderOpen, Globe, Info, LoaderCircle, Magnet, Monitor, Moon, Music, QrCode, Radio, RotateCw, Search, Settings, Sun, Volume2, Wrench, X, Zap } from 'lucide-react';
 import type { AfterQueueAction, AppSettings, BrowserName, DeepPartial, Language, Theme, ToolInfo, UpdateStatusInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
@@ -757,6 +757,21 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
           <Setting label={t('set.dataFolder')} hint={tools?.dataDir}>
             <button className="btn" disabled={!tools} onClick={() => tools && void api.app.openPath(tools.dataDir)}>
               <FolderOpen size={15} /> {t('set.open')}
+            </button>
+          </Setting>
+          <Setting label={t('set.diagnostics')} hint={t('set.diagnosticsHint')}>
+            <button
+              className="btn"
+              onClick={async () => {
+                try {
+                  const saved = await api.app.exportDiagnostics();
+                  if (saved) toast(t('set.diagnosticsSaved'), 'success');
+                } catch (err) {
+                  toast(errorText(t, err), 'error');
+                }
+              }}
+            >
+              <FileText size={15} /> {t('set.exportDiagnostics')}
             </button>
           </Setting>
         </Section>

@@ -2,6 +2,7 @@ export * from './platforms/track-matcher';
 export * from './platforms/track-page';
 export * from './platforms/url-parser';
 export * from './platforms/media-options';
+export * from './network/private-host';
 
 import { PlatformId } from '@grabbit/types';
 import { detectPlatform, parseHttpUrl } from './platforms/url-parser';

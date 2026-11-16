@@ -75,7 +75,7 @@ All official builds are compiled automatically via GitHub Actions and published 
 GRabbitApp/
 ├── apps/
 │   ├── desktop/          # Electron + React 19 + Vite desktop app (Windows NSIS & Portable)
-│   ├── mobile/           # React Native + Expo SDK 52 mobile app (Android APK)
+│   ├── mobile/           # React Native + Expo SDK 58 mobile app (Android APK)
 │   └── telegram-bot/     # Grammy + BullMQ Telegram Bot backend service
 │
 ├── packages/

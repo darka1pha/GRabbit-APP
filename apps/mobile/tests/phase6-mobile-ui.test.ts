@@ -17,7 +17,7 @@ vi.mock('react-native', () => ({
   },
 }));
 
-vi.mock('expo-file-system', () => ({
+vi.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/mock/grabbit/',
   cacheDirectory: '/mock/cache/',
   EncodingType: { Base64: 'base64' },

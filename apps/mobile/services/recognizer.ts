@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { RecognizedTrack } from '@grabbit/types';
 import { mobileSettingsManager } from './settings-manager';
 

@@ -64,9 +64,48 @@ jobs:
           node apps/desktop/scripts/make-icon.mjs
           node apps/desktop/scripts/fetch-binaries.mjs
 
+      # Azure Trusted Signing, switched on by setting the AZURE_* secrets and variables below.
+      # Signed builds also make electron-updater check the publisher of every downloaded update.
+      - name: Configure Windows code signing
+        shell: bash
+        env:
+          AZURE_SIGN_ENDPOINT: ${{ vars.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ vars.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -z "$AZURE_SIGN_ENDPOINT" ] || [ -z "$AZURE_CLIENT_ID" ]; then
+            echo "::warning::Windows builds are unsigned (SmartScreen will warn). Set the AZURE_SIGN_* variables and AZURE_* secrets to sign them."
+            exit 0
+          fi
+          for v in AZURE_SIGN_ACCOUNT AZURE_SIGN_PROFILE AZURE_SIGN_PUBLISHER; do
+            if [ -z "${!v}" ]; then echo "::error::$v is not set"; exit 1; fi
+          done
+          # Insert under the existing "win:" key of electron-builder.yml (JSON strings are valid YAML)
+          node -e '
+            const fs = require("fs");
+            const p = "apps/desktop/electron-builder.yml";
+            const q = (k) => JSON.stringify(process.env[k]);
+            const block = [
+              "win:",
+              "  azureSignOptions:",
+              `    publisherName: ${q("AZURE_SIGN_PUBLISHER")}`,
+              `    endpoint: ${q("AZURE_SIGN_ENDPOINT")}`,
+              `    codeSigningAccountName: ${q("AZURE_SIGN_ACCOUNT")}`,
+              `    certificateProfileName: ${q("AZURE_SIGN_PROFILE")}`,
+            ].join("\n");
+            const yml = fs.readFileSync(p, "utf8");
+            if (!/^win:$/m.test(yml)) throw new Error("electron-builder.yml has no win: key");
+            fs.writeFileSync(p, yml.replace(/^win:$/m, () => block));
+          '
+
       - name: Build Electron Desktop Package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: pnpm --filter grabbit-desktop dist
 
       - name: Upload Desktop Artifacts
@@ -128,11 +167,40 @@ jobs:
       - name: Prebuild Native Android Project
         run: pnpm --filter @grabbit/mobile exec expo prebuild --platform android --clean
 
+      # Without this key Gradle signs with the public debug key, and anyone could then sign an
+      # APK that Android installs as an update over GRabbit. See docs/RELEASING.md.
+      - name: Prepare Android release key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::The ANDROID_KEYSTORE_BASE64 secret is not set. Release APKs must be signed with the GRabbit upload key (see docs/RELEASING.md)."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/grabbit-upload.jks"
+          echo "GRABBIT_UPLOAD_STORE_FILE=$RUNNER_TEMP/grabbit-upload.jks" >> "$GITHUB_ENV"
+
       - name: Assemble Release APK
+        env:
+          GRABBIT_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          GRABBIT_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          GRABBIT_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cd apps/mobile/android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
+
+      - name: Verify APK is not debug-signed
+        run: |
+          APK_PATH=$(find apps/mobile/android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          APKSIGNER="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)/apksigner"
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK_PATH")
+          echo "$CERTS"
+          if echo "$CERTS" | grep -qi "CN=Android Debug"; then
+            echo "::error::The APK is signed with the Android debug key"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/grabbit-upload.jks"
 
       - name: Prepare APK Artifact
         id: prepare-apk
@@ -236,15 +304,19 @@ jobs:
 
       - name: Compute Checksums & Structure Assets
         run: |
+          set -euo pipefail
           mkdir -p release-files
-          cp release-assets/desktop/*.exe release-files/ || true
-          cp release-assets/desktop/latest.yml release-files/ || true
-          cp release-assets/desktop/*.blockmap release-files/ || true
-          cp release-assets/mobile/*.apk release-files/ || true
-          cp release-assets/extension/*.zip release-files/ || true
+          # Every platform must be present: a missing file fails the release instead of shipping without it
+          cp release-assets/desktop/*.exe release-files/
+          cp release-assets/desktop/latest.yml release-files/
+          cp release-assets/desktop/*.blockmap release-files/
+          cp release-assets/mobile/*.apk release-files/
+          cp release-assets/extension/*.zip release-files/
 
           cd release-files
-          sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+          sha256sum -- * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt .
+          sha256sum --check --quiet SHA256SUMS.txt
           echo "Generated SHA256 checksums:"
           cat SHA256SUMS.txt
 

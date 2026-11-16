@@ -61,8 +61,24 @@
           "isAccessMediaLocationEnabled": true
         }
       ],
-      "./plugins/withAndroidFixes"
+      "./plugins/withAndroidFixes",
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
+        }
+      ]
     ]
   }
 }
-
