@@ -16,7 +16,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@babel/runtime": "^7.26.0",
+    "@babel/runtime": "^8.1.2",
     "@expo/metro-runtime": "~58.0.17",
     "@expo/vector-icons": "~15.1.1",
     "@grabbit/api": "workspace:*",
