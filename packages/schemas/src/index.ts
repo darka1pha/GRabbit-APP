@@ -308,7 +308,7 @@ export const StoredDownloadItemSchema = z
     retries: z.number().finite().catch(0),
     createdAt: z.number().finite().catch(0),
     segments: z.array(StoredSegmentSchema).optional(),
-    headers: z.record(z.string()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
     queueId: z.string().optional(),
   })
   .passthrough();

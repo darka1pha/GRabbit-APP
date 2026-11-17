@@ -17,6 +17,7 @@ import {
   RpcRemoveRequestSchema,
   RpcStreamRequestSchema,
   RpcUrlRequestSchema,
+  type z,
   type ZodTypeAny,
 } from '@grabbit/schemas';
 import { isMagnetLink } from '@grabbit/utils';
@@ -317,7 +318,7 @@ export class DesktopRpcBridge {
     return url;
   }
 
-  private parse<S extends ZodTypeAny>(schema: S, body: unknown): ReturnType<S['parse']> {
+  private parse<S extends ZodTypeAny>(schema: S, body: unknown): z.output<S> {
     const result = schema.safeParse(body);
     if (!result.success) throw new RpcRequestError(`Invalid request: ${describeIssue(result.error)}`);
     return result.data;
