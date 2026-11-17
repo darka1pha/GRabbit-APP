@@ -8,15 +8,8 @@ export interface ParsedPlatformUrl {
   platform: PlatformId;
 }
 
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/i;
-
-export function extractUrlFromText(text?: string | null): string | null {
-  if (!text) return null;
-  const match = text.match(URL_REGEX);
-  if (!match) return null;
-  // Strip trailing sentence punctuation that users often include around pasted links
-  return match[0].replace(/[.,!;?)]+$/, '');
-}
+// Shared with the desktop and mobile apps
+export { extractUrlFromText } from '@grabbit/core';
 
 export function parsePlatformUrl(inputUrl: string): ParsedPlatformUrl {
   let parsed: URL;

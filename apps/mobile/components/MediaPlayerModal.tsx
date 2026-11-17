@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -13,7 +13,9 @@ import {
   LayoutChangeEvent,
   GestureResponderEvent,
 } from 'react-native';
-import { Video, ResizeMode, AVPlaybackStatus, Audio } from 'expo-av';
+import { useEventListener } from 'expo';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { formatDuration } from '@grabbit/utils';
 import { useTheme } from '../hooks/useTheme';
@@ -39,6 +41,8 @@ interface MediaPlayerModalProps {
 }
 
 const { width } = Dimensions.get('window');
+/** An audio file that has not loaded by then is reported as unplayable. */
+const AUDIO_LOAD_TIMEOUT_MS = 15_000;
 
 export function MediaPlayerModal({
   visible,
@@ -50,112 +54,90 @@ export function MediaPlayerModal({
   const { t, isRtl } = useI18n();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [positionMs, setPositionMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [trackWidth, setTrackWidth] = useState(width - 40);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-  const videoRef = useRef<Video>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  // One player per kind; the other gets no source. Both hooks release their player on change.
+  const isVideo = Boolean(source?.isVideo);
+  const videoSource = visible && source && isVideo ? { uri: source.uri } : null;
+  const audioSource = visible && source && !isVideo ? { uri: source.uri } : null;
+
+  // ---------------------------------------------------------------- video (expo-video)
+  const videoPlayer = useVideoPlayer(videoSource, (player) => {
+    player.loop = true;
+    player.timeUpdateEventInterval = 0.5;
+    player.play();
+  });
+  const [video, setVideo] = useState({ playing: false, loading: true, position: 0, duration: 0 });
+
+  useEventListener(videoPlayer, 'statusChange', ({ status, error }) => {
+    setVideo((v) => ({ ...v, loading: status === 'loading' || status === 'idle' }));
+    if (status === 'error') setPlaybackError(error?.message || t('err.UNKNOWN'));
+    else if (status === 'readyToPlay') setPlaybackError(null);
+  });
+  useEventListener(videoPlayer, 'playingChange', ({ isPlaying }) => setVideo((v) => ({ ...v, playing: isPlaying })));
+  useEventListener(videoPlayer, 'sourceLoad', ({ duration }) => setVideo((v) => ({ ...v, duration, loading: false })));
+  useEventListener(videoPlayer, 'timeUpdate', ({ currentTime }) =>
+    setVideo((v) => ({ ...v, position: currentTime, duration: videoPlayer.duration || v.duration }))
+  );
+
+  // ---------------------------------------------------------------- audio (expo-audio)
+  const audioPlayer = useAudioPlayer(audioSource, { updateInterval: 500 });
+  const audioStatus = useAudioPlayerStatus(audioPlayer);
+
+  useEffect(() => {
+    if (!audioSource) return;
+    let cancelled = false;
+    void setAudioModeAsync({ playsInSilentMode: true })
+      .catch((err) => console.warn('Audio mode error:', err))
+      .finally(() => {
+        if (!cancelled) audioPlayer.play();
+      });
+    return () => {
+      cancelled = true;
+    };
+    // The player is recreated when the source changes, so it alone decides when to start
+  }, [audioPlayer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // expo-audio reports no load error, so a file that never loads is called unplayable
+  useEffect(() => {
+    if (!audioSource || audioStatus.isLoaded) return;
+    const timer = setTimeout(() => setPlaybackError(t('err.UNKNOWN')), AUDIO_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [audioPlayer, audioStatus.isLoaded, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPlaybackError(null);
-    setPositionMs(0);
-    setDurationMs(0);
-    setIsLoading(Boolean(visible && source));
+    setVideo({ playing: false, loading: true, position: 0, duration: 0 });
   }, [visible, source]);
 
-  // Audio playback setup when source is audio
-  useEffect(() => {
-    let isMounted = true;
+  // ---------------------------------------------------------------- shared view state
+  const isPlaying = isVideo ? video.playing : audioStatus.playing;
+  const isLoading = Boolean(visible && source) && (isVideo ? video.loading : !audioStatus.isLoaded);
+  const positionMs = Math.round((isVideo ? video.position : audioStatus.currentTime) * 1000);
+  const durationMs = Math.round((isVideo ? video.duration : audioStatus.duration) * 1000) || 0;
 
-    async function setupAudio() {
-      if (!visible || !source || source.isVideo) return;
-
-      try {
-        setIsLoading(true);
-        setPlaybackError(null);
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-        });
-
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: source.uri },
-          { shouldPlay: true },
-          (status: AVPlaybackStatus) => {
-            if (!isMounted) return;
-            if (status.isLoaded) {
-              setIsLoading(false);
-              setIsPlaying(status.isPlaying);
-              setPositionMs(status.positionMillis);
-              setDurationMs(status.durationMillis || 0);
-            }
-          }
-        );
-
-        soundRef.current = sound;
-      } catch (err: any) {
-        console.warn('Audio setup error:', err);
-        if (isMounted) {
-          setIsLoading(false);
-          setPlaybackError(err?.message || t('err.UNKNOWN'));
-        }
-      }
-    }
-
-    setupAudio();
-
-    return () => {
-      isMounted = false;
-      if (soundRef.current) {
-        void soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
-    };
-  }, [visible, source, t]);
-
-  const handleClose = async () => {
-    if (soundRef.current) {
-      await soundRef.current.stopAsync();
-      await soundRef.current.unloadAsync();
-      soundRef.current = null;
-    }
-    if (videoRef.current) {
-      await videoRef.current.stopAsync();
-    }
+  const handleClose = () => {
+    if (isVideo) videoPlayer.pause();
+    else audioPlayer.pause();
     onClose();
   };
 
-  const togglePlayPause = async () => {
+  const togglePlayPause = () => {
     void hapticLight();
-    if (source?.isVideo && videoRef.current) {
-      if (isPlaying) {
-        await videoRef.current.pauseAsync();
-      } else {
-        await videoRef.current.playAsync();
-      }
-      setIsPlaying(!isPlaying);
-    } else if (soundRef.current) {
-      if (isPlaying) {
-        await soundRef.current.pauseAsync();
-      } else {
-        await soundRef.current.playAsync();
-      }
-      setIsPlaying(!isPlaying);
-    }
+    const player = isVideo ? videoPlayer : audioPlayer;
+    if (isPlaying) player.pause();
+    else player.play();
   };
 
   const seekToMs = async (targetMs: number) => {
-    const clamped = Math.max(0, Math.min(durationMs, Math.round(targetMs)));
-    if (source?.isVideo && videoRef.current) {
-      await videoRef.current.setPositionAsync(clamped);
-    } else if (soundRef.current) {
-      await soundRef.current.setPositionAsync(clamped);
+    const seconds = Math.max(0, Math.min(durationMs, Math.round(targetMs))) / 1000;
+    if (isVideo) {
+      videoPlayer.currentTime = seconds;
+      setVideo((v) => ({ ...v, position: seconds }));
+    } else {
+      await audioPlayer.seekTo(seconds);
     }
-    setPositionMs(clamped);
   };
 
   const skipSeconds = async (seconds: number) => {
@@ -247,30 +229,11 @@ export function MediaPlayerModal({
         {/* Media Content Area */}
         <View style={styles.mediaArea}>
           {source.isVideo ? (
-            <Video
-              ref={videoRef}
+            <VideoView
+              player={videoPlayer}
               style={styles.videoPlayer}
-              source={{ uri: source.uri }}
-              shouldPlay={visible}
-              useNativeControls={false}
-              resizeMode={ResizeMode.CONTAIN}
-              isLooping
-              onPlaybackStatusUpdate={(status) => {
-                if (status.isLoaded) {
-                  setIsLoading(false);
-                  setPlaybackError(null);
-                  setIsPlaying(status.isPlaying);
-                  setPositionMs(status.positionMillis);
-                  setDurationMs(status.durationMillis || 0);
-                } else if ('error' in status && status.error) {
-                  setIsLoading(false);
-                  setPlaybackError(status.error);
-                }
-              }}
-              onError={(err) => {
-                setIsLoading(false);
-                setPlaybackError(typeof err === 'string' ? err : t('err.UNKNOWN'));
-              }}
+              nativeControls={false}
+              contentFit="contain"
             />
           ) : (
             <View style={styles.audioArtworkContainer}>
@@ -453,7 +416,7 @@ const createStyles = (colors: ThemeColors) =>
       textAlign: 'center',
     },
     loadingOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: colors.overlay,
       justifyContent: 'center',
       alignItems: 'center',

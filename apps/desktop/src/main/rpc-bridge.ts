@@ -148,6 +148,8 @@ export interface RpcBridgeDeps {
   onDownloadsAdded?: (items: DownloadItem[]) => void;
   /** Resolves a host name to its addresses (defaults to the system resolver). */
   lookupHost?: HostLookup;
+  /** Whether a socket address is this machine (defaults to loopback; tests swap it). */
+  isLocalCaller?: (address: string | undefined) => boolean;
 }
 
 export class DesktopRpcBridge {
@@ -300,6 +302,19 @@ export class DesktopRpcBridge {
       if (addresses.some((address) => isPrivateHost(address))) throw refuse();
     }
     return parsed.toString();
+  }
+
+  /**
+   * URL handed to yt-dlp (resolve, stream, recognize). yt-dlp follows redirects itself, out of
+   * reach of the per-hop check, so another device may only use it for supported sites, whose
+   * own servers will not redirect into the user's network. This machine may use any public URL.
+   */
+  private async mediaUrl(raw: string, remoteCaller: boolean): Promise<string> {
+    const url = await this.publicHttpUrl(raw);
+    if (remoteCaller && detectPlatform(new URL(url).hostname) === 'generic') {
+      throw new RpcRequestError('From another device, only links to supported sites can be resolved');
+    }
+    return url;
   }
 
   private parse<S extends ZodTypeAny>(schema: S, body: unknown): ReturnType<S['parse']> {
@@ -533,7 +548,7 @@ export class DesktopRpcBridge {
     }
 
     // Other devices on the LAN may not use the desktop to reach this machine's own network
-    const remoteCaller = !isLoopbackAddress(req.socket.remoteAddress);
+    const remoteCaller = !(this.deps.isLocalCaller ?? isLoopbackAddress)(req.socket.remoteAddress);
 
     try {
       if (req.method === 'GET' && pathname === '/status') {
@@ -561,7 +576,7 @@ export class DesktopRpcBridge {
         // A magnet link names no host, so there is no network for it to reach into
         if (remoteCaller && !isMagnetLink(body.url)) await this.publicHttpUrl(body.url.trim());
 
-        const added = await this.processDownloadRequest(body);
+        const added = await this.processDownloadRequest(body, remoteCaller);
         if (added) {
           this.deps.onDownloadsAdded?.([added]);
           this.sendJson(res, 200, { success: true, item: added });
@@ -590,7 +605,7 @@ export class DesktopRpcBridge {
               continue;
             }
           }
-          const added = await this.processDownloadRequest(reqItem.data).catch(() => null);
+          const added = await this.processDownloadRequest(reqItem.data, remoteCaller).catch(() => null);
           if (added) results.push(added);
         }
         if (results.length > 0) this.deps.onDownloadsAdded?.(results);
@@ -601,7 +616,7 @@ export class DesktopRpcBridge {
 
       if (req.method === 'POST' && (pathname === '/media/resolve' || pathname === '/api/resolve')) {
         const body = this.parse(RpcUrlRequestSchema, await this.readBodyJson(req));
-        const metadata = await this.deps.router.resolve(await this.publicHttpUrl(body.url));
+        const metadata = await this.deps.router.resolve(await this.mediaUrl(body.url, remoteCaller));
         this.sendJson(res, 200, { success: true, metadata, ...metadata });
         return;
       }
@@ -665,7 +680,7 @@ export class DesktopRpcBridge {
           this.sendJson(res, 400, { success: false, error: 'Recognizer unavailable' });
           return;
         }
-        const track = await this.deps.recognizer.identifyUrl(await this.publicHttpUrl(body.url));
+        const track = await this.deps.recognizer.identifyUrl(await this.mediaUrl(body.url, remoteCaller));
         this.sendJson(res, 200, track ?? { title: null });
         return;
       }
@@ -673,7 +688,7 @@ export class DesktopRpcBridge {
       if (req.method === 'POST' && pathname === '/media/stream') {
         const body = this.parse(RpcStreamRequestSchema, await this.readBodyJson(req));
         const ytdlp = new YtDlpRunner();
-        const meta = await ytdlp.getMetadata(await this.publicHttpUrl(body.url));
+        const meta = await ytdlp.getMetadata(await this.mediaUrl(body.url, remoteCaller));
         const formats = Array.isArray(meta.formats) ? meta.formats : [];
         const directFormats = formats.filter((f) => typeof (f as any).url === 'string' && !(f as any).url.includes('.m3u8'));
         let chosen: any = null;
@@ -804,7 +819,7 @@ export class DesktopRpcBridge {
     return target;
   }
 
-  private async processDownloadRequest(req: RpcAddDownloadRequest): Promise<DownloadItem | null> {
+  private async processDownloadRequest(req: RpcAddDownloadRequest, remoteCaller = false): Promise<DownloadItem | null> {
     const rawUrl = req.url.trim();
 
     // Magnet links go to the torrent engine; its errors (duplicate, malformed) reach the caller
@@ -827,7 +842,8 @@ export class DesktopRpcBridge {
       const isManifest = /\.(m3u8|mpd)(\?.*)?$/i.test(rawUrl);
 
       // If recognized streaming media platform or HLS/DASH manifest URL, try media resolve first
-      if (platform !== 'generic' || isManifest) {
+      // yt-dlp follows redirects on its own, so only supported sites go to it for other devices
+      if (platform !== 'generic' || (isManifest && !remoteCaller)) {
         try {
           const meta = await this.deps.router.resolve(rawUrl);
           const first = meta.items[0];
@@ -871,6 +887,8 @@ export class DesktopRpcBridge {
         referrer: req.referrer,
         headers,
         startPaused: req.startPaused,
+        // The first URL was checked above; this keeps redirects and the connect itself public too
+        publicOnly: remoteCaller || undefined,
       };
 
       const added = this.deps.manager.addHttp([httpReq]);

@@ -20,7 +20,7 @@ vi.mock('expo-linking', () => ({
   getInitialURL: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('expo-file-system', () => ({
+vi.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/mock/grabbit/',
   cacheDirectory: '/mock/cache/',
   EncodingType: { UTF8: 'utf8', Base64: 'base64' },

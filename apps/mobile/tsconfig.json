@@ -3,7 +3,6 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "skipLibCheck": true,
-    "baseUrl": ".",
     "paths": {
       "@grabbit/api": ["../../packages/api/src"],
       "@grabbit/api/*": ["../../packages/api/src/*"],

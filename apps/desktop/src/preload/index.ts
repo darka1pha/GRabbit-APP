@@ -103,6 +103,7 @@ const api: GrabbitApi = {
     toggleMiniMode: (enable) => invoke(IPC.toggleMiniMode, enable),
     isMiniMode: () => invoke(IPC.isMiniMode),
     onMiniModeChanged: (listener) => subscribe(IPC.miniModeChanged, listener),
+    exportDiagnostics: () => invoke(IPC.exportDiagnostics),
   },
 };
 

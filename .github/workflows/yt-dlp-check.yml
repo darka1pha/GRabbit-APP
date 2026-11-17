@@ -1,0 +1,48 @@
+name: yt-dlp freshness
+
+# yt-dlp breaks often as sites change. The bot's Docker image pins a release; this opens (or
+# updates) one issue when a newer release is out, with the values to paste into the Dockerfile.
+# The desktop app fetches the latest release at build time and can update yt-dlp in-app.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pinned and latest yt-dlp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PINNED=$(sed -n 's/^ARG YTDLP_VERSION=//p' apps/telegram-bot/Dockerfile)
+          LATEST=$(gh api repos/yt-dlp/yt-dlp/releases/latest -q .tag_name)
+          echo "pinned=$PINNED latest=$LATEST"
+          if [ -z "$PINNED" ] || [ -z "$LATEST" ]; then
+            echo "::error::Could not read the pinned or latest yt-dlp version"
+            exit 1
+          fi
+          if [ "$PINNED" = "$LATEST" ]; then
+            echo "yt-dlp is current"
+            exit 0
+          fi
+
+          SHA=$(curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/download/${LATEST}/SHA2-256SUMS" | awk '$2 == "yt-dlp" { print $1 }')
+          TITLE="Update yt-dlp to ${LATEST}"
+          BODY=$(printf 'The Telegram bot image pins yt-dlp **%s**; **%s** is out.\n\nIn `apps/telegram-bot/Dockerfile`:\n\n```dockerfile\nARG YTDLP_VERSION=%s\nARG YTDLP_SHA256=%s\n```\n\nRelease notes: https://github.com/yt-dlp/yt-dlp/releases/tag/%s\n\n_Opened by the yt-dlp freshness workflow._' "$PINNED" "$LATEST" "$LATEST" "$SHA" "$LATEST")
+
+          EXISTING=$(gh issue list --state open --search "in:title \"Update yt-dlp to\"" --json number -q '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --title "$TITLE" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

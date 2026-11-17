@@ -10,58 +10,23 @@ import { sanitizeFilename } from '../filename';
 import type { DownloadRequest, DownloadResult, IPlatformAdapter } from './types';
 import { getYouTubeYtDlpExtraArgs } from './youtube';
 import { pickBestMatch, SpotifyTrackInfo } from './track-matcher';
-import { parseTrackPage } from './track-page';
+import {
+  SpotifyClient,
+  spotifyEmbedImage,
+  spotifyEmbedTracks,
+  type SpotifyCollectionTrack,
+  type SpotifyEmbedEntity,
+  type SpotifyOEmbed,
+  type SpotifyRelease,
+} from '@grabbit/core/media/spotify';
 
 /** Safety net for API pagination. */
 const COLLECTION_MAX_ITEMS = 5000;
 /** The public embed page lists at most this many tracks. */
 const EMBED_TRACK_LIMIT = 100;
 
-export interface SpotifyOEmbed {
-  title: string;
-  type: string;
-  thumbnail_url?: string;
-  provider_name: string;
-  html?: string;
-}
-
-/** Subset of the entity JSON embedded in open.spotify.com/embed/* pages (`__NEXT_DATA__`). */
-interface SpotifyEmbedEntity {
-  type?: string;
-  name?: string;
-  title?: string;
-  subtitle?: string;
-  artists?: { name?: string }[];
-  /** Milliseconds */
-  duration?: number;
-  releaseDate?: { isoString?: string };
-  coverArt?: { sources?: { url?: string; width?: number }[] };
-  visualIdentity?: { image?: { url?: string; maxWidth?: number }[] };
-  trackList?: {
-    uri?: string;
-    title?: string;
-    subtitle?: string;
-    duration?: number;
-    entityType?: string;
-  }[];
-}
-
-/** Release details written into the MP3's ID3 tags. */
-interface SpotifyRelease {
-  album?: string;
-  albumArtist?: string;
-  trackNumber?: number;
-  totalTracks?: number;
-  releaseDate?: string;
-  coverUrl?: string;
-}
-
-const EMBED_TIMEOUT_MS = 6000;
 const MATCH_CANDIDATES = 8;
-const MAX_COVER_BYTES = 5 * 1024 * 1024;
-// Deliberately minimal: with a full desktop-browser UA, open.spotify.com/track serves the
-// client-rendered app without the music:* / og:* meta tags that release details are read from.
-const BROWSER_UA = 'Mozilla/5.0';
+const EMBED_TIMEOUT_MS = 6000;
 
 let warnedApiRefused = false;
 
@@ -261,57 +226,41 @@ export class SpotifyAdapter implements IPlatformAdapter {
     );
   }
 
-  /**
-   * Reads the entity JSON from the public open.spotify.com/embed page. Works without API
-   * credentials and returns artists + duration for tracks and a trackList for albums/playlists.
-   */
-  private async fetchEmbedEntity(
-    entityType: string,
-    entityId: string
-  ): Promise<SpotifyEmbedEntity | null> {
-    if (!/^[A-Za-z0-9]+$/.test(entityId)) return null;
-    const html = await this.fetchText(`https://open.spotify.com/embed/${entityType}/${entityId}`);
-    if (!html) return null;
-    try {
-      const match = html.match(
-        /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
-      );
-      if (!match) return null;
-      const data = JSON.parse(match[1]) as {
-        props?: { pageProps?: { state?: { data?: { entity?: SpotifyEmbedEntity } } } };
-      };
-      return data.props?.pageProps?.state?.data?.entity ?? null;
-    } catch (err) {
-      logger.debug({ err, entityType, entityId }, 'Spotify embed page parse failed');
-      return null;
-    }
+  /** Public embed page entity (works without API credentials). */
+  private fetchEmbedEntity(entityType: string, entityId: string): Promise<SpotifyEmbedEntity | null> {
+    return this.spotify().fetchEmbedEntity(entityType, entityId);
   }
 
   private embedImage(entity: SpotifyEmbedEntity): string | undefined {
-    const images = [
-      ...(entity.visualIdentity?.image ?? []).map((i) => ({ url: i.url, w: i.maxWidth ?? 0 })),
-      ...(entity.coverArt?.sources ?? []).map((i) => ({ url: i.url, w: i.width ?? 0 })),
-    ].filter((i): i is { url: string; w: number } => Boolean(i.url));
-    images.sort((a, b) => b.w - a.w);
-    return images[0]?.url;
+    return spotifyEmbedImage(entity);
   }
 
   private embedCollectionTracks(entity: SpotifyEmbedEntity): MediaItem[] {
-    return (entity.trackList ?? [])
-      .filter((t) => (t.entityType ?? 'track') === 'track' && t.uri?.startsWith('spotify:track:'))
-      .map((t) => {
-        const id = t.uri!.split(':')[2];
-        return {
-          id,
-          title: t.title || id,
-          uploader: t.subtitle || undefined,
-          durationSeconds: t.duration ? Math.round(t.duration / 1000) : undefined,
-          platform: this.platformId,
-          url: `https://open.spotify.com/track/${id}`,
-          isDownloadable: true,
-          availableOptions: spotifyAudioOptions(),
-        };
-      });
+    return spotifyEmbedTracks(entity).map((t) => this.toItem(t));
+  }
+
+  private toItem(t: SpotifyCollectionTrack): MediaItem {
+    return {
+      id: t.id,
+      title: t.title,
+      uploader: t.artists,
+      durationSeconds: t.durationSeconds,
+      platform: this.platformId,
+      url: t.url,
+      isDownloadable: true,
+      availableOptions: spotifyAudioOptions(),
+    };
+  }
+
+  /** Shared Spotify client (Web API, embed and track pages), with the current credentials. */
+  private spotify(): SpotifyClient {
+    const { spotifyClientId: clientId, spotifyClientSecret: clientSecret } = getMediaConfig();
+    return new SpotifyClient({
+      clientId,
+      clientSecret,
+      maxCollectionItems: COLLECTION_MAX_ITEMS,
+      log: (level, data, message) => logger[level](data, message),
+    });
   }
 
   /** Searches YouTube and returns the URL of the result that best matches the Spotify track. */
@@ -349,78 +298,15 @@ export class SpotifyAdapter implements IPlatformAdapter {
     return best.candidate.url;
   }
 
-  /** Client-credentials token, or null when SPOTIFY_CLIENT_ID / SECRET aren't configured. */
-  private async getAccessToken(): Promise<string | null> {
-    const config = getMediaConfig();
-    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
-
-    const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization:
-          'Basic ' +
-          Buffer.from(`${config.spotifyClientId}:${config.spotifyClientSecret}`).toString(
-            'base64'
-          ),
-      },
-      body: 'grant_type=client_credentials',
-    });
-    if (!tokenRes.ok) return null;
-    const tokenData = (await tokenRes.json()) as { access_token: string };
-    return tokenData.access_token;
+  /** Client-credentials token, or null when no API credentials are configured. */
+  private getAccessToken(): Promise<string | null> {
+    return this.spotify().getAccessToken();
   }
 
   /** Every track of an album or playlist (following the API's pages), as downloadable items. */
-  private async fetchCollectionTracks(
-    entityType: 'album' | 'playlist',
-    entityId: string
-  ): Promise<MediaItem[] | null> {
-    const accessToken = await this.getAccessToken();
-    if (!accessToken) return null;
-
-    type SpotifyTrack = {
-      id?: string;
-      name?: string;
-      type?: string;
-      artists?: { name: string }[];
-      duration_ms?: number;
-    };
-    type Page = { items?: Array<SpotifyTrack & { track?: SpotifyTrack }>; next?: string | null };
-
-    // Pages hold up to 100 playlist items or 50 album tracks
-    const pageSize = entityType === 'playlist' ? 100 : 50;
-    let next: string | null = `https://api.spotify.com/v1/${entityType}s/${entityId}/tracks?limit=${pageSize}`;
-    const tracks: SpotifyTrack[] = [];
-    while (next && tracks.length < COLLECTION_MAX_ITEMS) {
-      const res = await fetch(next, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) {
-        if (tracks.length === 0) return null;
-        logger.warn({ status: res.status, entityId, loaded: tracks.length }, 'Spotify paging stopped early');
-        break;
-      }
-      const body = (await res.json()) as Page;
-      // Album items are tracks; playlist items wrap them in { track } (and may be episodes/null)
-      for (const item of body.items ?? []) {
-        const t = entityType === 'playlist' ? item.track : item;
-        if (t?.id && t.name && (t.type ?? 'track') === 'track') tracks.push(t);
-      }
-      next = body.next ?? null;
-    }
-
-    return tracks.map((t) => ({
-      id: t.id!,
-      title: t.name!,
-      uploader: t.artists?.map((a) => a.name).join(', ') || undefined,
-      durationSeconds: t.duration_ms ? Math.round(t.duration_ms / 1000) : undefined,
-      platform: this.platformId,
-      url: `https://open.spotify.com/track/${t.id}`,
-      isDownloadable: true,
-      availableOptions: spotifyAudioOptions(),
-    }));
+  private async fetchCollectionTracks(entityType: 'album' | 'playlist', entityId: string): Promise<MediaItem[] | null> {
+    const tracks = await this.spotify().fetchCollectionTracks(entityType, entityId);
+    return tracks ? tracks.map((t) => this.toItem(t)) : null;
   }
 
   public async download(request: DownloadRequest): Promise<DownloadResult> {
@@ -505,27 +391,8 @@ export class SpotifyAdapter implements IPlatformAdapter {
   }
 
   /** Album, album artist, track number, release date and full-size cover of a Spotify track. */
-  private async fetchReleaseDetails(trackId: string): Promise<SpotifyRelease | null> {
-    if (!/^[A-Za-z0-9]+$/.test(trackId)) return null;
-    const html = await this.fetchText(`https://open.spotify.com/track/${trackId}`);
-    if (!html) return null;
-    const page = parseTrackPage(html);
-
-    const album = page.albumId ? await this.fetchEmbedEntity('album', page.albumId) : null;
-    const albumTracks = (album?.trackList ?? []).filter(
-      (t) => (t.entityType ?? 'track') === 'track'
-    );
-    const indexInAlbum = albumTracks.findIndex((t) => t.uri === `spotify:track:${trackId}`);
-    const albumRelease = album?.releaseDate?.isoString;
-
-    return {
-      album: album?.name || album?.title || page.albumName,
-      albumArtist: album?.subtitle,
-      trackNumber: page.trackNumber ?? (indexInAlbum >= 0 ? indexInAlbum + 1 : undefined),
-      totalTracks: albumTracks.length > 0 ? albumTracks.length : undefined,
-      releaseDate: page.releaseDate || albumRelease?.slice(0, 10),
-      coverUrl: page.coverUrl || (album ? this.embedImage(album) : undefined),
-    };
+  private fetchReleaseDetails(trackId: string): Promise<SpotifyRelease | null> {
+    return this.spotify().fetchReleaseDetails(trackId);
   }
 
   /**
@@ -580,32 +447,11 @@ export class SpotifyAdapter implements IPlatformAdapter {
 
   /** Saves a Spotify CDN cover image into the job directory. */
   private async downloadCover(coverUrl: string, outputDir: string): Promise<string | undefined> {
-    const host = new URL(coverUrl).hostname;
-    if (!/(^|\.)(scdn\.co|spotifycdn\.com)$/.test(host)) return undefined;
-
-    const res = await fetch(coverUrl, { signal: AbortSignal.timeout(EMBED_TIMEOUT_MS) });
-    if (!res.ok) return undefined;
-    const type = res.headers.get('content-type') || '';
-    const ext = type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : null;
-    if (!ext) return undefined;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.length === 0 || bytes.length > MAX_COVER_BYTES) return undefined;
-
-    const coverPath = join(outputDir, `spotify-cover.${ext}`);
-    await writeFile(coverPath, bytes);
+    const cover = await this.spotify().fetchCover(coverUrl);
+    if (!cover) return undefined;
+    const coverPath = join(outputDir, `spotify-cover.${cover.ext}`);
+    await writeFile(coverPath, cover.bytes);
     return coverPath;
   }
 
-  private async fetchText(url: string): Promise<string | null> {
-    try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en' },
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
-      });
-      return res.ok ? await res.text() : null;
-    } catch (err) {
-      logger.debug({ err, url }, 'Spotify page fetch failed');
-      return null;
-    }
-  }
 }

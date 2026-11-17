@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { base64ToBytes, compareSemver, md5Hex, sha1Hex, sha256Hex, createIncrementalHasher } from '@grabbit/utils';
 import { detectCategory, mobileDownloadManager } from '../services/download-manager';
 import { extractYouTubeVideoId, mobileBridge, resolverPool } from '../services/bridge';
@@ -48,7 +48,7 @@ vi.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
 }));
 
-vi.mock('expo-file-system', () => ({
+vi.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/mock/grabbit/',
   cacheDirectory: '/mock/cache/',
   EncodingType: { Base64: 'base64' },

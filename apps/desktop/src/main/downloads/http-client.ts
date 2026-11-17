@@ -1,25 +1,75 @@
+import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import http, { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import https from 'node:https';
+import { isPrivateHost } from '@grabbit/core';
 import { HttpStatusError, InvalidUrlError, JobCancelledError } from '../media/errors';
 
 const MAX_REDIRECTS = 10;
 /** A connection that delivers no data for this long is dropped and retried. */
 const STALL_TIMEOUT_MS = 30_000;
 
+/** A download asked for by another device tried to reach this machine or the local network. */
+export class PrivateNetworkError extends InvalidUrlError {
+  constructor() {
+    super('Local and private network addresses are not allowed for downloads sent from another device');
+  }
+}
+
+type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | LookupAddress[],
+  family?: number
+) => void;
+
+/**
+ * DNS lookup used for the actual connection of a public-only request. Checking the address the
+ * socket connects to (not an earlier, separate lookup) means a name that changes its answer
+ * between a check and the connect (DNS rebinding) is still refused.
+ */
+export function publicOnlyLookup(
+  hostname: string,
+  options: { all?: boolean; family?: number },
+  callback: LookupCallback
+): void {
+  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err, []);
+    if (addresses.length === 0 || addresses.some((a) => isPrivateHost(a.address))) {
+      return callback(Object.assign(new PrivateNetworkError(), { code: 'EPRIVATE' }), []);
+    }
+    if (options.all) return callback(null, addresses);
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+interface AgentSet {
+  http: http.Agent;
+  https: https.Agent;
+  /** Separate pool for public-only requests, so they never reuse a socket opened without the check. */
+  publicHttp: http.Agent;
+  publicHttps: https.Agent;
+}
+
 let agents = createAgents('');
 
-function createAgents(proxy: string): { http: http.Agent; https: https.Agent } {
+function createAgents(proxy: string): AgentSet {
   const proxyEnv = proxy ? { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: 'localhost,127.0.0.1,::1' } : undefined;
   const common = { keepAlive: true, maxSockets: 256, ...(proxyEnv ? { proxyEnv } : {}) };
-  return { http: new http.Agent(common), https: new https.Agent(common) };
+  // Through a proxy the proxy resolves names, so only the name itself can be checked (per hop)
+  const guarded = proxyEnv ? common : { ...common, lookup: publicOnlyLookup as never };
+  return {
+    http: new http.Agent(common),
+    https: new https.Agent(common),
+    publicHttp: new http.Agent(guarded),
+    publicHttps: new https.Agent(guarded),
+  };
 }
 
 /** Routes download-manager traffic through an HTTP(S) proxy, or directly when empty. */
 export function configureHttpProxy(proxy: string): void {
-  agents.http.destroy();
-  agents.https.destroy();
+  for (const agent of Object.values(agents)) agent.destroy();
   agents = createAgents(proxy.trim());
 }
+
 
 export interface HttpResponse {
   status: number;
@@ -34,15 +84,27 @@ export interface HttpRequestOptions {
   signal?: AbortSignal;
   /** Drop the connection after this long without data, before or during the response body. */
   stallTimeoutMs?: number;
+  /**
+   * Refuse this machine and the local network on every hop: the first URL, each redirect target,
+   * and the address actually connected to. Set for downloads another device asked for.
+   */
+  publicOnly?: boolean;
 }
 
 function requestOnce(url: URL, options: HttpRequestOptions): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
     const isHttps = url.protocol === 'https:';
+    const agent = options.publicOnly
+      ? isHttps
+        ? agents.publicHttps
+        : agents.publicHttp
+      : isHttps
+        ? agents.https
+        : agents.http;
     const req = (isHttps ? https : http).request(url, {
       method: options.method ?? 'GET',
       headers: options.headers,
-      agent: isHttps ? agents.https : agents.http,
+      agent,
       signal: options.signal,
     });
     req.setTimeout(options.stallTimeoutMs ?? STALL_TIMEOUT_MS, () => {
@@ -67,6 +129,7 @@ export async function httpRequest(rawUrl: string, options: HttpRequestOptions = 
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw new InvalidUrlError(`Unsupported protocol ${url.protocol}`);
     }
+    if (options.publicOnly && isPrivateHost(url.hostname)) throw new PrivateNetworkError();
     const res = await requestOnce(url, options);
     const status = res.statusCode ?? 0;
     const location = res.headers.location;

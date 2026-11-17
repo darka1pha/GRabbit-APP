@@ -14,6 +14,7 @@ import {
   httpRequest,
   HttpResponse,
   parseContentRange,
+  PrivateNetworkError,
 } from './http-client';
 import { RateLimiter, sleep } from './throttle';
 
@@ -395,7 +396,11 @@ export class HttpDownloadTask {
     let fallbackInfo: ProbeInfo | undefined;
 
     try {
-      res = await httpRequest(item.url, { headers: { ...this.baseHeaders(), Range: 'bytes=0-' }, signal });
+      res = await httpRequest(item.url, {
+        headers: { ...this.baseHeaders(), Range: 'bytes=0-' },
+        signal,
+        publicOnly: item.publicOnly,
+      });
       if (res.status >= 400) {
         res.body.resume();
         res = undefined;
@@ -406,7 +411,7 @@ export class HttpDownloadTask {
     }
 
     if (!res) {
-      fallbackInfo = await probeUrl(item.url, this.baseHeaders());
+      fallbackInfo = await probeUrl(item.url, this.baseHeaders(), { publicOnly: item.publicOnly });
     }
 
     const info = fallbackInfo ?? analyzeResponse(res!);
@@ -660,7 +665,7 @@ export class HttpDownloadTask {
       if (validator) headers['If-Range'] = validator;
     }
 
-    const res = await httpRequest(item.url, { headers, signal });
+    const res = await httpRequest(item.url, { headers, signal, publicOnly: item.publicOnly });
     if (res.status === 416) {
       res.body.resume();
       throw new ResourceChangedError('The server rejected the byte range (file changed?)');
@@ -799,7 +804,11 @@ export class HttpDownloadTask {
 }
 
 /** Quick look at a URL with multi-stage fallback: Range 0-0 -> HEAD -> Range 0- -> GET. */
-export async function probeUrl(url: string, headers: Record<string, string>): Promise<ProbeInfo> {
+export async function probeUrl(
+  url: string,
+  headers: Record<string, string>,
+  guard: { publicOnly?: boolean } = {}
+): Promise<ProbeInfo> {
   const baseHeaders = { Accept: '*/*', 'Accept-Encoding': 'identity', ...headers };
 
   // Try 1: Range bytes=0-0
@@ -807,11 +816,12 @@ export async function probeUrl(url: string, headers: Record<string, string>): Pr
     const res = await httpRequest(url, {
       headers: { ...baseHeaders, Range: 'bytes=0-0' },
       signal: AbortSignal.timeout(20_000),
+      ...guard,
     });
     res.body.destroy();
     if (res.status < 400) return analyzeResponse(res);
   } catch (err) {
-    if (err instanceof JobCancelledError) throw err;
+    if (err instanceof JobCancelledError || err instanceof PrivateNetworkError) throw err;
   }
 
   // Try 2: HEAD request
@@ -820,11 +830,12 @@ export async function probeUrl(url: string, headers: Record<string, string>): Pr
       method: 'HEAD',
       headers: baseHeaders,
       signal: AbortSignal.timeout(20_000),
+      ...guard,
     });
     res.body.destroy();
     if (res.status < 400) return analyzeResponse(res);
   } catch (err) {
-    if (err instanceof JobCancelledError) throw err;
+    if (err instanceof JobCancelledError || err instanceof PrivateNetworkError) throw err;
   }
 
   // Try 3: Range bytes=0-
@@ -832,17 +843,19 @@ export async function probeUrl(url: string, headers: Record<string, string>): Pr
     const res = await httpRequest(url, {
       headers: { ...baseHeaders, Range: 'bytes=0-' },
       signal: AbortSignal.timeout(20_000),
+      ...guard,
     });
     res.body.destroy();
     if (res.status < 400) return analyzeResponse(res);
   } catch (err) {
-    if (err instanceof JobCancelledError) throw err;
+    if (err instanceof JobCancelledError || err instanceof PrivateNetworkError) throw err;
   }
 
   // Try 4: Plain GET request
   const res = await httpRequest(url, {
     headers: baseHeaders,
     signal: AbortSignal.timeout(20_000),
+    ...guard,
   });
   res.body.destroy();
   if (res.status >= 400) throw new HttpStatusError(res.status);

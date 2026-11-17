@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isArchive, runCustomCommand } from '../src/main/downloads/automation';
+import { automationEnvName, isArchive, runCustomCommand } from '../src/main/downloads/automation';
 import { insideWindow } from '../src/main/downloads/scheduler';
 import { RateLimiter } from '../src/main/downloads/throttle';
 
@@ -30,6 +30,17 @@ describe('Post-Download Automation & Rules Engine', () => {
       const result = await runCustomCommand('echo {fileName} ({fileSize} bytes)', vars);
       expect(result.success).toBe(true);
       expect(result.output).toContain('test.zip (1048576 bytes)');
+    });
+
+    it('also passes the exact values as environment variables', async () => {
+      const tricky = 'a & echo injected.zip';
+      const cmd = process.platform === 'win32' ? 'echo [%GRABBIT_FILE_NAME%]' : 'echo "[$GRABBIT_FILE_NAME]"';
+      expect(automationEnvName('fileName')).toBe('GRABBIT_FILE_NAME');
+      expect(automationEnvName('filePath')).toBe('GRABBIT_FILE_PATH');
+      // cmd.exe expands %VAR% before parsing, so the Windows case only checks the value arrives
+      const result = await runCustomCommand(cmd, { fileName: process.platform === 'win32' ? 'plain.zip' : tricky });
+      expect(result.success).toBe(true);
+      expect(result.output).toBe(process.platform === 'win32' ? '[plain.zip]' : `[${tricky}]`);
     });
 
     it('gracefully handles failing commands', async () => {

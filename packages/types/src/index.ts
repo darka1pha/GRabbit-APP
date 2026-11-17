@@ -173,6 +173,11 @@ export interface DownloadItem {
   url: string;
   /** Page the link came from; sent as Referer. */
   referrer?: string;
+  /**
+   * Asked for by another device over the LAN bridge: every request (redirects included) must
+   * stay off this machine and the local network.
+   */
+  publicOnly?: boolean;
   fileName: string;
   /** True when the user picked the name, so the server's name must not replace it. */
   fileNameLocked?: boolean;
@@ -280,6 +285,8 @@ export interface AddHttpDownloadRequest {
   category?: Category;
   connections?: number;
   referrer?: string;
+  /** See DownloadItem.publicOnly. */
+  publicOnly?: boolean;
   headers?: Record<string, string>;
   speedLimitKBps?: number;
   checksum?: { algorithm: ChecksumAlgorithm; expected?: string };
@@ -658,6 +665,8 @@ export interface GrabbitApi {
     toggleMiniMode(enable?: boolean): Promise<boolean>;
     isMiniMode(): Promise<boolean>;
     onMiniModeChanged(listener: (isMini: boolean) => void): () => void;
+    /** Saves a redacted diagnostics report chosen by the user; the path, or null when cancelled. */
+    exportDiagnostics(): Promise<string | null>;
   };
 }
 
@@ -727,6 +736,7 @@ export const IPC = {
   navigate: 'app:navigate',
   toggleMiniMode: 'app:toggle-mini-mode',
   isMiniMode: 'app:is-mini-mode',
+  exportDiagnostics: 'app:export-diagnostics',
   miniModeChanged: 'app:mini-mode-changed',
   automationPlaySound: 'automation:play-sound',
 } as const;

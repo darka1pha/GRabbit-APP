@@ -34,11 +34,13 @@ describe('DesktopRpcBridge', () => {
   const TEST_TOKEN = 'secret-test-token-123';
   /** Stand-in for DNS: public by default, overridden per test. */
   let lookupHost: (hostname: string) => Promise<string[]>;
+  let callerIsLocal: boolean;
 
   beforeEach(() => {
     addedItemCallback = null;
     addedCallbacks = [];
     lookupHost = async () => ['93.184.216.34'];
+    callerIsLocal = true;
     currentSettings = {
       language: 'en',
       theme: 'system',
@@ -147,6 +149,7 @@ describe('DesktopRpcBridge', () => {
       settings: mockSettings as SettingsService,
       version: '1.0.0-test',
       lookupHost: (hostname) => lookupHost(hostname),
+      isLocalCaller: () => callerIsLocal,
       onDownloadsAdded: (items) => {
         addedItemCallback = items[0] ?? null;
         addedCallbacks.push(items);
@@ -429,6 +432,33 @@ describe('DesktopRpcBridge', () => {
       lookupHost = async (hostname) => (hostname === 'rebind.example' ? ['93.184.216.34', '10.0.0.5'] : ['93.184.216.34']);
       expect((await post('/media/resolve', { url: 'https://rebind.example/video' })).status).toBe(400);
       expect(mockRouter.resolve).not.toHaveBeenCalled();
+    });
+
+    it('marks downloads from another device public-only, and not those from this machine', async () => {
+      const lastRequest = () => (mockManager.addHttp as any).mock.lastCall[0][0];
+      await post('/downloads/add', { url: 'https://example.com/a.zip' });
+      expect(lastRequest().publicOnly).toBeUndefined();
+
+      callerIsLocal = false;
+      await post('/downloads/add', { url: 'https://example.com/a.zip' });
+      expect(lastRequest().publicOnly).toBe(true);
+      await post('/downloads/batch', { items: [{ url: 'https://example.com/b.zip' }] });
+      expect(lastRequest().publicOnly).toBe(true);
+    });
+
+    it('lets another device use yt-dlp only for supported sites', async () => {
+      callerIsLocal = false;
+      for (const path of ['/media/resolve', '/media/recognize', '/media/stream']) {
+        expect((await post(path, { url: 'https://example.com/redirects-anywhere' })).status, path).toBe(400);
+      }
+      // A manifest on an unknown host skips yt-dlp and goes to the guarded HTTP engine
+      await post('/downloads/add', { url: 'https://example.com/live.m3u8' });
+      expect(mockRouter.resolve).not.toHaveBeenCalled();
+      expect((mockManager.addHttp as any).mock.lastCall[0][0].publicOnly).toBe(true);
+
+      callerIsLocal = true;
+      (mockRouter.resolve as any).mockResolvedValue({ items: [] });
+      expect((await post('/media/resolve', { url: 'https://example.com/redirects-anywhere' })).status).toBe(200);
     });
 
     it('answers malformed bodies with 400', async () => {

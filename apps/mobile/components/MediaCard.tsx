@@ -532,7 +532,7 @@ const createStyles = (colors: ThemeColors) =>
       overflow: 'hidden',
     },
     swipeRail: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',

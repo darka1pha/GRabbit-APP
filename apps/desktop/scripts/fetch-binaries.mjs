@@ -1,9 +1,9 @@
 // Puts yt-dlp.exe, ffmpeg.exe, ffprobe.exe and aria2c.exe into resources/bin so they ship inside the app.
 //   ffmpeg / ffprobe: copied from the ffmpeg-static / @ffprobe-installer npm packages
-//   yt-dlp:           downloaded from the official GitHub release (only when missing, or with --force)
+//   yt-dlp:           latest official GitHub release, checked against its SHA2-256SUMS (only when missing, or with --force)
 //   aria2c:           the torrent engine, from a pinned official aria2 release, checked against its SHA-256
 // Usage: node scripts/fetch-binaries.mjs [--force]
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -16,7 +16,7 @@ import { createRequire } from 'node:module';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const binDir = join(root, 'resources', 'bin');
 const force = process.argv.includes('--force');
-const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
+const YTDLP_LATEST_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest';
 const req = createRequire(import.meta.url);
 
 // To upgrade aria2: bump the version and paste the SHA-256 of the new win-64bit zip
@@ -73,14 +73,34 @@ const ytdlp = join(binDir, 'yt-dlp.exe');
 if (!force && existsSync(ytdlp)) {
   console.log(`ok      ${ytdlp}`);
 } else {
-  console.log(`fetch   ${YTDLP_URL}`);
-  const res = await fetch(YTDLP_URL, { redirect: 'follow' });
-  if (!res.ok || !res.body) throw new Error(`yt-dlp download failed: HTTP ${res.status}`);
+  // Resolve "latest" to a tag once, so the binary and its checksum come from the same release
+  const latest = await fetch(YTDLP_LATEST_URL, { redirect: 'manual' });
+  const tag = /\/tag\/([^/?#]+)$/.exec(latest.headers.get('location') ?? '')?.[1];
+  if (!tag) throw new Error(`Could not find the latest yt-dlp release (HTTP ${latest.status})`);
+  const base = `https://github.com/yt-dlp/yt-dlp/releases/download/${tag}`;
+
+  console.log(`fetch   ${base}/yt-dlp.exe`);
+  const [binRes, sumsRes] = await Promise.all([
+    fetch(`${base}/yt-dlp.exe`, { redirect: 'follow' }),
+    fetch(`${base}/SHA2-256SUMS`, { redirect: 'follow' }),
+  ]);
+  if (!binRes.ok) throw new Error(`yt-dlp download failed: HTTP ${binRes.status}`);
+  if (!sumsRes.ok) throw new Error(`yt-dlp checksum list download failed: HTTP ${sumsRes.status}`);
+  const expected = (await sumsRes.text())
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .find(([, name]) => name === 'yt-dlp.exe')?.[0];
+  if (!expected || !/^[0-9a-f]{64}$/i.test(expected)) throw new Error('yt-dlp.exe is missing from SHA2-256SUMS');
+  const bin = Buffer.from(await binRes.arrayBuffer());
+  const actual = createHash('sha256').update(bin).digest('hex');
+  if (actual !== expected.toLowerCase()) {
+    throw new Error(`yt-dlp checksum mismatch: expected ${expected}, got ${actual}`);
+  }
   const tmp = `${ytdlp}.download`;
-  await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp));
+  writeFileSync(tmp, bin);
   rmSync(ytdlp, { force: true });
   renameSync(tmp, ytdlp);
-  console.log(`saved   ${ytdlp} (${(statSync(ytdlp).size / 1048576).toFixed(1)} MB)`);
+  console.log(`saved   ${ytdlp} ${tag} (${(statSync(ytdlp).size / 1048576).toFixed(1)} MB, SHA-256 verified)`);
 }
 
 const aria2 = join(binDir, 'aria2c.exe');

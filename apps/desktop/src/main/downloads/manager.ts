@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { shell } from 'electron';
 import { StoredDownloadItemSchema, StoredQueueSchema } from '@grabbit/schemas';
-import { magnetFor, MAX_TORRENT_FILE_BYTES, parseMagnet, parseTorrentFile, type TorrentMetadata } from '@grabbit/utils';
+import { magnetFor, parseMagnet, type TorrentMetadata } from '@grabbit/utils';
 import type {
   AddHttpDownloadRequest,
   AddMediaDownloadRequest,
@@ -36,6 +36,7 @@ import { hashFile, moveFile, uniqueFileName } from './files';
 import { RateLimiter } from './throttle';
 import { insideWindow, ScheduleTracker } from './scheduler';
 import { executePostDownloadAutomation } from './automation';
+import { applySelection, categoryForTorrent, readTorrentFile, selectedBytes } from './torrent-files';
 
 const TICK_MS = 500;
 const FLUSH_MS = 250;
@@ -324,6 +325,7 @@ export class DownloadManager {
         kind: 'http',
         url,
         referrer: req.referrer?.trim() || undefined,
+        publicOnly: req.publicOnly || undefined,
         fileName: uniqueFileName(directory, guessed, this.reservedNames(directory)),
         fileNameLocked: Boolean(lockedName),
         directory,
@@ -411,37 +413,11 @@ export class DownloadManager {
     return join(this.deps.dataDir, 'torrents');
   }
 
-  /** Reads a .torrent file, refusing anything too large to be one. */
-  private async readTorrentFile(path: string): Promise<{ bytes: Buffer; meta: TorrentMetadata }> {
-    let info;
-    try {
-      info = await stat(path);
-    } catch {
-      throw new TorrentError('The .torrent file could not be found', 'TORRENT_INVALID');
-    }
-    if (!info.isFile() || info.size > MAX_TORRENT_FILE_BYTES) {
-      throw new TorrentError('That is not a .torrent file', 'TORRENT_INVALID');
-    }
-    const bytes = await readFile(path);
-    try {
-      return { bytes, meta: parseTorrentFile(bytes) };
-    } catch (err) {
-      throw new TorrentError(err instanceof Error ? err.message : 'Not a valid .torrent file', 'TORRENT_INVALID');
-    }
-  }
-
   private findTorrent(infoHash: string, unfinishedOnly: boolean): DownloadItem | undefined {
     for (const item of this.items.values()) {
       if (item.kind === 'torrent' && item.torrent?.infoHash === infoHash && (!unfinishedOnly || item.status !== 'completed')) return item;
     }
     return undefined;
-  }
-
-  /** Category from the torrent's biggest file (a season of episodes is video, not "other"). */
-  private categoryForTorrent(name: string, files: { path: string; length: number }[]): Category {
-    const biggest = [...files].sort((a, b) => b.length - a.length)[0];
-    const byFile = biggest ? categoryForFileName(biggest.path) : 'other';
-    return byFile !== 'other' ? byFile : categoryForFileName(name);
   }
 
   /**
@@ -451,7 +427,7 @@ export class DownloadManager {
    */
   private placeTorrent(item: DownloadItem, name: string, files: { path: string; length: number }[]): void {
     if (item.autoPlace) {
-      item.category = this.categoryForTorrent(name, files);
+      item.category = categoryForTorrent(name, files);
       item.directory = this.directoryFor(item.category);
     }
     const root = join(item.directory, name);
@@ -478,7 +454,7 @@ export class DownloadManager {
       };
     }
     if (!source.torrentPath) throw new TorrentError('Give a magnet link or a .torrent file', 'TORRENT_INVALID');
-    const { meta } = await this.readTorrentFile(source.torrentPath);
+    const { meta } = await readTorrentFile(source.torrentPath);
     return {
       infoHash: meta.infoHash,
       name: meta.name,
@@ -491,23 +467,6 @@ export class DownloadManager {
   }
 
   /**
-   * Marks which files to download. Returns them, or throws when the indices do not fit the
-   * torrent or select nothing.
-   */
-  private applySelection<T extends { length: number }>(files: T[], indices: number[] | undefined): (T & { selected: boolean })[] {
-    const wanted = indices ? new Set(indices) : null;
-    if (wanted && ([...wanted].some((i) => i >= files.length) || wanted.size === 0)) {
-      throw new TorrentError('That file selection does not match this torrent', 'TORRENT_INVALID');
-    }
-    return files.map((f, i) => ({ ...f, selected: !wanted || wanted.has(i) }));
-  }
-
-  /** Bytes the user actually asked for. */
-  private selectedBytes(files: { length: number; selected?: boolean }[]): number {
-    return files.reduce((sum, f) => sum + (f.selected !== false ? f.length : 0), 0);
-  }
-
-  /**
    * Chooses which files of a torrent to download. A running torrent switches straight away;
    * one that paused to ask stays paused until it is started.
    */
@@ -517,10 +476,10 @@ export class DownloadManager {
     if (!item || item.kind !== 'torrent' || !torrent) throw new TorrentError('No such torrent', 'TORRENT_INVALID');
     if (!torrent.files) throw new TorrentError('The file list is not known yet', 'TORRENT_INVALID');
     if (item.status === 'completed') throw new TorrentError('This torrent has finished', 'TORRENT_INVALID');
-    torrent.files = this.applySelection(torrent.files, selected);
+    torrent.files = applySelection(torrent.files, selected);
     torrent.needsSelection = false;
     torrent.pickFiles = false;
-    item.totalBytes = this.selectedBytes(torrent.files);
+    item.totalBytes = selectedBytes(torrent.files);
     await this.running.get(id)?.torrent?.setSelection();
     this.markDirty(item);
     this.persist();
@@ -553,7 +512,7 @@ export class DownloadManager {
           url = req.magnet.trim();
           source = 'magnet';
         } else if (req.torrentPath) {
-          const read = await this.readTorrentFile(req.torrentPath);
+          const read = await readTorrentFile(req.torrentPath);
           meta = read.meta;
           infoHash = meta.infoHash;
           name = meta.name;
@@ -572,11 +531,11 @@ export class DownloadManager {
         }
 
         const files: TorrentFileInfo[] | undefined = meta
-          ? this.applySelection(meta.files.map((f) => ({ ...f, completedLength: 0 })), req.selectedFiles)
+          ? applySelection(meta.files.map((f) => ({ ...f, completedLength: 0 })), req.selectedFiles)
           : undefined;
         // Filed by what was actually chosen: just the images of an album go to Images
         const chosen = files?.filter((f) => f.selected !== false);
-        const category: Category = meta && chosen ? this.categoryForTorrent(meta.name, chosen) : 'other';
+        const category: Category = meta && chosen ? categoryForTorrent(meta.name, chosen) : 'other';
         const queueId = req.queueId && this.queues.has(req.queueId) ? req.queueId : 'main';
         const item: DownloadItem = {
           id: randomUUID(),
@@ -588,7 +547,7 @@ export class DownloadManager {
           category,
           queueId,
           status: req.startPaused ? 'paused' : 'queued',
-          totalBytes: files ? this.selectedBytes(files) : null,
+          totalBytes: files ? selectedBytes(files) : null,
           receivedBytes: 0,
           speed: 0,
           eta: null,
@@ -1135,7 +1094,7 @@ export class DownloadManager {
     const firstTime = !torrent.files;
     torrent.name = info.name;
     if (firstTime) torrent.files = info.files.map((f) => ({ ...f, selected: true }));
-    item.totalBytes = this.selectedBytes(torrent.files!) || item.totalBytes;
+    item.totalBytes = selectedBytes(torrent.files!) || item.totalBytes;
     if (firstTime) {
       this.placeTorrent(item, info.name, info.files);
       item.autoPlace = false;

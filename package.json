@@ -7,9 +7,10 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint && eslint docs eslint.config.mjs",
+    "lint": "turbo run lint && eslint docs scripts eslint.config.mjs",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:coverage": "turbo run test -- --coverage.enabled --coverage.reporter=text-summary --coverage.reporter=json-summary && node scripts/coverage-summary.mjs",
     "clean": "turbo run clean",
     "build:desktop": "pnpm --filter grabbit-desktop dist",
     "build:desktop:dir": "pnpm --filter grabbit-desktop dist:dir",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "5.1.0",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.14.0",

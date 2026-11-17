@@ -14,7 +14,6 @@
     "sourceMap": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
     "paths": {
       "@grabbit/core": ["./packages/core/src"],
       "@grabbit/core/*": ["./packages/core/src/*"],

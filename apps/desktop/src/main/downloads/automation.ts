@@ -85,14 +85,27 @@ function formatShellVariable(raw: string | number, alreadyQuoted: boolean): stri
   return /[^A-Za-z0-9_./:-]/.test(clean) ? `'${clean.replace(/'/g, "'\\''")}'` : clean;
 }
 
+/** `filePath` -> `GRABBIT_FILE_PATH`. */
+export function automationEnvName(key: string): string {
+  return `GRABBIT_${key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`;
+}
+
 /**
  * Runs a user-defined shell command with variable interpolation.
  * Supports {filePath}, {fileName}, {directory}, {category}, {fileSize}.
+ *
+ * Interpolated values have shell metacharacters replaced, because file names come from web
+ * servers. The exact values are also set as environment variables (GRABBIT_FILE_PATH,
+ * GRABBIT_FILE_NAME, ...) for scripts to read, e.g. `$env:GRABBIT_FILE_PATH` in PowerShell or
+ * `"$GRABBIT_FILE_PATH"` in sh. (Not `%GRABBIT_FILE_PATH%` in cmd: cmd expands that before
+ * parsing, so the value would be read as shell syntax.)
  */
 export async function runCustomCommand(
   commandTemplate: string,
   variables: Record<string, string | number>
 ): Promise<{ success: boolean; output?: string; error?: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [key, val] of Object.entries(variables)) env[automationEnvName(key)] = String(val);
   let cmd = commandTemplate;
   for (const [key, val] of Object.entries(variables)) {
     const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -103,7 +116,7 @@ export async function runCustomCommand(
     });
   }
   try {
-    const { stdout, stderr } = await execAsync(cmd, { timeout: 30_000 });
+    const { stdout, stderr } = await execAsync(cmd, { timeout: 30_000, env });
     return { success: true, output: (stdout || stderr || '').trim().slice(0, 1000) };
   } catch (err) {
     logger.error({ err, command: cmd }, 'Custom post-download command failed');

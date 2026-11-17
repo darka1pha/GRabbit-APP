@@ -8,7 +8,9 @@ import type { MobileDownloadTask } from './download-manager';
 try {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
+      // shouldShowAlert was split into banner (heads-up) and list (notification shade)
+      shouldShowBanner: true,
+      shouldShowList: true,
       shouldPlaySound: true,
       shouldSetBadge: false,
     }),

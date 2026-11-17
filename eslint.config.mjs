@@ -14,6 +14,7 @@ export default tseslint.config(
       '**/build/**',
       '**/release/**',
       '**/coverage/**',
+      '**/dist-ci/**',
       '**/.turbo/**',
       '**/.expo/**',
       'apps/mobile/android/**',
@@ -68,6 +69,21 @@ export default tseslint.config(
   {
     files: ['apps/mobile/**/*.{ts,tsx}'],
     languageOptions: { globals: { ...globals.browser, __DEV__: 'readonly' } },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'expo-file-system',
+              message:
+                "Since Expo SDK 54 the old functions on 'expo-file-system' typecheck but throw at runtime. Import them from 'expo-file-system/legacy'.",
+            },
+            { name: 'expo-av', message: 'expo-av is no longer part of the Expo SDK. Use expo-video or expo-audio.' },
+          ],
+        },
+      ],
+    },
   },
 
   // React components

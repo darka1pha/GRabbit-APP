@@ -12,6 +12,11 @@ import { MediaProcessingWorker } from './queue/workers/media-worker.js';
 import { logger } from './observability/logger.js';
 import { TempStorageManager } from './services/temp-storage/temp-storage-manager.js';
 import { getConfig } from './config/env.js';
+import type { Server } from 'node:http';
+import { query } from './database/client.js';
+import { getRedisConnection } from './queue/redis.js';
+import { getMediaQueue } from './queue/queues.js';
+import { startHealthServer } from './observability/health-server.js';
 
 export class App {
   private bot: Bot<BotContext>;
@@ -19,6 +24,7 @@ export class App {
   private tempStorage: TempStorageManager;
   private staleCleanupTimer: NodeJS.Timeout | null = null;
   private isShuttingDown = false;
+  private healthServer: Server | null = null;
 
   constructor() {
     this.bot = createBot();
@@ -50,7 +56,23 @@ export class App {
       throw err;
     }
 
-    // 3. Start Background Media Worker
+    // 3. Health and metrics endpoint for Docker and monitoring
+    if (config.HEALTH_PORT > 0) {
+      this.healthServer = await startHealthServer(
+        {
+          checks: {
+            redis: () => getRedisConnection().ping(),
+            database: () => query('SELECT 1'),
+          },
+          jobCounts: () => getMediaQueue().getJobCounts(),
+          isShuttingDown: () => this.isShuttingDown,
+        },
+        config.HEALTH_PORT,
+        config.HEALTH_HOST
+      );
+    }
+
+    // 3b. Start Background Media Worker
     this.worker.start();
 
     // 4. Setup periodic stale temp files cleanup
@@ -86,6 +108,8 @@ export class App {
     if (this.staleCleanupTimer) {
       clearInterval(this.staleCleanupTimer);
     }
+
+    this.healthServer?.close();
 
     // Stop bot polling
     try {

@@ -9,40 +9,118 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Turborepo remote cache: set the TURBO_TOKEN secret and TURBO_TEAM variable to share task
+  # results between runs. Without them turbo just runs everything locally.
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
-  build:
-    name: Build & Test
-    runs-on: windows-latest
-
+  # Everything except the Electron app runs on Linux, which is faster and cheaper
+  packages:
+    name: Packages, bot & extension (Linux)
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 12.5.1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'pnpm'
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
 
-      - name: Run typecheck
-        run: pnpm typecheck
+      - name: Typecheck
+        run: pnpm turbo run typecheck --filter='!grabbit-desktop'
 
-      - name: Run lint
-        run: pnpm lint
+      - name: Lint
+        run: pnpm turbo run lint --filter='!grabbit-desktop' && pnpm exec eslint docs scripts eslint.config.mjs
 
       - name: Validate bot translations
         run: pnpm --filter @grabbit/telegram-bot run validate:translations
 
-      - name: Run tests
-        run: pnpm test
+      - name: Test with coverage
+        run: pnpm turbo run test --filter='!grabbit-desktop' -- --coverage.enabled --coverage.reporter=text-summary --coverage.reporter=json-summary
 
-      - name: Run build
-        run: pnpm build
+      - name: Build
+        run: pnpm turbo run build --filter='!grabbit-desktop'
+
+      - name: Coverage summary
+        if: always()
+        run: node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+  # The desktop app ships for Windows only and its tests use Windows shells and paths
+  desktop:
+    name: Desktop (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm turbo run typecheck --filter=grabbit-desktop
+
+      - name: Lint
+        run: pnpm turbo run lint --filter=grabbit-desktop
+
+      - name: Test with coverage
+        run: pnpm turbo run test --filter=grabbit-desktop -- --coverage.enabled --coverage.reporter=text-summary --coverage.reporter=json-summary
+
+      - name: Build
+        run: pnpm turbo run build --filter=grabbit-desktop
+
+      - name: Electron smoke test (launch, download a file end to end)
+        run: pnpm --filter grabbit-desktop exec vitest run --config vitest.e2e.config.mts
+
+      - name: Coverage summary
+        if: always()
+        shell: bash
+        run: node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+  # Catches native-config and bundling breakage before release day, without a full Gradle build
+  mobile:
+    name: Mobile prebuild & bundle (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate assets
+        run: node apps/mobile/scripts/make-assets.mjs
+
+      - name: Prebuild Android project (runs the config plugins)
+        run: pnpm --filter @grabbit/mobile exec expo prebuild --platform android --clean --no-install
+
+      - name: Check release signing was wired in
+        run: grep -q "GRABBIT_UPLOAD_STORE_FILE" apps/mobile/android/app/build.gradle
+
+      - name: Bundle JavaScript
+        run: pnpm --filter @grabbit/mobile exec expo export --platform android --output-dir dist-ci

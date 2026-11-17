@@ -104,5 +104,9 @@ ENV TEMP_DIR=/app/temp
 # Run as the image's built-in unprivileged user
 USER node
 
+# Liveness via the built-in health server (HEALTH_PORT; /readyz also checks Redis and PostgreSQL)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.HEALTH_PORT || 8090) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+
 # Run application
 CMD ["node", "dist/index.js"]

@@ -5,6 +5,10 @@ node_modules/
 # Turbo
 .turbo/
 
+# Test coverage and CI bundles
+coverage/
+dist-ci/
+
 # Build outputs
 dist/
 out/
