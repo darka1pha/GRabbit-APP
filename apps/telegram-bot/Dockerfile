@@ -3,7 +3,7 @@
 # ==============================================================================
 
 # Stage 1: Build stage
-FROM node:24-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -41,7 +41,7 @@ COPY apps/telegram-bot/scripts ./apps/telegram-bot/scripts
 RUN pnpm --filter @grabbit/telegram-bot build
 
 # Stage 2: Production runtime image
-FROM node:24-bookworm-slim AS runner
+FROM node:26-bookworm-slim AS runner
 
 WORKDIR /app
 
