@@ -56,6 +56,7 @@ export async function enqueueDownload(
     qualityId: string;
     statusMessageId?: number;
     isVip: boolean;
+    timeRange?: string;
   }
 ): Promise<JobRecord> {
   const jobRecord = await jobRepo.createJob({
@@ -90,6 +91,7 @@ export async function enqueueDownload(
       qualityId: jobRecord.qualityId,
       locale: jobRecord.localeSnapshot,
       userTier: job.isVip ? 'vip' : 'free',
+      ...(job.timeRange ? { timeRange: job.timeRange } : {}),
     },
     { jobId: jobRecord.id }
   );

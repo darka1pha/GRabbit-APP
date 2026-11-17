@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { parseShazamTrack as coreParseShazamTrack } from '@grabbit/core';
 import type { RecognizedTrack } from '../../shared/types';
 import { getMediaConfig } from './config';
 import { FFmpegRunner } from './ffmpeg-runner';
@@ -13,42 +14,8 @@ import { logger } from '../logger';
 
 const SAMPLE_SECONDS = 15;
 
- 
-type AnyRecord = any;
-
 export function parseShazamTrack(result: ShazamResponse): RecognizedTrack | null {
-  const track: AnyRecord = result.track;
-  if (!track?.title) return null;
-
-  const songSection = track.sections?.find((s: AnyRecord) => s.type === 'SONG');
-  const meta = (title: string): string | undefined =>
-    songSection?.metadata?.find((m: AnyRecord) => m.title === title)?.text;
-
-  let appleMusicUrl: string | undefined;
-  let spotifyUri: string | undefined;
-  for (const provider of track.hub?.providers ?? []) {
-    const uri = provider.actions?.[0]?.uri;
-    if (provider.type === 'APPLEMUSIC' && uri) appleMusicUrl = uri;
-    if (provider.type === 'SPOTIFY' && uri) spotifyUri = uri;
-  }
-  if (!appleMusicUrl) {
-    appleMusicUrl = track.hub?.options
-      ?.flatMap((o: AnyRecord) => o.actions ?? [])
-      .find((a: AnyRecord) => typeof a.uri === 'string' && a.uri.startsWith('https://music.apple.com'))?.uri;
-  }
-
-  return {
-    title: track.title,
-    artist: track.subtitle || track.artist || 'Unknown Artist',
-    album: track.album || meta('Album'),
-    releaseYear: track.year || meta('Released'),
-    genre: track.genres?.primary,
-    label: meta('Label'),
-    coverArtUrl: track.images?.coverarthq || track.images?.coverart,
-    shazamUrl: track.url,
-    appleMusicUrl,
-    spotifyUri,
-  };
+  return coreParseShazamTrack(result);
 }
 
 export class MusicRecognizer {

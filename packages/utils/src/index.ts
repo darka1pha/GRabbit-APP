@@ -1,4 +1,4 @@
-import { Language } from '@grabbit/types';
+import { Category, Language } from '@grabbit/types';
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
 
@@ -808,6 +808,105 @@ export function compareSemver(a: string, b: string): number {
     if (va < vb) return -1;
   }
   return 0;
+}
+
+/**
+ * Classify a filename/URL (and optional MIME type) into a GRabbit download category.
+ */
+export function detectCategory(urlOrFileName: string, mimeType?: string): Category {
+  const clean = urlOrFileName.toLowerCase().split('?')[0].split('#')[0];
+  if (mimeType) {
+    const mime = mimeType.toLowerCase();
+    if (mime.startsWith('video/')) return 'video';
+    if (mime.startsWith('audio/')) return 'music';
+    if (mime.startsWith('image/')) return 'images';
+    if (mime === 'application/pdf' || mime.startsWith('text/') || mime.includes('document')) return 'documents';
+    if (mime.includes('zip') || mime.includes('tar') || mime.includes('compressed') || mime.includes('archive') || mime.includes('rar') || mime.includes('7z')) {
+      return 'compressed';
+    }
+    if (mime.includes('msdownload') || mime.includes('x-msi') || mime.includes('android.package-archive') || mime.includes('iso9660')) {
+      return 'programs';
+    }
+  }
+  if (/\.(mp4|mkv|webm|avi|mov|flv|wmv|m4v|3gp|ts|m2ts|ogv)$/i.test(clean)) return 'video';
+  if (/\.(mp3|m4a|flac|wav|aac|ogg|opus|wma|aiff|alac|ape|mka)$/i.test(clean)) return 'music';
+  if (/\.(pdf|docx?|xlsx?|pptx?|epub|mobi|txt|rtf|odt|ods|odp|csv|md|djvu)$/i.test(clean)) return 'documents';
+  if (/\.(zip|rar|7z|tar|gz|tgz|bz2|xz|zst|cab|lz|lzma)$/i.test(clean)) return 'compressed';
+  if (/\.(apk|xapk|aab|exe|msi|msix|appx|dmg|pkg|deb|rpm|appimage|bat|iso|img|jar)$/i.test(clean)) return 'programs';
+  if (/\.(jpe?g|png|gif|webp|svg|bmp|ico|tiff?|heic|avif|psd|raw)$/i.test(clean)) return 'images';
+  return 'other';
+}
+
+function timeToSeconds(ts: string): number | null {
+  const parts = ts.split(':').map((p) => Number(p));
+  if (parts.some((n) => !Number.isInteger(n) || n < 0)) return null;
+  if (parts.length === 2) {
+    const [m, s] = parts;
+    if (s >= 60) return null;
+    return m * 60 + s;
+  }
+  if (parts.length === 3) {
+    const [h, m, s] = parts;
+    if (m >= 60 || s >= 60) return null;
+    return h * 3600 + m * 60 + s;
+  }
+  return null;
+}
+
+/**
+ * Parses a time range such as "01:10-02:05" or "00:01:10-00:02:05".
+ * Returns null if malformed or if end <= start.
+ */
+export function parseTimeRange(raw: string): { start: string; end: string; formatted: string } | null {
+  const trimmed = raw.trim();
+  const match = /^(\d{1,3}(?::\d{2}){1,2})\s*-\s*(\d{1,3}(?::\d{2}){1,2})$/.exec(trimmed);
+  if (!match) return null;
+  const startSec = timeToSeconds(match[1]);
+  const endSec = timeToSeconds(match[2]);
+  if (startSec === null || endSec === null || endSec <= startSec) return null;
+  return { start: match[1], end: match[2], formatted: `${match[1]}-${match[2]}` };
+}
+
+/**
+ * Extracts the first HTTP(S) URL and an optional trailing time range (e.g. "https://youtu.be/abc 01:10-02:05").
+ */
+export function extractUrlAndTimeRange(text?: string | null): { url: string | null; timeRange?: string } {
+  if (!text) return { url: null };
+  const urlMatch = /https?:\/\/[^\s<>"{}|\\^`[\]]+/i.exec(text);
+  if (!urlMatch) return { url: null };
+  const url = urlMatch[0].replace(/[.,!;?)]+$/, '');
+  const remainder = text.slice(urlMatch.index + urlMatch[0].length);
+  const rangeMatch = /(?:^|\s)(\d{1,3}(?::\d{2}){1,2}\s*-\s*\d{1,3}(?::\d{2}){1,2})(?:\s|$)/.exec(remainder);
+  const parsedRange = rangeMatch ? parseTimeRange(rangeMatch[1]) : null;
+  return parsedRange ? { url, timeRange: parsedRange.formatted } : { url };
+}
+
+/**
+ * Parses a standard SHA256SUMS.txt file into a lowercase filename -> sha256 map.
+ */
+export function parseSha256Sums(content: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of content.split(/\r?\n/)) {
+    const m = /^([a-fA-F0-9]{64})\s+\*?(.+)$/.exec(line.trim());
+    if (m) {
+      map.set(m[2].trim(), m[1].toLowerCase());
+    }
+  }
+  return map;
+}
+
+/**
+ * Matches a hostname against an exact domain ("example.com") or wildcard ("*.example.com").
+ */
+export function matchDomainPattern(hostname: string, pattern: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  const pat = pattern.trim().toLowerCase();
+  if (!host || !pat) return false;
+  if (pat.startsWith('*.')) {
+    const suffix = pat.slice(2);
+    return host === suffix || host.endsWith('.' + suffix);
+  }
+  return host === pat || host.endsWith('.' + pat);
 }
 
 export * from './i18n';

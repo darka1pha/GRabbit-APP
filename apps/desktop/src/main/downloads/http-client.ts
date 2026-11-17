@@ -1,6 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import http, { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import https from 'node:https';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import { isPrivateHost } from '@grabbit/core';
 import { HttpStatusError, InvalidUrlError, JobCancelledError } from '../media/errors';
 
@@ -52,6 +53,16 @@ interface AgentSet {
 let agents = createAgents('');
 
 function createAgents(proxy: string): AgentSet {
+  if (/^socks(?:4a?|5h?):\/\//i.test(proxy)) {
+    const socks = new SocksProxyAgent(proxy);
+    const guarded = new SocksProxyAgent(proxy, { lookup: publicOnlyLookup as never } as ConstructorParameters<typeof SocksProxyAgent>[1]);
+    return {
+      http: socks as unknown as http.Agent,
+      https: socks as unknown as https.Agent,
+      publicHttp: guarded as unknown as http.Agent,
+      publicHttps: guarded as unknown as https.Agent,
+    };
+  }
   const proxyEnv = proxy ? { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: 'localhost,127.0.0.1,::1' } : undefined;
   const common = { keepAlive: true, maxSockets: 256, ...(proxyEnv ? { proxyEnv } : {}) };
   // Through a proxy the proxy resolves names, so only the name itself can be checked (per hop)

@@ -7,6 +7,7 @@ import type { DownloadResult } from '../media/platforms/types';
 export interface MediaTaskContext {
   router: PlatformRouter;
   tempRoot: string;
+  speedLimitBytesPerSec?: number;
   onUpdate(): void;
 }
 
@@ -65,6 +66,8 @@ export class MediaDownloadTask {
       subtitleLang: media.subtitleLang,
       embedChapters: media.embedChapters,
       sponsorBlock: media.sponsorBlock,
+      timeRange: media.timeRange,
+      speedLimitBytesPerSec: this.ctx.speedLimitBytesPerSec,
       signal,
       onStage: (stage) => {
         item.status = 'processing';

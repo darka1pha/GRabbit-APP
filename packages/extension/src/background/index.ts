@@ -112,9 +112,45 @@ async function checkExtensionUpdate(autoInstall = true): Promise<ExtensionUpdate
   }
 }
 
-// In-memory tab media registry: tabId -> DetectedMediaStream[]
+// Per-tab media registry: in-memory + chrome.storage.session so streams survive MV3 worker sleep
 const tabMediaMap = new Map<number, DetectedMediaStream[]>();
 const interceptedDownloadIds = new Set<number>();
+
+async function getTabMedia(tabId: number): Promise<DetectedMediaStream[]> {
+  const mem = tabMediaMap.get(tabId);
+  if (mem) return mem;
+  try {
+    const key = `tab_media_${tabId}`;
+    const stored = await chrome.storage.session?.get(key);
+    const list = stored?.[key];
+    if (Array.isArray(list)) {
+      tabMediaMap.set(tabId, list);
+      return list;
+    }
+  } catch {}
+  return [];
+}
+
+function setTabMedia(tabId: number, list: DetectedMediaStream[]): void {
+  tabMediaMap.set(tabId, list);
+  try {
+    void chrome.storage.session?.set({ [`tab_media_${tabId}`]: list });
+  } catch {}
+}
+
+function clearTabMedia(tabId: number): void {
+  tabMediaMap.delete(tabId);
+  try {
+    void chrome.storage.session?.remove(`tab_media_${tabId}`);
+  } catch {}
+}
+
+try {
+  chrome.tabs?.onRemoved?.addListener((tabId) => clearTabMedia(tabId));
+  chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
+    if (changeInfo.url) clearTabMedia(tabId);
+  });
+} catch {}
 
 // Initialize context menus, connection badge, and inject content scripts into open tabs on install/update
 chrome.runtime.onInstalled.addListener(() => {
@@ -336,11 +372,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
 
       const items: RpcAddDownloadRequest[] = [];
-      for (const link of links) {
+      const cookieCache = new Map<string, string>();
+      for (const link of links.slice(0, 200)) {
+        let cookies = '';
+        if (!/^magnet:/i.test(link.url)) {
+          try {
+            const origin = new URL(link.url).origin;
+            if (!cookieCache.has(origin)) {
+              cookieCache.set(origin, await getCookiesHeader(link.url, config));
+            }
+            cookies = cookieCache.get(origin) || '';
+          } catch {}
+        }
         items.push({
           url: link.url,
           fileName: link.fileName,
           referrer: tab.url,
+          ...(cookies ? { cookies } : {}),
           userAgent: navigator.userAgent,
         });
       }
@@ -494,6 +542,8 @@ const PRIVILEGED_MESSAGES = new Set<string>([
   'CHECK_CONNECTION',
   'GET_PAGE_MEDIA',
   'DOWNLOAD_BATCH',
+  'GET_DOWNLOADS_STATUS',
+  'CONTROL_DOWNLOAD',
   'CHECK_EXTENSION_UPDATE',
   'RELOAD_EXTENSION',
 ]);
@@ -520,21 +570,22 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     // A content script may only report media for its own tab
     const currentTabId = trusted ? payload.tabId || tabId : tabId;
 
-    if (!tabMediaMap.has(currentTabId)) {
-      tabMediaMap.set(currentTabId, []);
-    }
-    const list = tabMediaMap.get(currentTabId)!;
-    if (!list.some((m) => m.url === media.url)) {
-      list.push(media);
-    }
-    sendResponse({ ok: true, count: list.length });
+    void getTabMedia(currentTabId).then((existing) => {
+      const list = [...existing];
+      if (!list.some((m) => m.url === media.url)) {
+        list.push(media);
+        setTabMedia(currentTabId, list);
+      }
+      sendResponse({ ok: true, count: list.length });
+    });
     return true;
   }
 
   if (message.type === 'GET_PAGE_MEDIA') {
     const targetTabId = (message.payload as { tabId?: number })?.tabId || tabId;
-    const list = tabMediaMap.get(targetTabId) || [];
-    sendResponse({ ok: true, media: list });
+    void getTabMedia(targetTabId).then((list) => {
+      sendResponse({ ok: true, media: list });
+    });
     return true;
   }
 
@@ -638,6 +689,27 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
           }
         }, 600);
       }
+    })();
+    return true;
+  }
+
+  if (message.type === 'GET_DOWNLOADS_STATUS') {
+    void (async () => {
+      const config = await loadExtensionConfig();
+      const rpc = new ExtensionRpcClient(config);
+      const res = await rpc.listDownloads();
+      sendResponse(res);
+    })();
+    return true;
+  }
+
+  if (message.type === 'CONTROL_DOWNLOAD') {
+    const payload = message.payload as { action: 'pause' | 'resume'; id: string };
+    void (async () => {
+      const config = await loadExtensionConfig();
+      const rpc = new ExtensionRpcClient(config);
+      const res = payload.action === 'pause' ? await rpc.pauseDownloads([payload.id]) : await rpc.resumeDownloads([payload.id]);
+      sendResponse(res);
     })();
     return true;
   }

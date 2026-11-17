@@ -109,6 +109,10 @@ const envSchema = z.object({
   TELEGRAM_API_ROOT: z.string().optional(),
   TELEGRAM_API_ID: z.string().optional(),
   TELEGRAM_API_HASH: z.string().optional(),
+  TELEGRAM_LOCAL_FILES: z.coerce.boolean().default(false),
+  WEBHOOK_URL: z.string().url().optional(),
+  WEBHOOK_PORT: z.coerce.number().int().min(0).max(65535).default(0),
+  WEBHOOK_SECRET: z.string().optional(),
   // Health/metrics server (see observability/health-server.ts); 0 turns it off
   HEALTH_PORT: z.coerce.number().int().min(0).max(65535).default(8090),
   HEALTH_HOST: z.string().default('127.0.0.1'),

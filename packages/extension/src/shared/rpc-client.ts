@@ -1,4 +1,5 @@
 import type {
+  DownloadItem,
   RpcAddBatchRequest,
   RpcAddDownloadRequest,
   RpcAddDownloadResponse,
@@ -163,6 +164,50 @@ export class ExtensionRpcClient {
         };
       }
       return (await res.json()) as { success: boolean; installedVersion?: string };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  public async listDownloads(timeoutMs = 3000): Promise<{ ok: boolean; items?: DownloadItem[]; error?: string }> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(`${this.baseUrl()}/downloads/list`, {
+        method: 'GET',
+        headers: this.headers(),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      const data = (await res.json()) as { items?: DownloadItem[] };
+      return { ok: true, items: Array.isArray(data.items) ? data.items : [] };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  public async pauseDownloads(ids: string[]): Promise<{ success: boolean; error?: string }> {
+    return this.postControl('/downloads/pause', { ids });
+  }
+
+  public async resumeDownloads(ids: string[]): Promise<{ success: boolean; error?: string }> {
+    return this.postControl('/downloads/resume', { ids });
+  }
+
+  private async postControl(path: string, body: unknown, timeoutMs = 4000): Promise<{ success: boolean; error?: string }> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(`${this.baseUrl()}${path}`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      return { success: true };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }

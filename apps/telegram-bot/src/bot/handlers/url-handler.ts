@@ -1,4 +1,5 @@
 import { BotContext } from '../context.js';
+import { extractUrlAndTimeRange } from '@grabbit/core';
 import { extractUrlFromText } from '../../platforms/url-parser.js';
 import { PlatformRouter } from '../../platforms/platform-router.js';
 import { formatDuration } from '../../i18n/locale-resolver.js';
@@ -64,10 +65,15 @@ export function singleItemMetadata(parent: PlatformMetadata, item: MediaItem): P
  */
 export function buildFormatPickerView(
   ctx: BotContext,
-  metadata: PlatformMetadata
+  metadata: PlatformMetadata,
+  timeRange?: string
 ): { text: string; keyboard?: InlineKeyboard } {
   const item = metadata.items[0];
-  let text = `${buildMediaPreviewText(ctx, metadata)}\n\n`;
+  let text = `${buildMediaPreviewText(ctx, metadata)}\n`;
+  if (timeRange) {
+    text += `✂️ <code>${escapeHtml(timeRange)}</code>\n`;
+  }
+  text += '\n';
 
   if (!item.isDownloadable) {
     text += `<b>${escapeHtml(ctx.t(unavailableReasonKey(metadata.platform)))}</b>`;
@@ -80,6 +86,7 @@ export function buildFormatPickerView(
     platform: metadata.platform,
     metadata,
     ownerId: ctx.from?.id,
+    ...(timeRange ? { timeRange } : {}),
   });
 
   text += escapeHtml(ctx.t('download-select-format'));
@@ -123,7 +130,8 @@ export async function processMediaUrl(
   ctx: BotContext,
   extracted: string,
   router?: PlatformRouter,
-  jobRepo?: JobRepository
+  jobRepo?: JobRepository,
+  timeRange?: string
 ): Promise<void> {
   const platformRouter = router || new PlatformRouter();
   const jobs = jobRepo || new JobRepository();
@@ -177,6 +185,7 @@ export async function processMediaUrl(
         qualityId,
         statusMessageId: waitMsg.message_id,
         isVip,
+        timeRange,
       });
 
       const queuedText = ctx.t('download-queued', { position: activeCount + 1 });
@@ -193,10 +202,14 @@ export async function processMediaUrl(
     }
 
     // The preview's cached URL is the link the user sent (adapters may normalize item URLs)
-    const { text, keyboard } = buildFormatPickerView(ctx, {
-      ...metadata,
-      items: [{ ...firstItem, url: extracted }],
-    });
+    const { text, keyboard } = buildFormatPickerView(
+      ctx,
+      {
+        ...metadata,
+        items: [{ ...firstItem, url: extracted }],
+      },
+      timeRange
+    );
     await ctx.api.editMessageText(ctx.chat!.id, waitMsg.message_id, text, {
       parse_mode: 'HTML',
       reply_markup: keyboard,
@@ -221,7 +234,8 @@ export function createUrlHandler(
     const mentionPattern = botUsername ? new RegExp(`^@${botUsername}\\b\\s*`, 'i') : null;
     const mentionsBot = mentionPattern ? mentionPattern.test(text) : false;
 
-    const extracted = extractUrlFromText(text);
+    const { url: extractedWithRange, timeRange } = extractUrlAndTimeRange(text);
+    const extracted = extractedWithRange ?? extractUrlFromText(text);
     if (!extracted) {
       // In private chats any text is a search (a leading @mention comes from the Inline Search
       // button). In groups, only messages that start by mentioning the bot are searches.
@@ -237,7 +251,7 @@ export function createUrlHandler(
       return;
     }
 
-    await processMediaUrl(ctx, extracted, router, jobRepo);
+    await processMediaUrl(ctx, extracted, router, jobRepo, timeRange);
   };
 }
 
@@ -251,12 +265,15 @@ export function createDownloadCommandHandler(router: PlatformRouter, jobRepo?: J
     const reply = ctx.message?.reply_to_message;
     const replyText = reply ? reply.text || reply.caption || '' : '';
 
-    const extracted = extractUrlFromText(ownText) || extractUrlFromText(replyText);
+    const ownParsed = extractUrlAndTimeRange(ownText);
+    const replyParsed = ownParsed.url ? null : extractUrlAndTimeRange(replyText);
+    const extracted = ownParsed.url ?? replyParsed?.url ?? extractUrlFromText(ownText) ?? extractUrlFromText(replyText);
+    const cmdTimeRange = ownParsed.timeRange ?? replyParsed?.timeRange;
     if (!extracted) {
       await ctx.reply(ctx.t('dl-usage'));
       return;
     }
 
-    await processMediaUrl(ctx, extracted, router, jobRepo);
+    await processMediaUrl(ctx, extracted, router, jobRepo, cmdTimeRange);
   };
 }

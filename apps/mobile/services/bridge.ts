@@ -15,7 +15,7 @@ import {
   audioOptions,
   parseTrackPage,
 } from '@grabbit/core';
-import { GrabbitApiClient } from '@grabbit/api';
+import { DesktopRpcClient, GrabbitApiClient } from '@grabbit/api';
 import { mobileSettingsManager } from './settings-manager';
 
 /**
@@ -192,31 +192,23 @@ export class MobileBridgeService {
     path: string,
     init: { method?: 'GET' | 'POST'; body?: unknown; timeoutMs?: number } = {}
   ): Promise<{ ok: boolean; data?: T; error?: string }> {
-    const cfg = this.getDesktopRpcConfig();
-    if (!cfg) {
+    const { desktopBridge } = mobileSettingsManager.getSettings();
+    if (!desktopBridge.enabled || !desktopBridge.host) {
       return { ok: false, error: 'Desktop RPC Bridge is not enabled in Settings.' };
     }
-    try {
-      const res = await fetchWithTimeout(
-        `${cfg.baseUrl}${path}`,
-        {
-          method: init.method ?? 'GET',
-          headers: cfg.headers,
-          ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-        },
-        init.timeoutMs ?? 2500
-      );
-      const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-      if (!res.ok) {
-        return { ok: false, error: data?.error || `Desktop returned HTTP ${res.status}` };
-      }
-      return { ok: true, data: data ?? ({} as T) };
-    } catch (err: any) {
+    const client = new DesktopRpcClient({
+      host: desktopBridge.host,
+      port: desktopBridge.port || 31542,
+      token: desktopBridge.token,
+    });
+    const res = await client.request<T>(path, init);
+    if (!res.ok) {
       return {
         ok: false,
-        error: err?.message || `Could not reach Desktop at ${cfg.baseUrl}`,
+        error: res.status ? (res.error || `Desktop returned HTTP ${res.status}`) : `Could not reach Desktop at ${client.baseUrl}`,
       };
     }
+    return { ok: true, data: res.data };
   }
 
   /**

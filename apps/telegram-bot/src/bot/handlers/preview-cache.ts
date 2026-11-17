@@ -13,6 +13,8 @@ export interface CachedMediaPreview {
   itemKeys?: string[];
   /** Collections (albums/playlists): ids of tracks already queued via "Download all". */
   queuedIds?: string[];
+  /** Optional clip range (e.g. "01:10-02:05"). */
+  timeRange?: string;
 }
 
 const REDIS_PREFIX = 'grabbit:preview:';

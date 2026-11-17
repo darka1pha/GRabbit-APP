@@ -118,6 +118,7 @@ download-select-format = 👇 فرمت را انتخاب کنید:
 btn-audio = 🎵 صدا ({ $ext })
 btn-audio-original = 🎧 صدا ({ $ext }) · بهترین کیفیت
 btn-video = 🎬 ویدیو ({ $quality })
+btn-subtitles = 📝 زیرنویس (.srt)
 btn-cancel = ❌ لغو
 btn-close = ✖️ بستن
 
@@ -181,6 +182,7 @@ spotify-send-track = ℹ️ این ربات فعلاً نمی‌تواند آل�
 collection-meta = 👤 { $author } · 🌐 { $platform } · { $count } آهنگ
 collection-hint = برای باز کردن هر آهنگ شماره‌اش را بزنید، یا همه را به‌صورت صوتی دانلود کنید.
 collection-btn-all = ⬇️ دانلود همه به‌صورت صوتی ({ $count })
+collection-btn-all-video = 🎬 دانلود همه به‌صورت ویدیو ({ $count })
 collection-btn-next = ⬇️ دانلود دستهٔ بعدی ({ $count } مانده)
 collection-queued = ✅ { $count } مورد در صف قرار گرفت. هم‌زمان { $limit } دانلود مجاز است؛ بعد از تمام شدن این‌ها دوباره بزنید تا { $left } مورد باقی‌مانده هم دانلود شود.
 collection-all-queued = ✅ { $count } مورد در صف قرار گرفت. همهٔ آهنگ‌ها اضافه شدند.

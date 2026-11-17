@@ -88,7 +88,7 @@ export function MediaPlayerModal({
   useEffect(() => {
     if (!audioSource) return;
     let cancelled = false;
-    void setAudioModeAsync({ playsInSilentMode: true })
+    void setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true })
       .catch((err) => console.warn('Audio mode error:', err))
       .finally(() => {
         if (!cancelled) audioPlayer.play();
@@ -234,6 +234,7 @@ export function MediaPlayerModal({
               style={styles.videoPlayer}
               nativeControls={false}
               contentFit="contain"
+              allowsPictureInPicture
             />
           ) : (
             <View style={styles.audioArtworkContainer}>

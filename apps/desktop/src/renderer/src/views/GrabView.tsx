@@ -23,7 +23,7 @@ import {
 import type { AddMediaDownloadRequest, ClipboardLink, MediaItem, MediaOption, PlatformMetadata } from '../../../shared/types';
 import { errorText, useI18n } from '../i18n';
 import { api, useApp } from '../state';
-import { isMagnetLink } from '@grabbit/utils';
+import { isMagnetLink, parseTimeRange } from '@grabbit/utils';
 import { formatBytes, formatDuration, isHttpUrl, looksLikeDirectFile } from '../format';
 import { Thumb } from '../components/ui';
 
@@ -46,6 +46,7 @@ interface MediaExtrasOptions {
   subtitleLang: string;
   embedChapters: boolean;
   sponsorBlock: boolean;
+  timeRange: string;
 }
 
 const DEFAULT_EXTRAS: MediaExtrasOptions = {
@@ -53,6 +54,7 @@ const DEFAULT_EXTRAS: MediaExtrasOptions = {
   subtitleLang: 'en',
   embedChapters: false,
   sponsorBlock: false,
+  timeRange: '',
 };
 
 function sortGrabHistory(items: RecentGrabItem[]): RecentGrabItem[] {
@@ -108,6 +110,7 @@ function toRequest(
     ...(extras?.subtitles ? { subtitles: true, subtitleLang: extras.subtitleLang.trim() || 'en' } : {}),
     ...(extras?.embedChapters ? { embedChapters: true } : {}),
     ...(extras?.sponsorBlock ? { sponsorBlock: true } : {}),
+    ...(extras?.timeRange?.trim() && parseTimeRange(extras.timeRange) ? { timeRange: parseTimeRange(extras.timeRange)!.formatted } : {}),
   };
 }
 
@@ -472,7 +475,12 @@ function ExtrasBar({
   onChange(next: MediaExtrasOptions): void;
 }) {
   const { t } = useI18n();
-  const activeCount = (extras.subtitles ? 1 : 0) + (extras.embedChapters ? 1 : 0) + (extras.sponsorBlock ? 1 : 0);
+  const activeCount =
+    (extras.subtitles ? 1 : 0) +
+    (extras.embedChapters ? 1 : 0) +
+    (extras.sponsorBlock ? 1 : 0) +
+    (extras.timeRange.trim() ? 1 : 0);
+  const rangeInvalid = extras.timeRange.trim().length > 0 && !parseTimeRange(extras.timeRange);
 
   return (
     <div className="card extras-bar">
@@ -520,6 +528,16 @@ function ExtrasBar({
               onChange={(e) => onChange({ ...extras, sponsorBlock: e.target.checked })}
             />
             <span>{t('grab.sponsorBlock')}</span>
+          </label>
+          <label className="extras-lang">
+            <span className="small muted">{t('grab.timeRange')}</span>
+            <input
+              className="input mono"
+              value={extras.timeRange}
+              placeholder={t('grab.timeRangePlaceholder')}
+              onChange={(e) => onChange({ ...extras, timeRange: e.target.value })}
+            />
+            {rangeInvalid && <span className="small" style={{ color: 'var(--danger)' }}>{t('grab.timeRangeInvalid')}</span>}
           </label>
         </div>
       )}

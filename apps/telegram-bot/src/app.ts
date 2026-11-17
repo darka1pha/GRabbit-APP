@@ -1,4 +1,5 @@
-import { Bot } from 'grammy';
+import { Bot, webhookCallback } from 'grammy';
+import { createServer } from 'node:http';
 import { BotContext } from './bot/context.js';
 import { createBot } from './bot/create-bot.js';
 import { registerBotCommands } from './bot/commands/register-commands.js';
@@ -25,6 +26,7 @@ export class App {
   private staleCleanupTimer: NodeJS.Timeout | null = null;
   private isShuttingDown = false;
   private healthServer: Server | null = null;
+  private webhookServer: Server | null = null;
 
   constructor() {
     this.bot = createBot();
@@ -80,22 +82,40 @@ export class App {
       this.tempStorage.cleanupStaleDirectories(config.TEMP_FILE_TTL_MINUTES);
     }, 10 * 60 * 1000).unref();
 
-    // 5. Start Telegram Bot Long Polling & Register Scoped Command Menus
+    // 5. Start Telegram Bot (Webhook if configured, else Long Polling) & Register Scoped Command Menus
     await registerBotCommands(this.bot);
 
-    this.bot.start({
-      allowed_updates: ['message', 'callback_query', 'inline_query', 'chosen_inline_result'],
-      onStart: (botInfo) => {
-        logger.info(
-          {
-            botUsername: botInfo.username,
-            botId: botInfo.id,
-            supportsInlineQueries: botInfo.supports_inline_queries,
-          },
-          '🐰 g(Rabbit) Telegram Bot is now running and listening for updates!'
-        );
-      },
-    });
+    if (config.WEBHOOK_URL && config.WEBHOOK_PORT > 0) {
+      const handleWebhook = webhookCallback(this.bot, 'http', {
+        secretToken: config.WEBHOOK_SECRET,
+      });
+      this.webhookServer = createServer((req, res) => {
+        void handleWebhook(req, res);
+      });
+      await new Promise<void>((resolve, reject) => {
+        this.webhookServer!.once('error', reject);
+        this.webhookServer!.listen(config.WEBHOOK_PORT, '0.0.0.0', () => resolve());
+      });
+      await this.bot.api.setWebhook(config.WEBHOOK_URL, {
+        secret_token: config.WEBHOOK_SECRET,
+        allowed_updates: ['message', 'callback_query', 'inline_query', 'chosen_inline_result'],
+      });
+      logger.info({ webhookUrl: config.WEBHOOK_URL, port: config.WEBHOOK_PORT }, '🐰 g(Rabbit) Telegram Bot listening via webhook!');
+    } else {
+      this.bot.start({
+        allowed_updates: ['message', 'callback_query', 'inline_query', 'chosen_inline_result'],
+        onStart: (botInfo) => {
+          logger.info(
+            {
+              botUsername: botInfo.username,
+              botId: botInfo.id,
+              supportsInlineQueries: botInfo.supports_inline_queries,
+            },
+            '🐰 g(Rabbit) Telegram Bot is now running and listening for updates!'
+          );
+        },
+      });
+    }
 
     this.registerSignalHandlers();
   }
@@ -110,6 +130,7 @@ export class App {
     }
 
     this.healthServer?.close();
+    this.webhookServer?.close();
 
     // Stop bot polling
     try {

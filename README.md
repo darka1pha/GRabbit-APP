@@ -27,7 +27,7 @@ All official builds are compiled automatically via GitHub Actions and published 
 | **Windows Installer** *(Recommended)* | Full NSIS Setup (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-Setup-1.2.1.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Setup-1.2.1.exe) |
 | **Windows Portable** | Zero-Install Standalone (`.exe`) | Windows 10 / 11 (64-bit) | [**Download `GRabbit-1.2.1-portable.exe`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-1.2.1-portable.exe) |
 | **Android Mobile App** | Universal APK (`.apk`) | Android 8.0+ / Xiaomi MIUI | [**Download `GRabbit-v1.2.1.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.1.apk) |
-| **Browser Extension** | Manifest V3 Unpacked (`.zip`) | Chrome, Edge, Brave, Opera | [**Download `GRabbit-Chrome-Extension-v1.2.1.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.1.zip) |
+| **Browser Extension** | Manifest V3 Unpacked (`.zip`) | Chrome, Edge, Brave, Opera, Firefox | [**Chrome `.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Chrome-Extension-v1.2.1.zip) · [**Firefox `.zip`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-Firefox-Extension-v1.2.1.zip) |
 | **Checksums** | SHA-256 Hashes (`.txt`) | All Platforms | [**View `SHA256SUMS.txt`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/SHA256SUMS.txt) |
 
 > 📦 Browse all versions and release notes at **[github.com/darka1pha/GRabbit-APP/releases](https://github.com/darka1pha/GRabbit-APP/releases)**.
@@ -65,7 +65,15 @@ All official builds are compiled automatically via GitHub Actions and published 
 ### 3. Android Mobile App (`.apk`)
 1. Download [**`GRabbit-v1.2.1.apk`**](https://github.com/darka1pha/GRabbit-APP/releases/latest/download/GRabbit-v1.2.1.apk) on your Android device and tap to install *(allow "Install unknown apps" if prompted)*.
 2. **Share from Any App:** While watching a video in YouTube, Instagram, TikTok, or X, tap **Share → GRabbit** to inspect qualities and start downloading immediately.
-3. **Desktop Wi-Fi Sync (Optional):** Go to **Settings → Desktop RPC Bridge**, enter your PC's local LAN IP and port `31542`, and send heavy downloads straight from your phone to your PC.
+3. **Desktop Wi-Fi Sync (Optional):** Go to **Settings → Desktop RPC Bridge**, scan the QR code from Desktop Settings (or enter your PC's local LAN IP and port `31542`), and send heavy downloads straight from your phone to your PC.
+
+### 4. Telegram Bot (`apps/telegram-bot`)
+1. Copy `apps/telegram-bot/.env.example` to `apps/telegram-bot/.env` and set `BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `ADMIN_USER_IDS`.
+2. Start the full stack (Bot + BullMQ + Redis + PostgreSQL + Local Bot API for up to 2 GB files):
+   ```bash
+   cd apps/telegram-bot
+   docker compose up -d --build
+   ```
 
 ---
 
@@ -96,8 +104,8 @@ GRabbitApp/
 ## 💻 Development & Building from Source
 
 ### Prerequisites
-- **Node.js** `>= 20` (Node 22 LTS recommended)
-- **pnpm** `>= 9` (`corepack enable pnpm`)
+- **Node.js** `>= 24` (pinned in [`.nvmrc`](.nvmrc))
+- **pnpm** `>= 12` (`corepack enable pnpm`)
 
 ### Install & Run
 ```bash

@@ -2,6 +2,8 @@ export * from './platforms/track-matcher';
 export * from './platforms/track-page';
 export * from './platforms/url-parser';
 export * from './platforms/media-options';
+export * from './platforms/shazam';
+export * from './platforms/schedule';
 export * from './network/private-host';
 
 import { PlatformId } from '@grabbit/types';

@@ -169,6 +169,8 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
   const [updating, setUpdating] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [newRuleDomain, setNewRuleDomain] = useState('');
+  const [newRuleConns, setNewRuleConns] = useState('4');
   const [searchQuery, setSearchQuery] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [matchedSections, setMatchedSections] = useState<Set<string>>(() => new Set());
@@ -520,6 +522,60 @@ export function SettingsView({ initialSection }: { initialSection?: string } = {
           </Setting>
           <Setting label={t('set.userAgent')} stack>
             <LazyInput className="mono" value={s.userAgent} onSave={(v) => void save({ userAgent: v })} />
+          </Setting>
+          <Setting label={t('set.siteRules')} hint={t('set.siteRulesHint')} stack>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+              <div className="row" style={{ gap: 8 }}>
+                <input
+                  className="input mono grow"
+                  value={newRuleDomain}
+                  placeholder="*.example.com"
+                  onChange={(e) => setNewRuleDomain(e.target.value)}
+                />
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={32}
+                  style={{ width: 84 }}
+                  value={newRuleConns}
+                  onChange={(e) => setNewRuleConns(e.target.value)}
+                  title={t('set.siteMaxConn')}
+                />
+                <button
+                  type="button"
+                  className="btn sm primary"
+                  onClick={() => {
+                    const dom = newRuleDomain.trim().toLowerCase();
+                    if (!dom) return;
+                    const maxConnections = Math.max(1, Math.min(32, parseInt(newRuleConns, 10) || 4));
+                    const nextRules = [
+                      ...(s.siteRules ?? []).filter((r) => r.domainPattern !== dom),
+                      { domainPattern: dom, maxConnections },
+                    ];
+                    setNewRuleDomain('');
+                    void save({ siteRules: nextRules });
+                  }}
+                >
+                  {t('set.siteAddRule')}
+                </button>
+              </div>
+              {(s.siteRules ?? []).map((rule) => (
+                <div key={rule.domainPattern} className="row" style={{ gap: 8, alignItems: 'center', fontSize: 12 }}>
+                  <span className="mono grow">{rule.domainPattern}</span>
+                  <span className="badge">{rule.maxConnections ?? s.defaultConnections} conn</span>
+                  <button
+                    type="button"
+                    className="btn ghost sm icon"
+                    onClick={() =>
+                      void save({ siteRules: (s.siteRules ?? []).filter((r) => r.domainPattern !== rule.domainPattern) })
+                    }
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
           </Setting>
         </Section>
 

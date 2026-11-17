@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { mobileSettingsManager } from '../services/settings-manager';
 import { useI18n } from '../hooks/useI18n';
 import { useTheme } from '../hooks/useTheme';
@@ -32,7 +33,47 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
   const [port, setPort] = useState(String(currentBridge.port || 31542));
   const [token, setToken] = useState(currentBridge.token || '');
   const [testing, setTesting] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const applyScannedPayload = (raw: string): boolean => {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('grabbit://pair')) {
+      try {
+        const u = new URL(trimmed.replace('grabbit://pair', 'http://localhost/pair'));
+        setHost(u.searchParams.get('host') || host);
+        setPort(u.searchParams.get('port') || port);
+        setToken(u.searchParams.get('token') || token);
+        setTestResult(null);
+        void hapticSuccess();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(trimmed)) {
+      const parts = trimmed.split(':');
+      setHost(parts[0]);
+      if (parts[1]) setPort(parts[1]);
+      setTestResult(null);
+      void hapticSuccess();
+      return true;
+    }
+    return false;
+  };
+
+  const handleOpenScanner = async () => {
+    void hapticLight();
+    if (!permission?.granted) {
+      const next = await requestPermission();
+      if (!next.granted) {
+        Alert.alert(t('mobile.pairError'), 'Camera permission is required to scan the QR code.');
+        return;
+      }
+    }
+    setScanning(true);
+  };
 
   const handlePasteUri = async () => {
     try {
@@ -160,16 +201,55 @@ export function PairingModal({ visible, onClose, onSuccess }: PairingModalProps)
 
           <Text style={[styles.instruction, textDirStyle]}>{t('mobile.qrInstruction')}</Text>
 
-          {/* Quick Paste Button */}
-          <TouchableOpacity
-            style={[styles.pasteBtn, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
-            onPress={handlePasteUri}
-            accessibilityRole="button"
-            accessibilityLabel={t('grab.paste')}
-          >
-            <Ionicons name="clipboard-outline" size={18} color={colors.accent} />
-            <Text style={styles.pasteBtnText}>{t('grab.paste')}</Text>
-          </TouchableOpacity>
+          {/* Quick Paste & QR Camera Scan */}
+          <View style={{ flexDirection: isRtl ? 'row-reverse' : 'row', gap: 10, marginBottom: 16 }}>
+            <TouchableOpacity
+              style={[styles.pasteBtn, { flex: 1, marginBottom: 0, flexDirection: isRtl ? 'row-reverse' : 'row' }]}
+              onPress={handlePasteUri}
+              accessibilityRole="button"
+              accessibilityLabel={t('grab.paste')}
+            >
+              <Ionicons name="clipboard-outline" size={18} color={colors.accent} />
+              <Text style={styles.pasteBtnText}>{t('grab.paste')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.pasteBtn, { flex: 1, marginBottom: 0, flexDirection: isRtl ? 'row-reverse' : 'row' }]}
+              onPress={() => void handleOpenScanner()}
+              accessibilityRole="button"
+              accessibilityLabel={t('mobile.scanQr')}
+            >
+              <Ionicons name="camera-outline" size={18} color={colors.accent} />
+              <Text style={styles.pasteBtnText}>{t('mobile.scanQr')}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {scanning && (
+            <View style={{ height: 220, borderRadius: 12, overflow: 'hidden', marginBottom: 14, position: 'relative' }}>
+              <CameraView
+                style={{ flex: 1 }}
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={({ data }) => {
+                  if (data && applyScannedPayload(data)) {
+                    setScanning(false);
+                  }
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => setScanning(false)}
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  backgroundColor: 'rgba(15,23,42,0.8)',
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('common.close')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Manual inputs */}
           <View style={styles.field}>

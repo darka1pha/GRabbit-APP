@@ -69,6 +69,17 @@ export function TorrentDetails({ item }: { item: DownloadItem }) {
           </dd>
         </dl>
       )}
+      {torrent.seeding && (
+        <div className="banner full">
+          <span className="grow">{t('torrent.uploaded')}: {formatBytes(torrent.uploadedBytes ?? 0, language)}</span>
+          <button
+            className="btn sm"
+            onClick={() => void api.downloads.stopSeeding(item.id).catch((err) => toast(errorText(t, err), 'error'))}
+          >
+            {t('torrent.stopSeeding')}
+          </button>
+        </div>
+      )}
       {files.length > 1 && (
         <dl className="kv full">
           <dt>{t('torrent.files')}</dt>

@@ -240,6 +240,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle(IPC.downloadsCreateTransferLink, [IdSchema], (id: string) => {
     return deps.createTransferLink ? deps.createTransferLink(id) : null;
   });
+  handle(IPC.downloadsStopSeeding, [IdSchema], (id: string) => manager.stopSeeding(id));
+  handle(IPC.downloadsExportList, [], () => manager.exportList());
+  handle(IPC.downloadsImportList, [z.string().max(2_000_000)], (payload: string) => manager.importList(payload));
 
   handle(IPC.downloadsWatchSegments, [IdListSchema], (ids: string[]) => manager.watchSegments(ids));
 

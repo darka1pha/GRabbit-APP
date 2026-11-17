@@ -11,6 +11,7 @@ dist-ci/
 
 # Build outputs
 dist/
+dist-firefox/
 out/
 build/
 release/

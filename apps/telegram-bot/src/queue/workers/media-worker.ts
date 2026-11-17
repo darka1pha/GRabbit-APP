@@ -135,8 +135,8 @@ export class MediaProcessingWorker {
     try {
       await this.ensureNotCancelled(payload.jobId, abortController.signal);
 
-      // 0. Check Telegram file_id cache for instant <0.5s delivery
-      if (this.mediaCacheRepo && this.delivery.deliverCachedMedia) {
+      // 0. Check Telegram file_id cache for instant <0.5s delivery (never for clipped ranges or subtitles)
+      if (!payload.timeRange && payload.format !== 'document' && this.mediaCacheRepo && this.delivery.deliverCachedMedia) {
         try {
           const cached = await this.mediaCacheRepo.getCachedMedia(
             payload.platform,
@@ -254,6 +254,7 @@ export class MediaProcessingWorker {
         format: payload.format,
         qualityId: payload.qualityId,
         outputPath: jobDir,
+        timeRange: payload.timeRange,
         onProgress,
         signal: abortController.signal,
       });
@@ -388,8 +389,8 @@ export class MediaProcessingWorker {
         maxSizeBytes: maxFileSizeBytes,
       });
 
-      // Save Telegram file_id in cache for future instant deliveries
-      if (deliveryResult?.telegramFileId && this.mediaCacheRepo) {
+      // Save Telegram file_id in cache for future instant deliveries (skip clips and subtitle docs)
+      if (!payload.timeRange && payload.format !== 'document' && deliveryResult?.telegramFileId && this.mediaCacheRepo) {
         await this.mediaCacheRepo
           .saveCachedMedia({
             platform: payload.platform,

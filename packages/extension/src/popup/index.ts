@@ -1,4 +1,4 @@
-import type { DetectedMediaStream, RpcStatusResponse } from '@grabbit/types';
+import type { DetectedMediaStream, DownloadItem, RpcStatusResponse } from '@grabbit/types';
 import { isDirectMediaFileUrl, isStreamingMediaUrl } from '../shared/config';
 import type { ExtensionConfig, ExtensionUpdateInfo } from '../types/extension';
 
@@ -16,6 +16,9 @@ const siteExcludeToggleEl = document.getElementById('siteExcludeToggle') as HTML
 const minSizeSelectEl = document.getElementById('minSizeSelect') as HTMLSelectElement;
 const mediaListEl = document.getElementById('mediaList')!;
 const mediaCountEl = document.getElementById('mediaCount')!;
+const desktopQueueSectionEl = document.getElementById('desktopQueueSection');
+const desktopActiveCountEl = document.getElementById('desktopActiveCount');
+const desktopQueueListEl = document.getElementById('desktopQueueList');
 const optionsBtnEl = document.getElementById('optionsBtn')!;
 const updateBtnEl = document.getElementById('updateBtn') as HTMLButtonElement;
 const versionTextEl = document.getElementById('versionText')!;
@@ -62,12 +65,66 @@ function updateConnectionPill(
   }
 }
 
+function renderDesktopQueue(items: DownloadItem[]): void {
+  if (!desktopQueueSectionEl || !desktopQueueListEl || !desktopActiveCountEl) return;
+  const active = items.filter((i) => i.status === 'downloading' || i.status === 'starting' || i.status === 'processing' || i.status === 'paused');
+  if (active.length === 0) {
+    desktopQueueSectionEl.style.display = 'none';
+    return;
+  }
+  desktopQueueSectionEl.style.display = 'block';
+  desktopActiveCountEl.textContent = String(active.length);
+  desktopQueueListEl.innerHTML = '';
+  for (const item of active.slice(0, 4)) {
+    const card = document.createElement('div');
+    card.className = 'media-card';
+    const info = document.createElement('div');
+    info.className = 'media-info';
+    const title = document.createElement('span');
+    title.className = 'media-title';
+    title.textContent = item.media?.title || item.fileName;
+    const pct = item.totalBytes ? Math.round((item.receivedBytes / item.totalBytes) * 100) : Math.round(item.percent ?? 0);
+    const meta = document.createElement('span');
+    meta.className = 'media-meta';
+    meta.textContent = `${item.status.toUpperCase()} • ${pct}%`;
+    info.appendChild(title);
+    info.appendChild(meta);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn primary sm';
+    const isPaused = item.status === 'paused';
+    btn.textContent = isPaused ? 'Resume' : 'Pause';
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      chrome.runtime.sendMessage(
+        { type: 'CONTROL_DOWNLOAD', payload: { action: isPaused ? 'resume' : 'pause', id: item.id } },
+        () => void refreshDesktopQueue()
+      );
+    });
+    card.appendChild(info);
+    card.appendChild(btn);
+    desktopQueueListEl.appendChild(card);
+  }
+}
+
+async function refreshDesktopQueue(): Promise<void> {
+  chrome.runtime.sendMessage({ type: 'GET_DOWNLOADS_STATUS' }, (res) => {
+    if (res?.ok && Array.isArray(res.items)) {
+      renderDesktopQueue(res.items as DownloadItem[]);
+    } else if (desktopQueueSectionEl) {
+      desktopQueueSectionEl.style.display = 'none';
+    }
+  });
+}
+
 async function checkConnection(): Promise<void> {
   chrome.runtime.sendMessage({ type: 'CHECK_CONNECTION' }, (res) => {
     if (res && res.ok) {
       updateConnectionPill(true, res.authenticated, res.status);
+      if (res.authenticated) void refreshDesktopQueue();
     } else {
       updateConnectionPill(false, false, undefined, res?.error);
+      if (desktopQueueSectionEl) desktopQueueSectionEl.style.display = 'none';
     }
   });
 }

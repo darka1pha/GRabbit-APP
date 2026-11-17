@@ -324,13 +324,20 @@ export class YouTubeAdapter implements IPlatformAdapter {
   }
 
   public async download(request: DownloadRequest): Promise<DownloadResult> {
+    const isSubtitles = request.format === 'document' && request.qualityId === 'subtitles';
     const isAudio = request.format === 'audio';
-    const ext = isAudio ? 'mp3' : 'mp4';
+    const ext = isSubtitles ? 'srt' : isAudio ? 'mp3' : 'mp4';
     const outputTemplate = `${request.outputPath}/%(title).100s-%(id)s.%(ext)s`;
 
-    const extraArgs: string[] = [...this.getExtraArgs(), '--embed-metadata'];
-    if (isAudio) {
+    const extraArgs: string[] = [...this.getExtraArgs()];
+    if (request.timeRange && !isSubtitles) {
+      extraArgs.push('--download-sections', `*${request.timeRange}`);
+    }
+    if (isSubtitles) {
+      extraArgs.push('--write-subs', '--write-auto-subs', '--skip-download', '--sub-format', 'srt', '--sub-langs', 'en.*,fa.*,all');
+    } else if (isAudio) {
       extraArgs.push(
+        '--embed-metadata',
         '--extract-audio',
         '--audio-format',
         'mp3',
@@ -341,11 +348,13 @@ export class YouTubeAdapter implements IPlatformAdapter {
         'jpg'
       );
     } else {
-      extraArgs.push('--merge-output-format', 'mp4');
+      extraArgs.push('--embed-metadata', '--merge-output-format', 'mp4');
     }
 
-    let formatSelector = request.qualityId;
-    if (isAudio) {
+    let formatSelector: string | undefined = request.qualityId;
+    if (isSubtitles) {
+      formatSelector = undefined;
+    } else if (isAudio) {
       formatSelector = 'bestaudio/best';
     } else if (request.qualityId.endsWith('p')) {
       const height = parseInt(request.qualityId, 10);
@@ -373,7 +382,7 @@ export class YouTubeAdapter implements IPlatformAdapter {
       filePath: downloadedPath,
       fileName: safeName,
       fileSizeBytes: 0, // to be populated after probe/stat
-      mimeType: isAudio ? 'audio/mpeg' : 'video/mp4',
+      mimeType: isSubtitles ? 'application/x-subrip' : isAudio ? 'audio/mpeg' : 'video/mp4',
       format: request.format,
       title: safeName,
     };
