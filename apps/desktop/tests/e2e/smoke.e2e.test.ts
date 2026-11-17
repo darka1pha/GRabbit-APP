@@ -105,6 +105,11 @@ describe('desktop smoke', () => {
       env: { ...process.env, GRABBIT_DATA_DIR: profileDir, NODE_ENV: 'production', ELECTRON_RENDERER_URL: '' },
     });
     page = await mainWindow();
+    // Same size everywhere (CI runners have small screens), and the narrow layout is the harder one
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().includes('#/pill'));
+      win?.setSize(760, 560);
+    });
   });
 
   afterAll(async () => {
@@ -135,7 +140,10 @@ describe('desktop smoke', () => {
     expect(path, 'downloaded file').toBeTruthy();
     expect(createHash('sha256').update(readFileSync(path!)).digest('hex')).toBe(payloadHash);
 
-    // The renderer reflects the finished download
-    await page.getByText('Completed').first().waitFor({ timeout: 15_000 });
+    // The download's own row shows it finished: a completed status dot and 100%. (A finished row
+    // shows the site, not the word "Completed"; page-wide text matches only the toolbar's "Clear
+    // completed" button and the filter tab, which say nothing about this download.)
+    const row = page.getByRole('row').filter({ hasText: 'smoke.bin' }).filter({ hasText: '100%' });
+    await row.locator('.status-dot.completed').waitFor({ timeout: 15_000 });
   });
 });
