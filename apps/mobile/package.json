@@ -1,6 +1,6 @@
 {
   "name": "@grabbit/mobile",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {

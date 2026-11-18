@@ -20,7 +20,7 @@ export interface AutoUpdaterDeps {
 export class AutoUpdaterService {
   private status: UpdateStatusInfo = {
     state: 'idle',
-    version: typeof app?.getVersion === 'function' ? app.getVersion() : '1.3.0',
+    version: typeof app?.getVersion === 'function' ? app.getVersion() : '1.4.0',
   };
   private autoInstallRequested = false;
   private downloadedInstallerPath: string | null = null;
@@ -33,7 +33,7 @@ export class AutoUpdaterService {
   }
 
   private getCurrentVersion(): string {
-    return typeof app?.getVersion === 'function' ? app.getVersion() : '1.3.0';
+    return typeof app?.getVersion === 'function' ? app.getVersion() : '1.4.0';
   }
 
   private init(): void {
