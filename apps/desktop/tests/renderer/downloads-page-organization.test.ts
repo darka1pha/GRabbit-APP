@@ -15,14 +15,16 @@ describe('Downloads Page Organization & UI/UX Improvements', () => {
     it('buckets timestamps accurately into today, yesterday, thisWeek, thisMonth, and older', async () => {
       const { getDateGroupKey } = await import('../../src/renderer/src/views/DownloadsView');
       const now = Date.now();
-      const oneHourAgo = now - 3600 * 1000;
-      const yesterday = now - 25 * 3600 * 1000;
-      const threeDaysAgo = now - 3 * 86400 * 1000;
+      const d = new Date(now);
+      const startOfToday = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const todaySample = Math.max(startOfToday + 1000, now - 3600 * 1000);
+      const yesterday = startOfToday - 3600 * 1000;
+      const threeDaysAgo = startOfToday - 3 * 86400 * 1000;
       const twoMonthsAgo = now - 65 * 86400 * 1000;
 
-      expect(getDateGroupKey(oneHourAgo)).toBe('today');
-      expect(['today', 'yesterday']).toContain(getDateGroupKey(yesterday));
-      expect(['today', 'yesterday', 'thisWeek', 'thisMonth']).toContain(getDateGroupKey(threeDaysAgo));
+      expect(getDateGroupKey(todaySample)).toBe('today');
+      expect(getDateGroupKey(yesterday)).toBe('yesterday');
+      expect(['thisWeek', 'thisMonth']).toContain(getDateGroupKey(threeDaysAgo));
       expect(getDateGroupKey(twoMonthsAgo)).toBe('older');
     });
   });

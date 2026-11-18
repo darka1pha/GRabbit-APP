@@ -921,5 +921,5 @@ export function matchDomainPattern(hostname: string, pattern: string): boolean {
 
 export * from './i18n';
 export * from './pattern-expander';
-
 export * from './torrent';
+export * from './downloads-summary';

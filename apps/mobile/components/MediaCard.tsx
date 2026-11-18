@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
-import { formatEta } from '@grabbit/utils';
+import { formatEta, getStatusTone } from '@grabbit/utils';
 import { MobileDownloadTask } from '../services/download-manager';
 import { PLATFORM_COLORS, PLATFORM_NAMES } from '../services/bridge';
 import { MotionView } from './motion';
@@ -79,6 +79,24 @@ function MediaCardComponent({
   const isQueued = task.status === 'queued';
   const isCompleted = task.status === 'completed';
   const isError = task.status === 'error';
+
+  const statusTone = getStatusTone(task.status);
+  const statusPalette = useMemo(() => {
+    switch (statusTone) {
+      case 'accent':
+      case 'info':
+        return { bg: colors.accentSubtle, fg: colors.accent };
+      case 'success':
+        return { bg: colors.successSubtle, fg: colors.success };
+      case 'warning':
+        return { bg: colors.warningSubtle, fg: colors.warning };
+      case 'danger':
+        return { bg: colors.errorSubtle, fg: colors.error };
+      default:
+        return { bg: colors.surfaceSubtle, fg: colors.textMuted };
+    }
+  }, [statusTone, colors]);
+  const statusLabel = t(`status.${task.status}` as any);
 
   const translateX = useRef(new Animated.Value(0)).current;
 
@@ -211,6 +229,7 @@ function MediaCardComponent({
       <Animated.View
         style={[
           styles.card,
+          isDownloading && styles.cardActive,
           isSelected && styles.cardSelected,
           { transform: [{ translateX }] },
         ]}
@@ -267,9 +286,17 @@ function MediaCardComponent({
             )}
 
             <View style={[styles.info, { alignItems: isRtl ? 'flex-end' : 'flex-start' }]}>
-              <Text style={[styles.title, textDirStyle]} numberOfLines={1}>
-                {task.title}
-              </Text>
+              <View style={[styles.titleLineRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+                <Text style={[styles.title, textDirStyle, { flex: 1 }]} numberOfLines={1}>
+                  {task.title}
+                </Text>
+                <View style={[styles.statusPill, { backgroundColor: statusPalette.bg }]}>
+                  <View style={[styles.statusDot, { backgroundColor: statusPalette.fg }]} />
+                  <Text style={[styles.statusPillText, { color: statusPalette.fg }]}>
+                    {statusLabel}
+                  </Text>
+                </View>
+              </View>
               {task.author ? (
                 <Text style={[styles.uploader, textDirStyle]} numberOfLines={1}>
                   {task.author}
@@ -284,7 +311,7 @@ function MediaCardComponent({
                 <View
                   style={[
                     styles.categoryBadge,
-                    { backgroundColor: `${categoryColor}25`, borderColor: categoryColor },
+                    { backgroundColor: `${categoryColor}20`, borderColor: `${categoryColor}55` },
                   ]}
                 >
                   <Text style={[styles.categoryBadgeText, { color: categoryColor }]}>
@@ -528,7 +555,7 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     swipeContainer: {
       position: 'relative',
-      borderRadius: 12,
+      borderRadius: 16,
       overflow: 'hidden',
     },
     swipeRail: {
@@ -538,7 +565,7 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       paddingHorizontal: 14,
       backgroundColor: colors.surfaceSubtle,
-      borderRadius: 12,
+      borderRadius: 16,
     },
     swipeHint: {
       flexDirection: 'row',
@@ -546,7 +573,7 @@ const createStyles = (colors: ThemeColors) =>
       gap: 6,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 8,
+      borderRadius: 10,
     },
     swipeHintText: {
       color: '#ffffff',
@@ -555,11 +582,19 @@ const createStyles = (colors: ThemeColors) =>
     },
     card: {
       backgroundColor: colors.surface,
-      borderRadius: 12,
+      borderRadius: 16,
       padding: 14,
       borderWidth: 1,
       borderColor: colors.border,
       gap: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    cardActive: {
+      borderColor: colors.accent,
     },
     cardSelected: {
       borderColor: colors.accent,
@@ -574,22 +609,49 @@ const createStyles = (colors: ThemeColors) =>
       gap: 12,
     },
     thumbnail: {
-      width: 56,
-      height: 56,
-      borderRadius: 8,
+      width: 62,
+      height: 62,
+      borderRadius: 12,
       backgroundColor: colors.background,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
     },
     thumbnailPlaceholder: {
-      width: 56,
-      height: 56,
-      borderRadius: 8,
-      backgroundColor: colors.background,
+      width: 62,
+      height: 62,
+      borderRadius: 12,
+      backgroundColor: colors.surfaceSubtle,
+      borderWidth: 1,
+      borderColor: colors.borderSubtle,
       justifyContent: 'center',
       alignItems: 'center',
     },
     info: {
       flex: 1,
+      gap: 5,
+    },
+    titleLineRow: {
+      alignItems: 'center',
+      gap: 8,
+      width: '100%',
+    },
+    statusPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
       gap: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 999,
+      flexShrink: 0,
+    },
+    statusDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 2.5,
+    },
+    statusPillText: {
+      fontSize: 10,
+      fontWeight: '700',
     },
     title: {
       fontSize: 15,
@@ -612,13 +674,13 @@ const createStyles = (colors: ThemeColors) =>
       flexWrap: 'wrap',
     },
     categoryBadge: {
-      paddingHorizontal: 6,
-      paddingVertical: 1,
-      borderRadius: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 6,
       borderWidth: 1,
     },
     categoryBadgeText: {
-      fontSize: 9,
+      fontSize: 9.5,
       fontWeight: '700',
     },
     queueBadge: {
@@ -628,22 +690,22 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.accentSubtle,
       borderWidth: 1,
       borderColor: colors.accent,
-      paddingHorizontal: 6,
-      paddingVertical: 1,
-      borderRadius: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 6,
     },
     queueBadgeText: {
-      fontSize: 9,
+      fontSize: 9.5,
       color: colors.accent,
       fontWeight: '600',
     },
     platformBadge: {
-      paddingHorizontal: 6,
+      paddingHorizontal: 7,
       paddingVertical: 2,
-      borderRadius: 4,
+      borderRadius: 6,
     },
     platformBadgeText: {
-      fontSize: 9,
+      fontSize: 9.5,
       color: '#ffffff',
       fontWeight: '700',
       textTransform: 'uppercase',
@@ -652,12 +714,12 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceSubtle,
       borderWidth: 1,
       borderColor: colors.border,
-      paddingHorizontal: 6,
+      paddingHorizontal: 7,
       paddingVertical: 2,
-      borderRadius: 4,
+      borderRadius: 6,
     },
     qualityBadgeText: {
-      fontSize: 9,
+      fontSize: 9.5,
       color: colors.textSecondary,
       fontWeight: '600',
     },
@@ -666,27 +728,28 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       gap: 3,
       backgroundColor: colors.successSubtle,
-      paddingHorizontal: 6,
+      paddingHorizontal: 7,
       paddingVertical: 2,
-      borderRadius: 4,
+      borderRadius: 6,
     },
     savedBadgeText: {
-      fontSize: 9,
+      fontSize: 9.5,
       color: colors.success,
       fontWeight: '600',
     },
     progressSection: {
       gap: 6,
-      marginTop: 8,
+      marginTop: 6,
     },
     progressBarTrack: {
-      height: 6,
-      backgroundColor: colors.border,
-      borderRadius: 3,
+      height: 7,
+      backgroundColor: colors.surfaceSubtle,
+      borderRadius: 999,
       overflow: 'hidden',
     },
     progressBarFill: {
       height: '100%',
+      borderRadius: 999,
     },
     segmentsRow: {
       flexDirection: 'row',
@@ -733,20 +796,25 @@ const createStyles = (colors: ThemeColors) =>
       paddingTop: 8,
     },
     iconActionBtn: {
-      padding: 6,
-      borderRadius: 6,
+      padding: 7,
+      borderRadius: 9,
       backgroundColor: colors.background,
       borderWidth: 1,
       borderColor: colors.border,
+      minWidth: 34,
+      minHeight: 34,
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     actionBtn: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 6,
+      gap: 5,
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderRadius: 9,
       backgroundColor: colors.surfaceSubtle,
+      minHeight: 34,
     },
     primaryActionBtn: {
       backgroundColor: colors.accent,

@@ -4,29 +4,19 @@ import { Activity, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, ChevronDo
 import type { Category, DownloadItem, DownloadQueue, LanTransferInfo } from '../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../i18n';
 import { api, useApp } from '../state';
-import { formatBytes, formatSpeed } from '../format';
+import { formatBytes, computeDownloadSummary } from '../format';
 import { ContextMenu, MenuEntry } from '../components/ui';
 import { QueueConfigModal } from '../components/QueueConfigModal';
 import { QRCodeModal } from '../components/QRCodeModal';
-import { downloadStore, useDownloadsAggregate } from '../downloads-store';
+import { downloadStore } from '../downloads-store';
 import { formatScheduleCountdown, getScheduleWindowState } from '../utils/schedule';
 import { type StatusFilter, type GroupByOption, type DensityOption, ROW_HEIGHT_COMFORTABLE, ROW_HEIGHT_COMPACT, ACTIVE, matchesStatus, buildGroups, type DownloadGroup, fraction, canPause, isFolderDownload, canResume, restoreRemovedItems } from './downloads/model';
 import { useVirtualVariableRows, useVirtualRows } from './downloads/virtual-rows';
 import { type RowActions, DownloadRow } from './downloads/DownloadRow';
 import { DetailsPanel } from './downloads/DetailsPanel';
+import { DownloadsHeroStrip } from './downloads/DownloadsHeroStrip';
 import { RemoveDialog, ChangeUrlDialog, SpeedLimitDialog, VerifyDialog, SegmentInspectorModal } from './downloads/dialogs';
 export { type StatusFilter, type GroupByOption, type DensityOption, ROW_HEIGHT, ROW_HEIGHT_COMFORTABLE, ROW_HEIGHT_COMPACT, getDateGroupKey, matchesStatus } from './downloads/model';
-
-/** Speed and count of active downloads in the page header. */
-function ActiveStat({ count }: { count: number }) {
-  const { t, language } = useI18n();
-  const { speed } = useDownloadsAggregate();
-  return (
-    <span className="stat">
-      <Download size={14} /> <b>{formatSpeed(speed, language) || '0 B/s'}</b> · {t('dl.active', { count })}
-    </span>
-  );
-}
 
 type DialogState =
   | { kind: 'remove'; ids: string[]; deleteFiles: boolean }
@@ -210,6 +200,8 @@ export function DownloadsView({
     }
     return c;
   }, [inQueue]);
+
+  const queueSummary = useMemo(() => computeDownloadSummary(inQueue), [inQueue]);
 
   const queueCounts = useMemo(() => {
     const c: Record<string, number> = { all: inCategory.length };
@@ -698,7 +690,7 @@ export function DownloadsView({
       <div className="dl-head">
         <div className="dl-head-primary">
           <h1>{category === 'all' ? t('dl.title') : t(`cat.${category}` as MessageKey)}</h1>
-          <ActiveStat count={counts.active} />
+          <span className="dl-count-chip">{counts.all}</span>
           <div style={{ flex: 1 }} />
           <div className="input-with-icon" style={{ width: 240 }}>
             <Search size={15} />
@@ -1010,6 +1002,13 @@ export function DownloadsView({
             ))}
           </div>
         </div>
+
+        <DownloadsHeroStrip
+          summary={queueSummary}
+          counts={counts}
+          filter={filter}
+          onFilter={setFilter}
+        />
       </div>
 
       {scheduledBanners.length > 0 && (

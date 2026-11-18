@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, FlatList, Platform, RefreshControl, Alert, Modal, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { computeDownloadSummary, getStatusTone, type StatusTone } from '@grabbit/utils';
 import { Category, CATEGORIES, DownloadItem, DownloadQueue, DownloadsAggregate } from '@grabbit/types';
 import { useDownloads } from '../hooks/useDownloads';
 import { MobileDownloadTask } from '../services/download-manager';
@@ -29,6 +30,25 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
   const { t, isRtl, textDirStyle, formatSpeed, formatBytes } = useI18n();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const tonePalette = useCallback(
+    (tone: StatusTone) => {
+      switch (tone) {
+        case 'accent':
+        case 'info':
+          return { bg: colors.accentSubtle, fg: colors.accent };
+        case 'success':
+          return { bg: colors.successSubtle, fg: colors.success };
+        case 'warning':
+          return { bg: colors.warningSubtle, fg: colors.warning };
+        case 'danger':
+          return { bg: colors.errorSubtle, fg: colors.error };
+        default:
+          return { bg: colors.surfaceSubtle, fg: colors.textMuted };
+      }
+    },
+    [colors]
+  );
 
   const {
     tasks,
@@ -173,22 +193,24 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     [applyCommonFilters, desktopItems]
   );
 
-  // Counts
-  const activeSourceCount = deviceMode === 'local' ? tasks.length : desktopItems.length;
-  const activeCountValue =
-    deviceMode === 'local'
-      ? tasks.filter((it) => it.status === 'downloading').length
-      : desktopItems.filter((it) => it.status === 'downloading').length;
+  // Counts & Live Hero Summary
+  const sourceItems = deviceMode === 'local' ? tasks : desktopItems;
+  const summary = useMemo(() => computeDownloadSummary(sourceItems), [sourceItems]);
 
-  const counts = useMemo(() => {
-    return {
-      all: tasks.length,
-      active: tasks.filter((t) => t.status === 'downloading').length,
-      queued: tasks.filter((t) => t.status === 'queued' || t.status === 'paused').length,
-      completed: tasks.filter((t) => t.status === 'completed').length,
-      failed: tasks.filter((t) => t.status === 'error').length,
-    };
-  }, [tasks]);
+  const counts = useMemo(
+    () => ({
+      all: summary.total,
+      active: summary.active,
+      queued: summary.queued,
+      completed: summary.completed,
+      failed: summary.failed,
+    }),
+    [summary]
+  );
+
+  const activeCountValue = summary.active;
+  const displayedSpeed =
+    deviceMode === 'local' ? totalSpeed : desktopAggregate?.speed ?? summary.totalSpeed;
 
   const queueCounts = useMemo(() => {
     const map: Record<string, number> = { all: tasks.length };
@@ -213,9 +235,6 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     (selectedQueueId !== 'all' ? 1 : 0) +
     (selectedCategory !== 'all' ? 1 : 0) +
     (statusFilter !== 'all' ? 1 : 0);
-
-  const displayedSpeed =
-    deviceMode === 'local' ? totalSpeed : desktopAggregate?.speed ?? 0;
 
   const handleRefresh = useCallback(async () => {
     void hapticLight();
@@ -416,41 +435,62 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
         item.totalBytes && item.totalBytes > 0
           ? Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100))
           : Math.round(item.percent ?? 0);
+      const tone = tonePalette(getStatusTone(item.status));
+      const catIcon =
+        item.category === 'video'
+          ? 'videocam'
+          : item.category === 'music'
+          ? 'musical-note'
+          : item.category === 'images'
+          ? 'image'
+          : item.category === 'documents'
+          ? 'document-text'
+          : 'cube';
+      const statusKey = (`status.${item.status}` as any);
 
       return (
-        <View style={styles.desktopCard}>
+        <View style={[styles.desktopCard, isDownloading && styles.desktopCardActive]}>
           <View style={[styles.desktopCardTop, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View style={styles.desktopCategoryBox}>
+              <Ionicons
+                name={catIcon}
+                size={19}
+                color={isDownloading ? colors.accent : colors.textSecondary}
+              />
+            </View>
             <View style={{ flex: 1, alignItems: isRtl ? 'flex-end' : 'flex-start' }}>
               <Text style={[styles.desktopFileName, textDirStyle]} numberOfLines={1}>
                 {item.media?.title || item.fileName}
               </Text>
               <Text style={styles.desktopMeta}>
                 {item.totalBytes
-                  ? `${formatBytes(item.receivedBytes)} / ${formatBytes(item.totalBytes)} (${pct}%)`
+                  ? `${formatBytes(item.receivedBytes)} / ${formatBytes(item.totalBytes)}`
                   : `${formatBytes(item.receivedBytes)}`}
                 {isDownloading && item.speed > 0 ? ` • ${formatSpeed(item.speed)}` : ''}
               </Text>
             </View>
-            <View style={styles.desktopStatusPill}>
-              <Text style={styles.desktopStatusText}>{item.status.toUpperCase()}</Text>
+            <View style={[styles.desktopStatusPill, { backgroundColor: tone.bg }]}>
+              <View style={[styles.desktopStatusDot, { backgroundColor: tone.fg }]} />
+              <Text style={[styles.desktopStatusText, { color: tone.fg }]}>{t(statusKey)}</Text>
             </View>
           </View>
 
           {!isCompleted && (
-            <View style={styles.desktopProgressTrack}>
-              <View
-                style={[
-                  styles.desktopProgressFill,
-                  {
-                    width: `${pct}%`,
-                    backgroundColor: isError
-                      ? colors.error
-                      : isPaused
-                      ? colors.warning
-                      : colors.accent,
-                  },
-                ]}
-              />
+            <View
+              style={[styles.desktopProgressRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}
+            >
+              <View style={styles.desktopProgressTrack}>
+                <View
+                  style={[
+                    styles.desktopProgressFill,
+                    {
+                      width: `${pct}%`,
+                      backgroundColor: tone.fg,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.desktopPctText}>{pct}%</Text>
             </View>
           )}
 
@@ -520,28 +560,129 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
       formatSpeed,
       colors,
       t,
+      tonePalette,
       handleRemoteAction,
       handlePullToPhone,
     ]
   );
 
   const renderHeader = useMemo(() => {
+    const isLive = activeCountValue > 0 || displayedSpeed > 0;
+    const progressPct =
+      summary.overallProgress !== null ? Math.round(summary.overallProgress * 100) : null;
+
+    const statusDotColor = (st: StatusFilter) => {
+      switch (st) {
+        case 'active':
+          return colors.accent;
+        case 'queued':
+          return colors.warning;
+        case 'completed':
+          return colors.success;
+        case 'failed':
+          return colors.error;
+        default:
+          return colors.textMuted;
+      }
+    };
+
     return (
       <View style={{ gap: 12 }}>
-        {/* Compact Header Row: Title + Local/PC Switcher + Speed */}
+        {/* Header Title + Item Count + Quick Pause/Resume All */}
         <View style={[styles.topHeader, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
-          <View style={{ alignItems: isRtl ? 'flex-end' : 'flex-start', flex: 1 }}>
+          <View style={[styles.titleRow, { flexDirection: isRtl ? 'row-reverse' : 'row', flex: 1 }]}>
             <Text style={[styles.viewTitle, textDirStyle]}>{t('dl.title')}</Text>
-            <Text style={[styles.viewSubtitle, textDirStyle]}>
-              {t('queue.items', { count: activeSourceCount })} • {activeCountValue}{' '}
-              {t('dl.statusActive')}
-            </Text>
+            <View style={styles.countPill}>
+              <Text style={styles.countPillText}>{counts.all}</Text>
+            </View>
           </View>
 
-          {displayedSpeed > 0 && (
-            <View style={styles.speedBadge}>
-              <Ionicons name="speedometer-outline" size={14} color={colors.accent} />
-              <Text style={styles.speedText}>{formatSpeed(displayedSpeed)}</Text>
+          {deviceMode === 'local' && counts.all > 0 && (
+            <TouchableOpacity
+              style={styles.quickPowerBtn}
+              onPress={() => {
+                void hapticLight();
+                if (activeCountValue > 0) void pauseAll();
+                else void resumeAll();
+              }}
+            >
+              <Ionicons
+                name={activeCountValue > 0 ? 'pause' : 'play'}
+                size={13}
+                color={activeCountValue > 0 ? colors.warning : colors.accent}
+              />
+              <Text style={styles.quickPowerText}>
+                {activeCountValue > 0 ? t('dl.pauseAll') : t('dl.resumeAll')}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Live Speed & Overall Transfer Hero Summary Card */}
+        <View style={[styles.heroSummaryCard, isLive && styles.heroSummaryCardLive]}>
+          <View style={[styles.heroMetricsRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+            <View
+              style={[
+                styles.heroMetricCol,
+                { alignItems: isRtl ? 'flex-end' : 'flex-start' },
+              ]}
+            >
+              <View style={[styles.heroLabelRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+                <View
+                  style={[
+                    styles.heroLiveDot,
+                    { backgroundColor: isLive ? colors.accent : colors.textMuted },
+                  ]}
+                />
+                <Text style={styles.heroLabelText}>{t('dl.summary.throughput')}</Text>
+              </View>
+              <View style={[styles.heroValueRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+                <Text style={styles.heroValueText}>
+                  {formatSpeed(displayedSpeed) || '0 B/s'}
+                </Text>
+                <View style={styles.heroActivePill}>
+                  <Text style={styles.heroActivePillText}>
+                    {t('dl.active', { count: activeCountValue })}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.heroMetricDivider} />
+
+            <View
+              style={[
+                styles.heroMetricCol,
+                { alignItems: isRtl ? 'flex-end' : 'flex-start' },
+              ]}
+            >
+              <View style={[styles.heroLabelRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+                <Ionicons name="cloud-download-outline" size={12} color={colors.textSecondary} />
+                <Text style={styles.heroLabelText}>
+                  {progressPct !== null ? t('dl.summary.overall') : t('dl.summary.downloaded')}
+                </Text>
+              </View>
+              <View style={[styles.heroValueRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
+                <Text style={styles.heroValueText}>{formatBytes(summary.receivedBytes)}</Text>
+                {progressPct !== null && (
+                  <Text style={styles.heroSubMetricText}>{progressPct}%</Text>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {progressPct !== null && (
+            <View style={styles.heroProgressTrack}>
+              <View
+                style={[
+                  styles.heroProgressFill,
+                  {
+                    width: `${progressPct}%`,
+                    backgroundColor:
+                      progressPct >= 100 && activeCountValue === 0 ? colors.success : colors.accent,
+                  },
+                ]}
+              />
             </View>
           )}
         </View>
@@ -649,6 +790,43 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
           </TouchableOpacity>
         </View>
 
+        {/* Quick Tap Status Filter Strip */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.quickStatusScroll,
+            { flexDirection: isRtl ? 'row-reverse' : 'row' },
+          ]}
+        >
+          {(['all', 'active', 'queued', 'completed', 'failed'] as StatusFilter[]).map((st) => {
+            const selected = statusFilter === st;
+            return (
+              <TouchableOpacity
+                key={st}
+                style={[styles.quickStatusChip, selected && styles.quickStatusChipActive]}
+                onPress={() => {
+                  void hapticLight();
+                  setStatusFilter(st);
+                }}
+              >
+                <View
+                  style={[
+                    styles.quickStatusDot,
+                    { backgroundColor: selected ? '#ffffff' : statusDotColor(st) },
+                  ]}
+                />
+                <Text style={[styles.quickStatusLabel, selected && styles.quickStatusLabelActive]}>
+                  {getStatusLabel(st)}
+                </Text>
+                <Text style={[styles.quickStatusCount, selected && styles.quickStatusCountActive]}>
+                  {counts[st]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         {/* Active filter summary pills (shown only when filtered) */}
         {activeFilterCount > 0 && (
           <View style={[styles.activeFiltersRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>
@@ -717,11 +895,15 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
     isRtl,
     textDirStyle,
     t,
-    activeSourceCount,
+    counts,
     activeCountValue,
     displayedSpeed,
+    summary,
     colors,
     formatSpeed,
+    formatBytes,
+    pauseAll,
+    resumeAll,
     deviceMode,
     searchQuery,
     activeFilterCount,
@@ -749,7 +931,9 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
       if (desktopError) {
         return (
           <View style={styles.emptyContainer}>
-            <Ionicons name="desktop-outline" size={48} color={colors.textMuted} />
+            <View style={styles.emptyIconCircle}>
+              <Ionicons name="desktop-outline" size={32} color={colors.accent} />
+            </View>
             <Text style={[styles.emptyTitle, textDirStyle]}>{t('mobile.pcNotPaired')}</Text>
             <Text style={[styles.emptySubtitle, textDirStyle]}>{desktopError}</Text>
             <TouchableOpacity
@@ -764,7 +948,9 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
       }
       return (
         <View style={styles.emptyContainer}>
-          <Ionicons name="cloud-done-outline" size={48} color={colors.textMuted} />
+          <View style={styles.emptyIconCircle}>
+            <Ionicons name="cloud-done-outline" size={32} color={colors.accent} />
+          </View>
           <Text style={[styles.emptyTitle, textDirStyle]}>{t('dl.empty')}</Text>
         </View>
       );
@@ -772,7 +958,9 @@ export function DownloadsView({ onPlayMedia, onOpenInGrab }: DownloadsViewProps)
 
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="cloud-download-outline" size={48} color={colors.textMuted} />
+        <View style={styles.emptyIconCircle}>
+          <Ionicons name="cloud-download-outline" size={32} color={colors.accent} />
+        </View>
         <Text style={[styles.emptyTitle, textDirStyle]}>{t('dl.empty')}</Text>
         <Text style={[styles.emptySubtitle, textDirStyle]}>{t('dl.emptyHint')}</Text>
         <View style={[styles.emptyCtasRow, { flexDirection: isRtl ? 'row-reverse' : 'row' }]}>

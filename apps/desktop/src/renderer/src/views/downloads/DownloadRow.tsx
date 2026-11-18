@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Clock, ExternalLink, FolderOpen, Link, Pause, Play, RotateCw, Smartphone, Trash2 } from 'lucide-react';
 import type { DownloadItem } from '../../../../shared/types';
 import { errorText, useI18n, type MessageKey } from '../../i18n';
-import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed } from '../../format';
+import { formatBytes, formatDate, formatEta, formatPercent, formatSpeed, getStatusTone } from '../../format';
 import { FileIcon, ProgressBar } from '../../components/ui';
 import { useLiveDownload } from '../../downloads-store';
 import { type DensityOption, ACTIVE, fraction, isFolderDownload, canResume, safeHostname } from './model';
@@ -57,13 +57,18 @@ export const DownloadRow = memo(function DownloadRow({
   const onRemove = () => actions.remove(item);
   const f = fraction(item);
   const active = ACTIVE.includes(item.status);
+  const statusTone = waitingWindow && item.status === 'queued' ? 'warning' : getStatusTone(item.status);
+  const statusLabel =
+    waitingWindow && item.status === 'queued'
+      ? t('dl.waitingWindow')
+      : t(`status.${item.status}` as MessageKey);
   const title = item.media?.title && item.status !== 'completed' ? item.media.title : item.fileName;
 
-  let sub: React.ReactNode;
+  let detailMeta: React.ReactNode = null;
   if (item.status === 'error') {
     const isExpired = item.errorCode === 'HTTP_401' || item.errorCode === 'HTTP_403' || item.errorCode === 'HTTP_410';
     const isFullDisk = item.errorCode === 'ENOSPC';
-    sub = (
+    detailMeta = (
       <span className="error-sub-row" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ color: 'var(--danger)' }}>{errorText(t, { code: item.errorCode, message: item.error })}</span>
         {isExpired && (
@@ -105,26 +110,22 @@ export const DownloadRow = memo(function DownloadRow({
       </span>
     );
   } else if (item.kind === 'torrent' && item.torrent?.needsSelection && !active) {
-    sub = <span style={{ color: 'var(--accent)' }}>{t('torrent.chooseFiles')}</span>;
+    detailMeta = <span style={{ color: 'var(--accent)' }}>{t('torrent.chooseFiles')}</span>;
   } else if (item.kind === 'torrent' && active && item.torrent?.stage === 'Fetching metadata') {
-    sub = t('torrent.fetchingMetadata');
+    detailMeta = t('torrent.fetchingMetadata');
   } else if (item.kind === 'torrent' && item.status === 'downloading') {
-    sub = (
-      <>
-        {t('status.downloading')} · {t('torrent.peers', { peers: item.torrent?.peers ?? 0, seeds: item.torrent?.seeders ?? 0 })}
-      </>
-    );
+    detailMeta = t('torrent.peers', { peers: item.torrent?.peers ?? 0, seeds: item.torrent?.seeders ?? 0 });
   } else if (item.status === 'downloading' && item.kind === 'http') {
-    sub = (
+    detailMeta = (
       <>
-        {t('status.downloading')} · {t('dl.connections', { active: item.activeConnections, total: item.connections })}
+        {t('dl.connections', { active: item.activeConnections, total: item.connections })}
         {item.retries > 0 && <> · {t('dl.retries', { count: item.retries })}</>}
       </>
     );
   } else if (active && item.media?.stage) {
-    sub = item.media.stage;
+    detailMeta = item.media.stage;
   } else if (item.status === 'completed') {
-    sub = (
+    detailMeta = (
       <>
         {item.checksum?.verified === true && <span className="badge success">{t('dl.checksumOk')}</span>}
         {item.checksum?.verified === false && <span className="badge danger">{t('dl.checksumBad')}</span>}
@@ -132,13 +133,7 @@ export const DownloadRow = memo(function DownloadRow({
       </>
     );
   } else if (item.status === 'queued' && waitingWindow) {
-    sub = (
-      <span className="waiting-window-hint">
-        <Clock size={11} /> {t('dl.waitingWindow')}
-      </span>
-    );
-  } else {
-    sub = t(`status.${item.status}` as MessageKey);
+    detailMeta = <Clock size={11} style={{ color: 'var(--warning)' }} />;
   }
 
   const size =
@@ -155,6 +150,7 @@ export const DownloadRow = memo(function DownloadRow({
       role="row"
       aria-selected={selected}
       tabIndex={isFocused ? 0 : -1}
+      data-status={item.status}
       draggable={item.status !== 'completed'}
       onDragStart={(e) => actions.dragStart?.(e, item)}
       onDragOver={(e) => actions.dragOver?.(e, item)}
@@ -186,9 +182,12 @@ export const DownloadRow = memo(function DownloadRow({
               {title}
             </span>
             <span className="s">
-              <span className={`status-dot ${item.status}`} />
+              <span className={`status-badge ${statusTone}`}>
+                <span className={`status-dot ${item.status}`} />
+                {statusLabel}
+              </span>
               {queueName && <span className="queue-tag">{queueName}</span>}
-              {sub}
+              {detailMeta && <span className="row-detail-meta">{detailMeta}</span>}
             </span>
           </div>
         </div>
