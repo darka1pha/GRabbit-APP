@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { existsSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { MediaFormat, SupportedLocale } from '../../config/constants.js';
 import { DeliveryError, MediaTooLargeError } from '../../core/errors/domain-errors.js';
 import { translate } from '../../i18n/index.js';
@@ -93,8 +94,12 @@ export class DeliveryService {
     }
 
     const safeName = sanitizeFilename(params.fileName);
-    const inputFile = new InputFile(params.filePath, safeName);
+    const useLocalFileUri = Boolean(config.TELEGRAM_API_ROOT && config.TELEGRAM_LOCAL_FILES);
+    const mediaSource: string | InputFile = useLocalFileUri
+      ? `file://${resolve(params.filePath)}`
+      : new InputFile(params.filePath, safeName);
     const hasThumbnail = Boolean(params.thumbnailPath && existsSync(params.thumbnailPath));
+    const thumbSource = hasThumbnail ? new InputFile(params.thumbnailPath!) : undefined;
 
     const caption = buildMediaCaption(
       params.title,
@@ -115,28 +120,28 @@ export class DeliveryService {
 
     try {
       if (params.format === 'audio') {
-        const sent = await this.bot.api.sendAudio(params.chatId, inputFile, {
+        const sent = await this.bot.api.sendAudio(params.chatId, mediaSource, {
           caption,
           parse_mode: 'HTML',
           title: params.title,
           performer: params.performerOrAuthor,
           duration: params.durationSeconds ? Math.round(params.durationSeconds) : undefined,
-          thumbnail: hasThumbnail ? new InputFile(params.thumbnailPath!) : undefined,
+          thumbnail: thumbSource,
         });
         return { telegramFileId: sent?.audio?.file_id };
       } else if (params.format === 'video') {
-        const sent = await this.bot.api.sendVideo(params.chatId, inputFile, {
+        const sent = await this.bot.api.sendVideo(params.chatId, mediaSource, {
           caption,
           parse_mode: 'HTML',
           duration: params.durationSeconds ? Math.round(params.durationSeconds) : undefined,
           width: params.width,
           height: params.height,
           supports_streaming: true,
-          thumbnail: hasThumbnail ? new InputFile(params.thumbnailPath!) : undefined,
+          thumbnail: thumbSource,
         });
         return { telegramFileId: sent?.video?.file_id };
       } else {
-        const sent = await this.bot.api.sendDocument(params.chatId, inputFile, {
+        const sent = await this.bot.api.sendDocument(params.chatId, mediaSource, {
           caption,
           parse_mode: 'HTML',
         });

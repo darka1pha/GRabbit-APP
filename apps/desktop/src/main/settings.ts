@@ -75,6 +75,7 @@ export function defaultSettings(): AppSettings {
       enableDht: true,
       handleMagnetLinks: false,
     },
+    siteRules: [],
   };
 }
 
@@ -147,6 +148,17 @@ function sanitize(s: AppSettings): AppSettings {
       enableDht: typeof s.torrent?.enableDht === 'boolean' ? s.torrent.enableDht : true,
       handleMagnetLinks: typeof s.torrent?.handleMagnetLinks === 'boolean' ? s.torrent.handleMagnetLinks : false,
     },
+    siteRules: Array.isArray(s.siteRules)
+      ? s.siteRules
+          .filter((r) => r && typeof r.domainPattern === 'string' && r.domainPattern.trim().length > 0)
+          .map((r) => ({
+            domainPattern: r.domainPattern.trim().toLowerCase(),
+            ...(r.maxConnections != null ? { maxConnections: clamp(r.maxConnections, 1, 32, d.defaultConnections) } : {}),
+            ...(r.customDirectory?.trim() ? { customDirectory: r.customDirectory.trim() } : {}),
+            ...(r.speedLimitKBps != null ? { speedLimitKBps: clamp(r.speedLimitKBps, 0, 10_000_000, 0) } : {}),
+            ...(r.headers && typeof r.headers === 'object' ? { headers: r.headers } : {}),
+          }))
+      : [],
   };
 }
 

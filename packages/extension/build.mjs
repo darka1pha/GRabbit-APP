@@ -1,25 +1,22 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import esbuild from 'esbuild';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(__dirname, 'src');
 const distDir = join(__dirname, 'dist');
+const firefoxDistDir = join(__dirname, 'dist-firefox');
 
-console.log('[GRabbit Extension Build] Starting build...');
+console.log('[GRabbit Extension Build] Starting esbuild...');
 
-// Clean dist
-if (existsSync(distDir)) {
-  rmSync(distDir, { recursive: true, force: true });
+for (const dir of [distDir, firefoxDistDir]) {
+  if (existsSync(dir)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  mkdirSync(dir, { recursive: true });
 }
-mkdirSync(distDir, { recursive: true });
 
-// 1. Copy Manifest & Icons
-cpSync(join(__dirname, 'manifest.json'), join(distDir, 'manifest.json'));
-cpSync(join(__dirname, 'icons'), join(distDir, 'icons'), { recursive: true });
-
-// 2. Copy Static assets (HTML, CSS)
 const staticFiles = [
   ['content/styles.css', 'content/styles.css'],
   ['popup/index.html', 'popup/index.html'],
@@ -28,63 +25,6 @@ const staticFiles = [
   ['options/styles.css', 'options/styles.css'],
 ];
 
-for (const [src, dest] of staticFiles) {
-  const fullSrc = join(srcDir, src);
-  const fullDest = join(distDir, dest);
-  mkdirSync(dirname(fullDest), { recursive: true });
-  cpSync(fullSrc, fullDest);
-}
-
-// 3. Shared modules cache for inlining
-const configTs = readFileSync(join(srcDir, 'shared', 'config.ts'), 'utf8')
-  .replace(/import\s*\{[^}]*\}\s*from\s*['"]@grabbit\/config['"];?/, `
-export const DEFAULT_RPC_PORT = 31542;
-export const DEFAULT_INTERCEPTED_EXTENSIONS = [
-  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso', 'img',
-  'exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'apk',
-  'mp4', 'mkv', 'webm', 'mov', 'avi', 'flv', 'ts', 'm4v',
-  'mp3', 'm4a', 'flac', 'wav', 'aac', 'ogg', 'opus',
-  'pdf', 'epub', 'bin', 'torrent'
-];
-`)
-  .replace(/import\s*type\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/g, '')
-  .replace(/export\s+/g, '');
-
-const rpcClientTs = readFileSync(join(srcDir, 'shared', 'rpc-client.ts'), 'utf8')
-  .replace(/import\s*type\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/g, '')
-  .replace(/export\s+class\s+ExtensionRpcClient/, 'class ExtensionRpcClient');
-
-function bundleEntry(entryRelativePath) {
-  const fullPath = join(srcDir, entryRelativePath);
-  let content = readFileSync(fullPath, 'utf8');
-
-  // Strip type imports
-  content = content.replace(/import\s+type\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?/g, '');
-
-  let inlinedShared = '';
-  if (content.includes("from '../shared/config'") || content.includes('from "../shared/config"')) {
-    content = content.replace(/import\s*\{[^}]*\}\s*from\s*['"]\.\.\/shared\/config['"];?/g, '');
-    inlinedShared += '\n' + configTs + '\n';
-  }
-  if (content.includes("from '../shared/rpc-client'") || content.includes('from "../shared/rpc-client"')) {
-    content = content.replace(/import\s*\{[^}]*\}\s*from\s*['"]\.\.\/shared\/rpc-client['"];?/g, '');
-    inlinedShared += '\n' + rpcClientTs + '\n';
-  }
-
-  const bundledTs = inlinedShared + '\n' + content;
-
-  // Transpile to clean ES2022 JavaScript
-  const transpileResult = ts.transpileModule(bundledTs, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-      removeComments: false,
-    },
-  });
-
-  return transpileResult.outputText;
-}
-
 const entries = [
   'background/index.ts',
   'content/index.ts',
@@ -92,13 +32,43 @@ const entries = [
   'options/index.ts',
 ];
 
+await esbuild.build({
+  entryPoints: entries.map((e) => join(srcDir, e)),
+  outdir: distDir,
+  outbase: srcDir,
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: ['chrome120', 'firefox121'],
+  sourcemap: false,
+  logLevel: 'silent',
+});
+
 for (const entry of entries) {
-  const jsOutput = bundleEntry(entry);
-  const outPath = join(distDir, entry.replace(/\.ts$/, '.js'));
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, jsOutput, 'utf8');
   console.log(`  ✓ Bundled ${entry} -> ${entry.replace(/\.ts$/, '.js')}`);
 }
 
-console.log('[GRabbit Extension Build] Build complete! Extension ready in packages/extension/dist/');
+for (const [src, dest] of staticFiles) {
+  const fullSrc = join(srcDir, src);
+  const fullDest = join(distDir, dest);
+  mkdirSync(dirname(fullDest), { recursive: true });
+  cpSync(fullSrc, fullDest);
+}
+cpSync(join(__dirname, 'icons'), join(distDir, 'icons'), { recursive: true });
 
+// Chrome MV3 manifest
+const baseManifest = JSON.parse(readFileSync(join(__dirname, 'manifest.json'), 'utf8'));
+writeFileSync(join(distDir, 'manifest.json'), JSON.stringify(baseManifest, null, 2) + '\n', 'utf8');
+
+// Firefox MV3 build (uses background.scripts for broad Firefox 109+ compatibility)
+cpSync(distDir, firefoxDistDir, { recursive: true });
+const firefoxManifest = {
+  ...baseManifest,
+  background: {
+    scripts: ['background/index.js'],
+    type: 'module',
+  },
+};
+writeFileSync(join(firefoxDistDir, 'manifest.json'), JSON.stringify(firefoxManifest, null, 2) + '\n', 'utf8');
+
+console.log('[GRabbit Extension Build] Build complete! Chrome -> dist/, Firefox -> dist-firefox/');

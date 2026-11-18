@@ -4,7 +4,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { shell } from 'electron';
 import { StoredDownloadItemSchema, StoredQueueSchema } from '@grabbit/schemas';
-import { magnetFor, parseMagnet, type TorrentMetadata } from '@grabbit/utils';
+import { isHttpUrl, isMagnetLink, magnetFor, matchDomainPattern, parseMagnet, type TorrentMetadata } from '@grabbit/utils';
 import type {
   AddHttpDownloadRequest,
   AddMediaDownloadRequest,
@@ -317,9 +317,17 @@ export class DownloadManager {
       const url = parseHttpUrl(req.url).toString();
       const lockedName = req.fileName?.trim() ? sanitizeFilename(req.fileName) : undefined;
       const guessed = lockedName ?? sanitizeFilename(filenameFromUrl(url) ?? '', 'download');
+      const parsedHost = new URL(url).hostname;
+      const siteRule = (settings.siteRules ?? []).find((r) => matchDomainPattern(parsedHost, r.domainPattern));
       const category = req.category ?? categoryForFileName(guessed);
-      const directory = req.directory?.trim() || this.directoryFor(category);
+      const directory = req.directory?.trim() || siteRule?.customDirectory?.trim() || this.directoryFor(category);
       const queueId = req.queueId && this.queues.has(req.queueId) ? req.queueId : 'main';
+      const mergedHeaders = {
+        ...(siteRule?.headers ?? {}),
+        ...(req.headers ?? {}),
+      };
+      const effectiveConns = req.connections ?? siteRule?.maxConnections ?? settings.defaultConnections;
+      const effectiveSpeedKBps = req.speedLimitKBps ?? siteRule?.speedLimitKBps ?? 0;
       const item: DownloadItem = {
         id: randomUUID(),
         kind: 'http',
@@ -329,7 +337,7 @@ export class DownloadManager {
         fileName: uniqueFileName(directory, guessed, this.reservedNames(directory)),
         fileNameLocked: Boolean(lockedName),
         directory,
-        autoPlace: !req.directory && !req.category,
+        autoPlace: !req.directory && !req.category && !siteRule?.customDirectory,
         category,
         queueId,
         status: req.startPaused ? 'paused' : 'queued',
@@ -338,10 +346,10 @@ export class DownloadManager {
         speed: 0,
         eta: null,
         resumable: false,
-        connections: Math.max(1, Math.min(32, req.connections ?? settings.defaultConnections)),
+        connections: Math.max(1, Math.min(32, effectiveConns)),
         activeConnections: 0,
-        headers: req.headers && Object.keys(req.headers).length > 0 ? req.headers : undefined,
-        speedLimit: req.speedLimitKBps ? req.speedLimitKBps * 1024 : 0,
+        headers: Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
+        speedLimit: effectiveSpeedKBps ? effectiveSpeedKBps * 1024 : 0,
         checksum: req.checksum?.expected
           ? { algorithm: req.checksum.algorithm, expected: req.checksum.expected.trim().toLowerCase() }
           : undefined,
@@ -398,6 +406,7 @@ export class DownloadManager {
           subtitleLang: req.subtitleLang,
           embedChapters: req.embedChapters,
           sponsorBlock: req.sponsorBlock,
+          timeRange: req.timeRange,
         },
       };
       this.insert(item);
@@ -1020,10 +1029,19 @@ export class DownloadManager {
     this.persist();
   }
 
+  private effectiveMediaRateLimit(item: DownloadItem): number | undefined {
+    const global = this.globalLimiter.rate;
+    const perItem = item.speedLimit ?? 0;
+    if (global > 0 && perItem > 0) return Math.min(global, perItem);
+    const active = global || perItem;
+    return active > 0 ? active : undefined;
+  }
+
   private async runMedia(item: DownloadItem, entry: RunningEntry): Promise<void> {
     const task = new MediaDownloadTask(item, {
       router: this.deps.router,
       tempRoot: this.deps.tempRoot,
+      speedLimitBytesPerSec: this.effectiveMediaRateLimit(item),
       onUpdate: () => this.markProgress(item),
     });
     const result = await task.run(entry.controller.signal);
@@ -1053,7 +1071,13 @@ export class DownloadManager {
       options: () => engine.options(),
       keepsSeeding: () => this.deps.getSettings().torrent.seedRatio > 0,
       onMetadata: (info) => this.onTorrentMetadata(item, info),
-      onSeeding: (gid) => this.seeding.set(item.id, gid),
+      onSeeding: (gid) => {
+        this.seeding.set(item.id, gid);
+        if (item.torrent) {
+          item.torrent.seeding = true;
+          this.markDirty(item);
+        }
+      },
       onUpdate: () => this.markProgress(item),
     });
     entry.torrent = task;
@@ -1108,8 +1132,14 @@ export class DownloadManager {
   }
 
   /** Stops aria2 seeding a finished torrent (before it is removed from the list). */
-  private async stopSeeding(id: string): Promise<void> {
+  public async stopSeeding(id: string): Promise<void> {
     const gid = this.seeding.get(id);
+    const item = this.items.get(id);
+    if (item?.torrent?.seeding) {
+      item.torrent.seeding = false;
+      this.markDirty(item);
+      this.persist();
+    }
     if (!gid || !this.deps.torrent) return;
     this.seeding.delete(id);
     try {
@@ -1119,6 +1149,88 @@ export class DownloadManager {
     } catch (err) {
       logger.warn({ err, id }, 'Could not stop seeding');
     }
+  }
+
+  /** Serializes non-secret download entries so users can back up or transfer their queue. */
+  public exportList(): string {
+    const entries = this.list().map((item) => ({
+      kind: item.kind,
+      url: item.url,
+      fileName: item.fileName,
+      category: item.category,
+      queueId: item.queueId,
+      checksum: item.checksum ? { algorithm: item.checksum.algorithm, expected: item.checksum.expected } : undefined,
+      media: item.media,
+    }));
+    return JSON.stringify({ version: 1, exportedAt: Date.now(), items: entries }, null, 2);
+  }
+
+  /** Imports either an exported JSON list or newline-separated HTTP/magnet URLs (paused by default). */
+  public async importList(payload: string): Promise<DownloadItem[]> {
+    const trimmed = payload.trim();
+    if (!trimmed) return [];
+    const added: DownloadItem[] = [];
+
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      const parsed = JSON.parse(trimmed) as { items?: any[] } | any[];
+      const rawItems = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.items) ? parsed.items : [];
+      const httpReqs: AddHttpDownloadRequest[] = [];
+      const mediaReqs: AddMediaDownloadRequest[] = [];
+      const torrentReqs: AddTorrentDownloadRequest[] = [];
+      for (const entry of rawItems.slice(0, 1000)) {
+        if (!entry || typeof entry.url !== 'string') continue;
+        if (entry.kind === 'torrent' || isMagnetLink(entry.url)) {
+          torrentReqs.push({ magnet: entry.url, startPaused: true, queueId: entry.queueId });
+        } else if (entry.kind === 'media' && entry.media) {
+          mediaReqs.push({
+            url: entry.url,
+            platform: entry.media.platform,
+            mediaId: entry.media.mediaId,
+            format: entry.media.format,
+            qualityId: entry.media.qualityId,
+            title: entry.media.title || entry.fileName || 'Media',
+            author: entry.media.author,
+            thumbnailUrl: entry.media.thumbnailUrl,
+            durationSeconds: entry.media.durationSeconds,
+            estimatedSizeBytes: entry.media.estimatedSizeBytes,
+            subtitles: entry.media.subtitles,
+            subtitleLang: entry.media.subtitleLang,
+            embedChapters: entry.media.embedChapters,
+            sponsorBlock: entry.media.sponsorBlock,
+            timeRange: entry.media.timeRange,
+            startPaused: true,
+            queueId: entry.queueId,
+          });
+        } else if (isHttpUrl(entry.url)) {
+          httpReqs.push({
+            url: entry.url,
+            fileName: entry.fileName,
+            category: entry.category,
+            checksum: entry.checksum,
+            startPaused: true,
+            queueId: entry.queueId,
+          });
+        }
+      }
+      if (httpReqs.length) added.push(...this.addHttp(httpReqs));
+      if (mediaReqs.length) added.push(...this.addMedia(mediaReqs));
+      if (torrentReqs.length) added.push(...(await this.addTorrent(torrentReqs)));
+      return added;
+    }
+
+    const lines = trimmed
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'));
+    const httpReqs: AddHttpDownloadRequest[] = [];
+    const torrentReqs: AddTorrentDownloadRequest[] = [];
+    for (const line of lines.slice(0, 1000)) {
+      if (isMagnetLink(line)) torrentReqs.push({ magnet: line, startPaused: true });
+      else if (isHttpUrl(line)) httpReqs.push({ url: line, startPaused: true });
+    }
+    if (httpReqs.length) added.push(...this.addHttp(httpReqs));
+    if (torrentReqs.length) added.push(...(await this.addTorrent(torrentReqs)));
+    return added;
   }
 
   private onSuccess(item: DownloadItem): void {

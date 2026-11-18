@@ -16,7 +16,9 @@ export function isArchive(filePath: string): boolean {
     lower.endsWith('.tar.gz') ||
     lower.endsWith('.tgz') ||
     lower.endsWith('.tar') ||
-    lower.endsWith('.tar.bz2')
+    lower.endsWith('.tar.bz2') ||
+    lower.endsWith('.7z') ||
+    lower.endsWith('.rar')
   );
 }
 
@@ -61,6 +63,29 @@ export async function extractArchive(
       logger.error({ err: psErr, archivePath }, 'PowerShell Expand-Archive fallback failed');
       return { success: false, extractedPath: destinationDir, error: String(psErr) };
     }
+  }
+
+  // .7z / .rar support via 7-Zip or UnRAR (if installed on system)
+  if (lower.endsWith('.7z') || lower.endsWith('.rar')) {
+    const candidates = lower.endsWith('.rar')
+      ? ['unrar', 'C:\\Program Files\\WinRAR\\UnRAR.exe', '7z', 'C:\\Program Files\\7-Zip\\7z.exe']
+      : ['7z', '7za', 'C:\\Program Files\\7-Zip\\7z.exe'];
+    for (const bin of candidates) {
+      if (bin.includes('\\') && !existsSync(bin)) continue;
+      try {
+        const isUnrar = /unrar/i.test(bin);
+        const args = isUnrar ? ['x', '-y', '-o+', archivePath, destinationDir] : ['x', '-y', `-o${destinationDir}`, archivePath];
+        await execFileAsync(bin, args, { timeout: 180_000, windowsHide: true });
+        return { success: true, extractedPath: destinationDir };
+      } catch {
+        // try next candidate
+      }
+    }
+    return {
+      success: false,
+      extractedPath: destinationDir,
+      error: `Install 7-Zip${lower.endsWith('.rar') ? ' or WinRAR' : ''} to auto-extract ${lower.endsWith('.rar') ? '.rar' : '.7z'} archives`,
+    };
   }
 
   return { success: false, extractedPath: destinationDir, error: 'No compatible extraction tool succeeded' };
@@ -137,7 +162,7 @@ export async function executePostDownloadAutomation(
   // 1. Archive Auto-Extraction
   if (auto.autoExtractArchives && isArchive(item.filePath)) {
     try {
-      const baseName = item.fileName.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tar)$/i, '');
+      const baseName = item.fileName.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tar|7z|rar)$/i, '');
       const destDir = auto.extractToSubfolder ? join(item.directory, baseName) : item.directory;
       const result = await extractArchive(item.filePath, destDir);
       if (result.success) {

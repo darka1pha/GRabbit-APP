@@ -365,6 +365,7 @@ export function createCallbackHandler(
         qualityId,
         statusMessageId: ctx.callbackQuery?.message?.message_id,
         isVip,
+        timeRange: cached.timeRange,
       });
 
       previewCache.delete(cacheKey);

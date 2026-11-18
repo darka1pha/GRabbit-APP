@@ -23,6 +23,7 @@ services:
       REDIS_URL: redis://redis:6379
       TEMP_DIR: /app/temp
       TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-http://telegram-bot-api:8081}
+      TELEGRAM_LOCAL_FILES: ${TELEGRAM_LOCAL_FILES:-true}
       YTDLP_PATH: yt-dlp
       FFMPEG_PATH: ffmpeg
       FFPROBE_PATH: ffprobe

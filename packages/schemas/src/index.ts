@@ -85,6 +85,10 @@ export const HeadersSchema = z
   .refine((h) => Object.keys(h).length <= 64, 'Too many headers');
 /** HH:MM, or '' for "not set" (a cleared time field). */
 const TimeOfDaySchema = z.string().regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, 'Expected HH:MM');
+export const TimeRangeSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{1,3}(?::[0-5]\d){1,2}-\d{1,3}(?::[0-5]\d){1,2}$/, 'Expected MM:SS-MM:SS or HH:MM:SS-HH:MM:SS');
 
 export const AddHttpDownloadRequestSchema = z.object({
   url: UrlTextSchema,
@@ -119,6 +123,7 @@ export const AddMediaDownloadRequestSchema = z.object({
   subtitleLang: opt(z.string().regex(/^[a-zA-Z0-9,._*-]{1,32}$/, 'Invalid subtitle language selector')),
   embedChapters: opt(z.boolean()),
   sponsorBlock: opt(z.boolean()),
+  timeRange: opt(TimeRangeSchema),
 });
 
 /** A magnet link or a .torrent file path, never both. Contents are checked by the download manager. */
@@ -170,6 +175,14 @@ export const AutomationSettingsSchema = z.object({
   deleteArchiveAfterExtraction: z.boolean(),
   customCommand: text(2048),
   playCompletionSound: z.boolean(),
+});
+
+export const SiteRuleSchema = z.object({
+  domainPattern: z.string().trim().min(1).max(255),
+  maxConnections: z.number().int().min(1).max(32).optional(),
+  customDirectory: text(1024).optional(),
+  speedLimitKBps: count.optional(),
+  headers: HeadersSchema.optional(),
 });
 
 export const SpeedScheduleSettingsSchema = z.object({
@@ -237,6 +250,7 @@ export const SettingsPatchSchema = z
         handleMagnetLinks: z.boolean(),
       })
       .partial(),
+    siteRules: z.array(SiteRuleSchema).max(100),
   })
   .partial();
 

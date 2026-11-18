@@ -13,7 +13,8 @@ import {
   ProbeResult,
   AddHttpDownloadRequest,
 } from '@grabbit/types';
-import { base64ToBytes, createIncrementalHasher } from '@grabbit/utils';
+import { base64ToBytes, createIncrementalHasher, detectCategory } from '@grabbit/utils';
+import { isScheduleWindowActive } from '@grabbit/core';
 import { mobileSettingsManager } from './settings-manager';
 import { mobileBridge } from './bridge';
 import { notificationService } from './notification-service';
@@ -61,23 +62,7 @@ export interface MobileDownloadTask {
   completedAt?: number;
 }
 
-export function detectCategory(urlOrFileName: string, mimeType?: string): Category {
-  const clean = urlOrFileName.toLowerCase().split('?')[0];
-  if (mimeType) {
-    if (mimeType.startsWith('video/')) return 'video';
-    if (mimeType.startsWith('audio/')) return 'music';
-    if (mimeType.startsWith('image/')) return 'images';
-    if (mimeType.includes('pdf') || mimeType.includes('text') || mimeType.includes('document')) return 'documents';
-    if (mimeType.includes('zip') || mimeType.includes('tar') || mimeType.includes('compressed') || mimeType.includes('archive')) return 'compressed';
-  }
-  if (/\.(mp4|mkv|webm|avi|mov|flv|wmv|m4v|3gp|ts)$/i.test(clean)) return 'video';
-  if (/\.(mp3|m4a|flac|wav|aac|ogg|opus|wma|aiff|alac)$/i.test(clean)) return 'music';
-  if (/\.(pdf|docx?|xlsx?|pptx?|epub|txt|rtf|odt|csv)$/i.test(clean)) return 'documents';
-  if (/\.(zip|rar|7z|tar|gz|tgz|bz2|xz|zst|iso|img)$/i.test(clean)) return 'compressed';
-  if (/\.(apk|aab|exe|msi|dmg|pkg|deb|rpm|appimage)$/i.test(clean)) return 'programs';
-  if (/\.(jpe?g|png|gif|webp|svg|bmp|ico|tiff?)$/i.test(clean)) return 'images';
-  return 'other';
-}
+export { detectCategory };
 
 export type DownloadListener = (tasks: MobileDownloadTask[]) => void;
 export type QueueListener = (queues: DownloadQueue[]) => void;
@@ -406,23 +391,11 @@ class MobileDownloadManager {
 
   private checkQueueSchedules() {
     const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
     let changed = false;
 
     for (const q of this.queues.values()) {
-      if (q.scheduler?.enabled && q.scheduler.startTime && q.scheduler.stopTime) {
-        const [startH, startM] = q.scheduler.startTime.split(':').map(Number);
-        const [stopH, stopM] = q.scheduler.stopTime.split(':').map(Number);
-        const startMin = (startH || 0) * 60 + (startM || 0);
-        const stopMin = (stopH || 0) * 60 + (stopM || 0);
-
-        let inWindow: boolean;
-        if (startMin <= stopMin) {
-          inWindow = currentMinutes >= startMin && currentMinutes < stopMin;
-        } else {
-          // Window crosses midnight
-          inWindow = currentMinutes >= startMin || currentMinutes < stopMin;
-        }
+      if (q.scheduler?.enabled && q.scheduler.startTime) {
+        const inWindow = isScheduleWindowActive(q.scheduler, now);
 
         if (inWindow && !q.enabled) {
           q.enabled = true;
@@ -850,6 +823,17 @@ class MobileDownloadManager {
         this.notifyTasks();
         this.persistTasksImmediately();
         notificationService.notifyDownloadCompleted(task).catch(() => {});
+        const finishedQueue = this.queues.get(task.queueId);
+        if (finishedQueue?.enabled && finishedQueue.afterQueue === 'stopQueue') {
+          const hasPendingInQueue = Array.from(this.tasks.values()).some(
+            (t) => t.queueId === finishedQueue.id && (t.status === 'queued' || t.status === 'downloading')
+          );
+          if (!hasPendingInQueue) {
+            finishedQueue.enabled = false;
+            this.notifyQueues();
+            this.persistQueuesImmediately();
+          }
+        }
         this.pumpQueues();
       }
     } catch (err: any) {

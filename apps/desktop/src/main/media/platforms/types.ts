@@ -14,6 +14,8 @@ export interface DownloadRequest {
   subtitleLang?: string;
   embedChapters?: boolean;
   sponsorBlock?: boolean;
+  timeRange?: string;
+  speedLimitBytesPerSec?: number;
   onProgress?: (progress: DownloadProgress) => void;
   onStage?: (stage: string) => void;
   signal?: AbortSignal;

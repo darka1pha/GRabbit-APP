@@ -118,6 +118,7 @@ download-select-format = 👇 Choose a format:
 btn-audio = 🎵 Audio ({ $ext })
 btn-audio-original = 🎧 Audio ({ $ext }) · Best quality
 btn-video = 🎬 Video ({ $quality })
+btn-subtitles = 📝 Subtitles (.srt)
 btn-cancel = ❌ Cancel
 btn-close = ✖️ Close
 
@@ -181,6 +182,7 @@ spotify-send-track = ℹ️ This bot can’t list Spotify albums or playlists ri
 collection-meta = 👤 { $author } · 🌐 { $platform } · { $count } tracks
 collection-hint = Tap a number to open a track, or download them all as audio.
 collection-btn-all = ⬇️ Download all as audio ({ $count })
+collection-btn-all-video = 🎬 Download all as video ({ $count })
 collection-btn-next = ⬇️ Queue the next ones ({ $count } left)
 collection-queued = ✅ Queued { $count }. You can run { $limit } downloads at a time, so tap again for the remaining { $left } once these finish.
 collection-all-queued = ✅ Queued { $count }. That’s every track.

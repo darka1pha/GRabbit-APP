@@ -23,6 +23,8 @@ export type ExtensionMessageType =
   | 'CHECK_CONNECTION'
   | 'CHECK_EXTENSION_UPDATE'
   | 'RELOAD_EXTENSION'
+  | 'GET_DOWNLOADS_STATUS'
+  | 'CONTROL_DOWNLOAD'
   | 'GET_CONFIG'
   | 'SAVE_CONFIG';
 
@@ -133,6 +135,7 @@ declare global {
       }
       const sync: StorageArea;
       const local: StorageArea;
+      const session: StorageArea | undefined;
     }
 
     namespace tabs {
@@ -142,6 +145,12 @@ declare global {
         title?: string;
         active?: boolean;
       }
+      const onRemoved: {
+        addListener(callback: (tabId: number) => void): void;
+      };
+      const onUpdated: {
+        addListener(callback: (tabId: number, changeInfo: { url?: string; status?: string }) => void): void;
+      };
       function query(queryInfo: {
         active?: boolean;
         currentWindow?: boolean;

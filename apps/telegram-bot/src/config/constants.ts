@@ -34,6 +34,7 @@ export type JobStatus = (typeof JOB_STATUSES)[keyof typeof JOB_STATUSES];
 export const MEDIA_FORMATS = {
   AUDIO: 'audio',
   VIDEO: 'video',
+  DOCUMENT: 'document',
 } as const;
 
 export type MediaFormat = (typeof MEDIA_FORMATS)[keyof typeof MEDIA_FORMATS];

@@ -102,6 +102,12 @@ export function createFormatSelectionKeyboard(options: {
     }
   });
 
+  if (videoOptions.length > 0) {
+    keyboard
+      .text(translate(options.locale, 'btn-subtitles'), `dl:${options.jobKey}:document:subtitles`)
+      .row();
+  }
+
   const cancelLabel = translate(options.locale, 'btn-cancel');
   keyboard.text(cancelLabel, `cancel:preview:${options.jobKey}`).danger();
 

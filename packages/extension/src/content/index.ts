@@ -125,17 +125,30 @@ function extractDownloadableLinks(): ExtractedLink[] {
   for (const el of Array.from(elements)) {
     try {
       const href = el.href;
-      if (!href || !href.startsWith('http')) continue;
+      if (!href) continue;
       if (seenUrls.has(href)) continue;
 
+      const isMagnet = /^magnet:\?/i.test(href);
+      if (!isMagnet && !href.startsWith('http')) continue;
+
+      const hasDownloadAttr = el.hasAttribute('download');
+      const isMediaOrFile =
+        isMagnet ||
+        hasDownloadAttr ||
+        isDirectMediaFileUrl(href) ||
+        isHlsOrDashUrl(href) ||
+        shouldInterceptDownload(href, el.getAttribute('download') || '', currentConfig);
+
+      if (!isMediaOrFile) continue;
+
       const ext = extractFileExtension(href);
-      const text = el.innerText?.trim() || el.title?.trim() || ext || 'File';
+      const text = el.innerText?.trim() || el.title?.trim() || ext || (isMagnet ? 'Magnet' : 'File');
 
       seenUrls.add(href);
       links.push({
         url: href,
         text: text.slice(0, 100),
-        fileName: href.split('/').pop()?.split('?')[0],
+        fileName: isMagnet ? undefined : href.split('/').pop()?.split('?')[0],
       });
     } catch {
       // ignore
@@ -341,6 +354,23 @@ function scanMediaElements(): void {
     if (parentMedia) {
       inspectMediaElement(parentMedia);
     }
+  }
+
+  // Scan PerformanceResourceTiming entries for XHR/fetch-loaded HLS/DASH manifests (.m3u8/.mpd)
+  try {
+    const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+    for (const entry of resources) {
+      if (entry.name && entry.name.startsWith('http') && isHlsOrDashUrl(entry.name)) {
+        notifyMediaDetected({
+          url: entry.name,
+          title: getMediaTitle(),
+          format: 'video',
+          quality: entry.name.toLowerCase().includes('.m3u8') ? 'HLS Stream (.m3u8)' : 'DASH Manifest (.mpd)',
+        });
+      }
+    }
+  } catch {
+    // ignore
   }
 
   // Also detect supported streaming pages even before <video> finishes mounting

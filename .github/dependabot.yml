@@ -8,9 +8,11 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     groups:
-      # Minor and patch bumps land together; majors get their own PR to review
+      # Minor and patch bumps land together; majors also group weekly to avoid sequential lockfile conflicts
       minor-and-patch:
         update-types: [minor, patch]
+      majors:
+        update-types: [major]
     ignore:
       # Expo pins react-native, react and its own modules to one SDK; upgrade those as one change
       - dependency-name: react-native

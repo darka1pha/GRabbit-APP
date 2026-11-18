@@ -51,6 +51,7 @@ export interface DownloadRequest {
   format: MediaFormat;
   qualityId: string;
   outputPath: string;
+  timeRange?: string;
   onProgress?: (progress: DownloadProgress) => Promise<void> | void;
   signal?: AbortSignal;
 }

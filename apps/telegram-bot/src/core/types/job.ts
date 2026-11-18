@@ -36,4 +36,5 @@ export interface MediaJobPayload {
   qualityId: string;
   locale: SupportedLocale;
   userTier?: UserTier;
+  timeRange?: string;
 }

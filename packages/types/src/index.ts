@@ -126,6 +126,8 @@ export interface MediaJobInfo {
   subtitleLang?: string;
   embedChapters?: boolean;
   sponsorBlock?: boolean;
+  /** Optional time-range clip (e.g. "00:30-01:45" or "01:10:00-01:12:30"). */
+  timeRange?: string;
 }
 
 export interface TorrentFileInfo {
@@ -165,6 +167,8 @@ export interface TorrentJobInfo extends TorrentLiveStats {
   pickFiles?: boolean;
   /** Paused, waiting for the user to choose which files to download. */
   needsSelection?: boolean;
+  /** Completed torrent is currently seeding in aria2. */
+  seeding?: boolean;
 }
 
 export interface DownloadItem {
@@ -312,6 +316,8 @@ export interface AddMediaDownloadRequest {
   subtitleLang?: string;
   embedChapters?: boolean;
   sponsorBlock?: boolean;
+  /** Optional time-range clip (e.g. "00:30-01:45" or "01:10:00-01:12:30"). */
+  timeRange?: string;
 }
 
 /** Exactly one of `magnet` and `torrentPath` is set. */
@@ -404,6 +410,15 @@ export interface SpeedScheduleSettings {
   days?: number[];
 }
 
+export interface SiteRule {
+  /** Exact domain (e.g. "example.com") or wildcard ("*.example.com"). */
+  domainPattern: string;
+  maxConnections?: number;
+  customDirectory?: string;
+  speedLimitKBps?: number;
+  headers?: Record<string, string>;
+}
+
 export interface TorrentSettings {
   /** Keep seeding until this upload/download ratio, 0 = stop as soon as the download completes. */
   seedRatio: number;
@@ -470,6 +485,8 @@ export interface AppSettings {
   };
   extension: ExtensionSettings;
   torrent: TorrentSettings;
+  /** Optional per-domain overrides (connections, folder, speed cap, headers). */
+  siteRules?: SiteRule[];
   /** Whether the user has completed the initial onboarding wizard. */
   onboarded?: boolean;
 }
@@ -607,6 +624,9 @@ export interface GrabbitApi {
     showInFolder(id: string): Promise<void>;
     copyUrl(id: string): Promise<void>;
     createTransferLink(id: string): Promise<LanTransferInfo | null>;
+    stopSeeding(id: string): Promise<void>;
+    exportList(): Promise<string>;
+    importList(payload: string): Promise<DownloadItem[]>;
     /** Whole items: new downloads and anything other than running progress. */
     onChanged(listener: (items: DownloadItem[]) => void): () => void;
     /** Running progress of active downloads. */
@@ -701,6 +721,9 @@ export const IPC = {
   downloadsShowInFolder: 'downloads:show-in-folder',
   downloadsCopyUrl: 'downloads:copy-url',
   downloadsCreateTransferLink: 'downloads:create-transfer-link',
+  downloadsStopSeeding: 'downloads:stop-seeding',
+  downloadsExportList: 'downloads:export-list',
+  downloadsImportList: 'downloads:import-list',
   downloadsChanged: 'downloads:changed',
   downloadsProgress: 'downloads:progress',
   downloadsAggregate: 'downloads:aggregate',

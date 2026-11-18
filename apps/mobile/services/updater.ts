@@ -3,7 +3,7 @@ import * as Linking from 'expo-linking';
 import * as IntentLauncher from 'expo-intent-launcher';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { compareSemver } from '@grabbit/utils';
+import { base64ToBytes, compareSemver, createIncrementalHasher, parseSha256Sums } from '@grabbit/utils';
 
 const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/darka1pha/GRabbit-APP/releases/latest';
 const GITHUB_RELEASES_PAGE = 'https://github.com/darka1pha/GRabbit-APP/releases/latest';
@@ -24,6 +24,8 @@ export interface MobileUpdateStatus {
   progressPercent?: number;
   downloadUrl?: string;
   releaseUrl?: string;
+  checksumsUrl?: string;
+  assetName?: string;
   localUri?: string;
   error?: string;
 }
@@ -164,6 +166,7 @@ export class MobileUpdaterService {
       const apkAsset = assets.find(
         (a) => typeof a.name === 'string' && a.name.toLowerCase().endsWith('.apk')
       );
+      const checksumAsset = assets.find((a) => a.name === 'SHA256SUMS.txt');
       const downloadUrl = apkAsset?.browser_download_url || releaseUrl;
 
       const status = this.emit({
@@ -172,6 +175,8 @@ export class MobileUpdaterService {
         latestVersion,
         downloadUrl,
         releaseUrl,
+        checksumsUrl: checksumAsset?.browser_download_url,
+        assetName: apkAsset?.name,
       });
 
       return {
@@ -255,17 +260,21 @@ export class MobileUpdaterService {
 
       const targetUri = `${cacheDir}GRabbit-v${version}.apk`;
 
-      // If the target file already exists and is completely downloaded, launch it directly
+      // If the target file already exists, verify its SHA-256 against SHA256SUMS.txt before reusing
       try {
         const existingInfo = await FileSystem.getInfoAsync(targetUri);
         if (existingInfo.exists && existingInfo.size > 2000000) {
-          this.emit({
-            state: 'installing',
-            progressPercent: 100,
-            localUri: targetUri,
-          });
-          await this.launchApkInstaller(targetUri, downloadUrl);
-          return this.status;
+          const ok = await this.verifyApkChecksum(targetUri, version);
+          if (ok) {
+            this.emit({
+              state: 'installing',
+              progressPercent: 100,
+              localUri: targetUri,
+            });
+            await this.launchApkInstaller(targetUri, downloadUrl);
+            return this.status;
+          }
+          await FileSystem.deleteAsync(targetUri, { idempotent: true }).catch(() => {});
         }
       } catch {
         // Proceed with download
@@ -304,6 +313,12 @@ export class MobileUpdaterService {
       ) {
         await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
         throw new Error('Downloaded update file is incomplete or invalid');
+      }
+
+      const checksumValid = await this.verifyApkChecksum(result.uri, version);
+      if (!checksumValid) {
+        await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+        throw new Error('APK checksum verification failed (SHA256SUMS.txt mismatch)');
       }
 
       this.emit({
@@ -372,6 +387,39 @@ export class MobileUpdaterService {
     }
 
     throw new Error('APK installation is only supported on Android devices');
+  }
+
+  private async verifyApkChecksum(localUri: string, version: string): Promise<boolean> {
+    const checksumsUrl = this.status.checksumsUrl;
+    if (!checksumsUrl) return true;
+    try {
+      const res = await fetch(checksumsUrl);
+      if (!res.ok) return true;
+      const sums = parseSha256Sums(await res.text());
+      const expectedName = this.status.assetName || `GRabbit-v${version}.apk`;
+      const expected = sums.get(expectedName) ?? sums.get('GRabbit-Android-release.apk');
+      if (!expected) return true;
+
+      const info = await FileSystem.getInfoAsync(localUri);
+      if (!info.exists || typeof (info as any).size !== 'number') return false;
+      const totalSize = (info as any).size as number;
+      const CHUNK_SIZE = 256 * 1024;
+      const hasher = createIncrementalHasher('sha256');
+      let pos = 0;
+      while (pos < totalSize) {
+        const len = Math.min(CHUNK_SIZE, totalSize - pos);
+        const b64 = await FileSystem.readAsStringAsync(localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+          position: pos,
+          length: len,
+        });
+        hasher.update(base64ToBytes(b64));
+        pos += len;
+      }
+      return hasher.digestHex().toLowerCase() === expected;
+    } catch {
+      return true;
+    }
   }
 }
 

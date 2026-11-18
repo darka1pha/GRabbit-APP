@@ -82,6 +82,9 @@ export class SocialVideoAdapter implements IPlatformAdapter {
     const outputTemplate = `${request.outputPath}/${this.platformId}-%(id)s.%(ext)s`;
 
     const extraArgs: string[] = ['--embed-metadata'];
+    if (request.timeRange) {
+      extraArgs.push('--download-sections', `*${request.timeRange}`);
+    }
     if (isAudio) {
       extraArgs.push(
         '--extract-audio',

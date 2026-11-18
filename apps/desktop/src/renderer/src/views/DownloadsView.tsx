@@ -784,6 +784,33 @@ export function DownloadsView({
                     {density === opt && <span>✓</span>}
                   </button>
                 ))}
+                <div className="dropdown-popover-divider" />
+                <button
+                  className="dropdown-popover-item"
+                  onClick={() => {
+                    setShowViewMenu(false);
+                    void run(async () => {
+                      const json = await api.downloads.exportList();
+                      await navigator.clipboard.writeText(json);
+                      toast(t('dl.exportedToast', { count: downloads.length }), 'success');
+                    });
+                  }}
+                >
+                  <span>{t('dl.exportList')}</span>
+                </button>
+                <button
+                  className="dropdown-popover-item"
+                  onClick={() => {
+                    setShowViewMenu(false);
+                    void run(async () => {
+                      const text = await navigator.clipboard.readText();
+                      const imported = await api.downloads.importList(text);
+                      toast(t('dl.importedToast', { count: imported.length }), imported.length > 0 ? 'success' : 'info');
+                    });
+                  }}
+                >
+                  <span>{t('dl.importList')}</span>
+                </button>
               </div>
             )}
           </div>

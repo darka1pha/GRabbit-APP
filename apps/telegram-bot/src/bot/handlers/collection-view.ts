@@ -82,7 +82,11 @@ export function buildCollectionView(
       queued.size === 0
         ? ctx.t('collection-btn-all', { count: remaining })
         : ctx.t('collection-btn-next', { count: remaining });
-    keyboard.text(label, `col:all:${key}:${safePage}`).success().row();
+    keyboard.text(label, `col:all:${key}:${safePage}:audio`).success().row();
+    const hasVideo = pendingItems(entry).some((i) => i.availableOptions.some((o) => o.format === 'video'));
+    if (hasVideo) {
+      keyboard.text(ctx.t('collection-btn-all-video', { count: remaining }), `col:all:${key}:${safePage}:video`).primary().row();
+    }
   }
   keyboard.text(ctx.t('btn-close'), `cancel:preview:${key}`);
 
@@ -96,7 +100,7 @@ export async function handleCollectionCallback(
   jobRepo: JobRepository,
   edit: (text: string, keyboard: InlineKeyboard) => Promise<void>
 ): Promise<void> {
-  const [, action, key, rawArg] = data.split(':');
+  const [, action, key, rawArg, rawFormat] = data.split(':');
   const entry = (await previewCache.getAsync(key)) as CollectionEntry | undefined;
   if (!entry) {
     await ctx.editMessageText(ctx.t('error-preview-expired')).catch(() => {});
@@ -126,6 +130,7 @@ export async function handleCollectionCallback(
       throw new ConcurrentJobLimitError(maxConcurrent);
     }
 
+    const batchFormat = rawFormat === 'video' ? 'video' : 'audio';
     const batch = pendingItems(entry).slice(0, freeSlots);
     let position = activeCount;
     for (const item of batch) {
@@ -135,19 +140,24 @@ export async function handleCollectionCallback(
       const card = await ctx.reply(
         renderStatusCard(
           item.title,
-          'audio',
+          batchFormat,
           escapeHtml(ctx.t('download-queued', { position }))
         ),
         { parse_mode: 'HTML', reply_markup: createJobProgressKeyboard(ctx.locale, jobId) }
       );
+      const chosenOption =
+        batchFormat === 'video'
+          ? item.availableOptions.find((o) => o.format === 'video' && o.qualityId === '720p') ||
+            item.availableOptions.find((o) => o.format === 'video')
+          : item.availableOptions.find((o) => o.format === 'audio');
       await enqueueDownload(ctx, jobRepo, {
         id: jobId,
         platform: entry.metadata.platform,
         url: item.url,
         mediaId: item.id,
         title: item.title,
-        format: 'audio',
-        qualityId: item.availableOptions.find((o) => o.format === 'audio')?.qualityId || 'bestaudio',
+        format: chosenOption?.format ?? batchFormat,
+        qualityId: chosenOption?.qualityId || (batchFormat === 'video' ? '720p' : 'bestaudio'),
         statusMessageId: card.message_id,
         isVip,
       });

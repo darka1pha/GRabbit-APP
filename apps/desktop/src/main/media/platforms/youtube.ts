@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseTimeRange } from '@grabbit/utils';
 import type { MediaOption, PlatformMetadata } from '../../../shared/types';
 import { getMediaConfig } from '../config';
 import { YtDlpMetadata, YtDlpRunner } from '../ytdlp-runner';
@@ -154,6 +155,16 @@ export function buildFormatArgs(request: DownloadRequest): { formatSelector: str
   const sharedExtra: string[] = [];
   if (request.embedChapters) {
     sharedExtra.push('--embed-chapters');
+  }
+
+  if (request.timeRange) {
+    const parsed = parseTimeRange(request.timeRange);
+    if (parsed) {
+      sharedExtra.push('--download-sections', `*${parsed.formatted}`);
+    }
+  }
+  if (request.speedLimitBytesPerSec && request.speedLimitBytesPerSec > 0) {
+    sharedExtra.push('--limit-rate', String(Math.round(request.speedLimitBytesPerSec)));
   }
 
   if (request.format === 'audio') {

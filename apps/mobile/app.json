@@ -65,17 +65,23 @@
       "expo-asset",
       "expo-font",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow GRabbit to use the camera to scan Desktop pairing QR codes."
+        }
+      ],
+      [
         "expo-video",
         {
-          "supportsBackgroundPlayback": false,
-          "supportsPictureInPicture": false
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
         }
       ],
       [
         "expo-audio",
         {
           "recordAudioAndroid": false,
-          "enableBackgroundPlayback": false,
+          "enableBackgroundPlayback": true,
           "enableBackgroundRecording": false
         }
       ]
