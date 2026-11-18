@@ -33,7 +33,15 @@ export function parseShazamTrack(result: RawShazamResult | null | undefined): Re
   if (!appleMusicUrl && Array.isArray(track.hub?.options)) {
     appleMusicUrl = track.hub.options
       .flatMap((o: Record<string, any>) => (Array.isArray(o?.actions) ? o.actions : []))
-      .find((a: Record<string, any>) => typeof a?.uri === 'string' && a.uri.startsWith('https://music.apple.com'))?.uri;
+      .find((a: Record<string, any>) => {
+        if (typeof a?.uri !== 'string') return false;
+        try {
+          const parsed = new URL(a.uri);
+          return parsed.protocol === 'https:' && parsed.hostname === 'music.apple.com';
+        } catch {
+          return false;
+        }
+      })?.uri;
   }
 
   return {

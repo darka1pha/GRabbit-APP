@@ -874,7 +874,11 @@ export function extractUrlAndTimeRange(text?: string | null): { url: string | nu
   if (!text) return { url: null };
   const urlMatch = /https?:\/\/[^\s<>"{}|\\^`[\]]+/i.exec(text);
   if (!urlMatch) return { url: null };
-  const url = urlMatch[0].replace(/[.,!;?)]+$/, '');
+  let urlEnd = urlMatch[0].length;
+  while (urlEnd > 0 && '.,!;?)'.includes(urlMatch[0][urlEnd - 1])) {
+    urlEnd--;
+  }
+  const url = urlMatch[0].slice(0, urlEnd);
   const remainder = text.slice(urlMatch.index + urlMatch[0].length);
   const rangeMatch = /(?:^|\s)(\d{1,3}(?::\d{2}){1,2}\s*-\s*\d{1,3}(?::\d{2}){1,2})(?:\s|$)/.exec(remainder);
   const parsedRange = rangeMatch ? parseTimeRange(rangeMatch[1]) : null;
@@ -886,10 +890,16 @@ export function extractUrlAndTimeRange(text?: string | null): { url: string | nu
  */
 export function parseSha256Sums(content: string): Map<string, string> {
   const map = new Map<string, string>();
-  for (const line of content.split(/\r?\n/)) {
-    const m = /^([a-fA-F0-9]{64})\s+\*?(.+)$/.exec(line.trim());
-    if (m) {
-      map.set(m[2].trim(), m[1].toLowerCase());
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length < 66) continue;
+    const hash = line.slice(0, 64);
+    if (!/^[a-fA-F0-9]{64}$/.test(hash)) continue;
+    const rest = line.slice(64);
+    if (!/^\s/.test(rest)) continue;
+    const filename = rest.trimStart().replace(/^\*/, '').trim();
+    if (filename) {
+      map.set(filename, hash.toLowerCase());
     }
   }
   return map;
