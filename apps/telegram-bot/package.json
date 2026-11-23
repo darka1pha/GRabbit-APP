@@ -18,7 +18,7 @@
     "@grammyjs/i18n": "^1.1.2",
     "@grabbit/core": "workspace:*",
     "@grabbit/types": "workspace:*",
-    "bullmq": "^6.7.6",
+    "bullmq": "^6.7.8",
     "dotenv": "^18.0.10",
     "grammy": "^1.46.0",
     "ioredis": "^6.0.0",
